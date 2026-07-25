@@ -1,5 +1,10 @@
 # AI-assisted Claude coding kit
 
+> **An independent personal project. Not affiliated with, endorsed by, or supported by Anthropic.**
+> "Claude" and "Claude Code" are Anthropic's; they appear here only to describe the tool this kit is
+> built for. Nothing here is an official practice or recommendation, and none of it carries any
+> warranty — see LICENSE.
+
 A file-based workflow for running substantial software work with Claude Code: eight risk-tiered
 subagents, three session rituals, and the discipline that decides how much process a change gets.
 
