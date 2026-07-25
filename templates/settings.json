@@ -1,0 +1,49 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(**/docs/history/**)",
+      "Write(**/docs/history/**)"
+    ],
+    "ask": [
+      "Edit(CLAUDE.md)",
+      "Write(CLAUDE.md)",
+      "Edit(**/CLAUDE.md)",
+      "Write(**/CLAUDE.md)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"console.log('Run /resume-context to rebuild state from the status pointer + git log. Do not rely on old conversation state.')\""
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"const{execSync}=require('child_process');try{const s=execSync('git status --porcelain',{encoding:'utf8'}).split('\\n').filter(Boolean);if(s.length)console.log(s.length+' uncommitted change(s). Run /checkpoint (verify + update the status pointer + local commit) before your next session so state is not lost.');}catch(e){}\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{const j=JSON.parse(d||'{}');const t=j.turn_count||0;if(t>=80&&t%20===0){console.log('Session hygiene: ~'+t+' turns. A long window re-reads its growing context every turn, and that cache-read tends to dominate token cost. At a unit boundary run /checkpoint then /clear; mid-unit run /compact. Splitting is quality-neutral - same agents, same review depth.');}}catch(e){}});\""
+          }
+        ]
+      }
+    ]
+  }
+}
