@@ -1,5 +1,6 @@
 {
   "name": "ai-assisted-claude-coding-kit",
+  "description": "Risk-tiered review pipeline and derived project state for AI-assisted coding with Claude Code. Stack-agnostic, no MCP servers, all project state in the project's own repo.",
   "owner": { "name": "Raghuveer Dendukuri" },
   "plugins": [
     {

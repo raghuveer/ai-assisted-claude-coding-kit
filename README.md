@@ -28,17 +28,26 @@ Claude Code. Stack-agnostic baseline.
 
 ## Layers
 
+Measured with `claude --plugin-dir . plugin details coding-kit`, not estimated:
+
 | Layer | Holds | Resident cost |
 |---|---|---|
 | Always-on (`templates/CLAUDE.kit.md`) | tiering obligation, write boundary, where truth lives | ~15 lines, cached |
-| Hooks | write guard, checkpoint, trailer validation | zero |
-| Skills (5) | task-context, tier-classify, verify-ladder, status-report, checkpoint | ~100 tokens each at rest |
-| Subagents | your reviewers | zero until spawned |
+| Hooks (2) | write guard, checkpoint, trailer validation | **zero** — harness-only |
+| Skills (5) | task-context, tier-classify, verify-ladder, status-report, checkpoint | **~440 tok** (80–100 each) |
+| Subagents (8) | your reviewers | **~840 tok** — descriptions are resident |
 | MCP | none | zero |
+| | | **~1,259 tok always-on** |
 
-Skill bodies and bundled scripts load only on use, so the whole tooling layer costs
-roughly five descriptions at rest — in every repo on the machine, which is why the skill
-count is fixed and **accelerators arrive as reference files, not new skills**.
+Bodies load only on use — a skill costs ~500–1,400 tok when it fires, an agent ~570–2,000
+when spawned — so what you pay in every session is the descriptions.
+
+**Subagents are not free at rest.** Routing works by matching your request against each
+agent's `description`, so all eight are in context on every request whether or not any of
+them runs. At ~840 tok they are two thirds of the always-on cost — more than the five
+skills combined. Adding a ninth agent is a bigger standing charge than adding a sixth
+skill, and **accelerators arrive as reference files, not new skills or agents** for the
+same reason.
 
 ## Install
 

@@ -130,10 +130,25 @@ event becomes its owner, so `STATUS.generated.md` shows `@name` with nothing to 
 
 ## Verifying the plugin itself
 
-    python3 validate.py                        # structure (bundled, no deps)
-    claude plugin validate .                   # official schema check
+    python3 validate.py                                            # structure (bundled)
+    claude plugin validate . --strict                              # marketplace manifest
+    claude plugin validate .claude-plugin/plugin.json --strict     # plugin manifest
+
+**Both `claude plugin validate` invocations are needed.** The command validates one
+manifest, chosen from the path you give it — and because the plugin and the marketplace
+share a root here, plain `.` resolves to `marketplace.json` and the plugin manifest is
+never checked. `--strict` turns warnings into a non-zero exit, which is what you want in
+CI and before publishing.
 
 The bundled one catches what silently produces a plugin that loads but does nothing:
 components in the wrong directory, stray `.md` files in `agents/` being loaded *as*
 agents, hook commands missing `${CLAUDE_PLUGIN_ROOT}`, absolute paths from the author's
-machine. Run both before publishing.
+machine. Run all three before publishing.
+
+### Seeing what it costs to have installed
+
+    claude --plugin-dir . plugin details coding-kit
+
+Component inventory plus projected token cost, split into always-on and on-invoke. This is
+the number to watch when adding a skill or an agent — **agent descriptions are resident**,
+because that is how the harness routes to them, so an agent is not free until spawned.
