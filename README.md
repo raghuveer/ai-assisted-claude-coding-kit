@@ -121,6 +121,20 @@ sqlite3 .project/index.db "SELECT lang, class, COUNT(*) FROM finding
                             GROUP BY lang, class ORDER BY 3 DESC;"
 ```
 
+## Documentation
+
+| File | What it answers |
+|---|---|
+| [`INSTALL.md`](INSTALL.md) | Installing, adopting in a new repo, joining one that already uses it |
+| [`docs/HANDOFF.md`](docs/HANDOFF.md) | Why it is built this way — requirements, decisions with rationale, verified state, open gaps, and the constraints that must not be broken |
+| [`docs/MIGRATION.md`](docs/MIGRATION.md) | Moving from the 0.1 copy-based kit: commands → skills → hooks, and what was retired |
+| [`docs/agents-README.md`](docs/agents-README.md) | The subagent pipeline, risk tiering, and how routing picks a model |
+
+Read `docs/HANDOFF.md` before changing anything structural. It records the reasoning behind
+decisions that look arbitrary from the code alone — why the index is disposable, why cycles
+are withheld rather than ordered, why accelerator export redaction is structural rather
+than procedural.
+
 ## Known limits
 
 - Full reindex only; no incremental. Fine at the scale this is built for.
