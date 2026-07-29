@@ -3,10 +3,10 @@
 Two audiences: someone starting a project with this kit, and someone joining a project
 that already uses it. The steps differ, and doing the wrong one is the usual mistake.
 
-Prerequisites: `git` **2.32 or newer**, `sqlite3`, `bash`, and the POSIX text utilities
-(`awk`, `sed`, `grep`, `sort`, `cut`, `tr`, `wc`). No language runtime — no Node, no
-Python, no PowerShell. That is deliberate, so a Go or Rust team can adopt this without
-installing something they do not otherwise want.
+Prerequisites: `git` **2.32 or newer**, `sqlite3` (**3.25+** for cluster context packs),
+`bash`, and the POSIX text utilities (`awk`, `sed`, `grep`, `sort`, `cut`, `tr`, `wc`).
+No language runtime — no Node, no Python, no PowerShell. That is deliberate, so a Go or
+Rust team can adopt this without installing something they do not otherwise want.
 
 The git floor is not incidental: below 2.32 the `%(trailers:…,valueonly)` format expands
 to nothing, so every commit indexes as untagged and derived status silently reports an

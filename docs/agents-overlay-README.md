@@ -1,5 +1,19 @@
 # Writing a project overlay
 
+> ## ⚠️ Historical — superseded in 0.2.0. Do not follow these instructions.
+>
+> The overlay/composition model described below is retired. `agents/core/` and
+> `agents/overlay/` no longer exist, `sync-agents.ps1` is kept unwired as
+> `legacy-sync-agents.ps1`, and nothing generates `.claude/agents/` any more.
+>
+> **What to do instead:** agents are flat files in `agents/` and read
+> `.claude/project-profile.md` when they spawn. Project-specific evidence lives in the
+> `finding` table, recorded by `kit-finding.sh` and promoted by `kit-accel.sh`, not in
+> per-agent prose. See `docs/agents-README.md` and `docs/MIGRATION.md`.
+>
+> Kept only for the reasoning in the destination-guard section, which is why one kit
+> checkout served exactly one project.
+
 An overlay is what makes the portable agents in `../core/` true for *your* project. Composition is
 `core/<agent>.md` + `overlay/<project>/_shared.md` + `overlay/<project>/<agent>.md` → `.claude/agents/`.
 

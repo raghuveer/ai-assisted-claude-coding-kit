@@ -227,8 +227,20 @@ sqlite3 "$DB" < "$SQL" || { kit_warn "plan write failed"; exit 1; }
 # shell-side captures need this.
 sq() { sqlite3 "$@" | tr -d '\r'; }
 
+# Window functions -- ROW_NUMBER() OVER (PARTITION BY ...), used below to cap the file
+# list per cluster -- arrived in SQLite 3.25. An older build errors on the query rather
+# than degrading, so name the unmet requirement instead of surfacing a bare SQL error.
+# Only the packs need it; layering, scoring and the plan itself do not, so those still run.
+SQLV=$(sqlite3 --version 2>/dev/null | awk '{print $1}')
+PACKS_OK=$(printf '%s' "${SQLV:-0}" | awk -F. '{ print ($1 > 3 || ($1 == 3 && $2 >= 25)) ? 1 : 0 }')
+if [ "$PACKS_OK" != 1 ]; then
+  kit_warn "sqlite3 ${SQLV:-unknown} is older than 3.25 — cluster context packs need window"
+  kit_warn "functions and are skipped. The plan and its ordering are unaffected."
+fi
+
 GOAL_SLUG=$(printf '%s' "$GOAL" | tr -c 'A-Za-z0-9._-' '-')
 PACKS="$ROOT/$STATE_DIR/packs/$GOAL_SLUG"
+if [ "$PACKS_OK" = 1 ]; then
 rm -rf "$PACKS"; mkdir -p "$PACKS"
 # One query and one awk for every pack, rather than three queries per cluster. At 300
 # tasks / 20 clusters the per-cluster shape spawned 60 sqlite3 processes and took ~36s.
@@ -285,6 +297,7 @@ npacks=$(sq -separator $'\t' "$DB" "
     print nc
   }')
 [ "${npacks:-0}" -gt 0 ] && kit_warn "wrote $npacks cluster pack(s) to ${PACKS#$ROOT/}"
+fi   # PACKS_OK — sqlite3 >= 3.25
 
 if [ "$SHOW" = 1 ]; then
   sqlite3 -header -column "$DB" "

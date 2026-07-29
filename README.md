@@ -76,10 +76,15 @@ lossless — that invariant is what keeps the index from quietly becoming a seco
 ## Dependencies
 
 `git` **2.32 or newer** — older git cannot expand `%(trailers:…,valueonly)`, so every
-commit would index as untagged; `kit-index.sh` warns if it finds one. Plus `sqlite3` and
-the POSIX text utilities that ship alongside it: `awk`, `sed`, `grep`, `sort`, `cut`,
-`tr`, `wc`. No language runtime. Bash is reachable on Windows via the shell git already
-ships, and git is a hard dependency anyway since status is derived from it.
+commit would index as untagged; `kit-index.sh` warns if it finds one.
+
+`sqlite3` **3.25 or newer** for cluster context packs, which use window functions.
+Everything else works on 3.8+; `kit-plan.sh` warns and withholds the packs rather than
+failing, so an older sqlite costs you the caching, not the plan.
+
+Plus the POSIX text utilities that ship alongside those: `awk`, `sed`, `grep`, `sort`,
+`cut`, `tr`, `wc`. No language runtime. Bash is reachable on Windows via the shell git
+already ships, and git is a hard dependency anyway since status is derived from it.
 
 ## Trailers — frozen once adopted
 

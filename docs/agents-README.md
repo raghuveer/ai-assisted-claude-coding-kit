@@ -1,4 +1,4 @@
-# Subagents — routing, risk-tiering, and the core/overlay split
+# Subagents — routing, risk-tiering, and model selection
 
 Eight agents. The harness auto-routes to them by matching your request against each agent's
 `description`, so the `description` line is a routing decision, not documentation.
@@ -31,7 +31,7 @@ Eight agents. The harness auto-routes to them by matching your request against e
 | tester | sonnet | after review approves |
 | documenter | haiku | after tests / a feature-state change |
 
-**Risk tiering is defined in your `project-profile.md`** — see `templates/project-profile.TEMPLATE.md`.
+**Risk tiering is defined in your `project-profile.md`** — see `templates/project-profile.md`.
 Name the tier and cite the trigger *before* spawning agents, or routine work quietly defaults to the full
 pipeline and the expensive tier becomes your largest cost line.
 
@@ -53,21 +53,27 @@ design and security work matches the expensive ones.
 **Practical default:** set the session to the mid tier, let the agents pull the expensive tier only where
 their frontmatter says so, and reach for a manual override only for a hard stretch in the main loop.
 
-## Structure — core + overlay
-
-The agents are **composed**, not edited in place:
+## Structure — flat, and read at spawn
 
 ```
-agents/core/<agent>.md                portable method; owns the frontmatter
-agents/overlay/<project>/_shared.md   project context appended to EVERY agent
-agents/overlay/<project>/<agent>.md   per-agent project vocabulary (optional; may override frontmatter)
-        ↓  pwsh sync-agents.ps1 -Project <name>
-.claude/agents/<agent>.md             generated — never edit this copy
+agents/<agent>.md          the portable method; owns the frontmatter
+.claude/project-profile.md the project layer, read by each agent when it spawns
 ```
 
-⚠️ **Edit `core/` or `overlay/`, never `.claude/agents/`** — the sync overwrites it. And see
-`agents/overlay/README.md` for the destination guard: the overlay selector picks the overlay, **not** the
-destination, so one kit checkout serves one project.
+Plugin agent discovery is **flat and not recursive**: every `.md` directly under `agents/`
+loads as an agent, and nothing in a subdirectory loads at all. That is why these files sit
+at the top level and why this README lives in `docs/` — left in `agents/`, it would have
+been parsed as an agent definition.
+
+Nothing is composed or generated. Agents read `.claude/project-profile.md` at spawn, so
+the project layer is edited in one place and never built. Plugin agents and a project's own
+`.claude/agents/` coexist, so a project can add its own without touching these.
+
+> **Superseded in 0.2.0.** Through 0.1 the agents were composed from `agents/core/` plus
+> `agents/overlay/<project>/` by `sync-agents.ps1`, which wrote `.claude/agents/`. That
+> build step is retired — the script is kept as `legacy-sync-agents.ps1` for reference and
+> is not wired up. The per-session profile read replaces it, lands in the cached prefix at
+> 0.1×, and drops the last PowerShell dependency. See `docs/MIGRATION.md`.
 
 ## What transfers, and what has to be earned
 
@@ -75,8 +81,14 @@ destination, so one kit checkout serves one project.
 the output contracts, the universal defect classes (a/b/c/f/h) and test traps (d/e/g), the mutation
 discipline, and the diminishing-returns cap on design review.
 
-**Does not transfer — and this is the point:** the *citations*. `core/` ships the class ("a guard written
-in the positive direction passes on every absent value"); your overlay adds "shipped four times, here, as
-&lt;your decision id&gt;". A new project starts with the classes and accumulates its own evidence
+**Does not transfer — and this is the point:** the *citations*. An agent ships the class ("a guard written
+in the positive direction passes on every absent value"); your project supplies "shipped four times, here,
+as &lt;your decision id&gt;". A new project starts with the classes and accumulates its own evidence
 underneath them. **That ledger is the part no kit can ship** — it is the compound interest of running the
-process, and it is why the overlay grows while core stays still.
+process.
+
+Where that evidence now lives is the 0.2.0 change: the prose overlay became the `finding`
+table. Reviews record `--class` and `--lang` through `kit-finding.sh`, `kit-vindicate.sh`
+separates real defects from reviewer noise, and `kit-accel.sh propose` promotes only what
+recurred and was never refuted. Queried per project rather than loaded wholesale, so the
+ledger can grow without growing the window.
