@@ -1,0 +1,8 @@
+# Shell scripts, the generated commit-msg hook, and the Python tools must be stored with
+# LF in the repository regardless of any contributor's core.autocrlf setting. Windows
+# checkouts tolerate CRLF, but a CRLF shebang fails outright on Linux and macOS, and this
+# kit is meant to run on all three from the same checkout.
+*.sh        text eol=lf
+commit-msg  text eol=lf
+*.py        text eol=lf
+*.sql       text eol=lf

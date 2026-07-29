@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# commit-msg — trailer validation.
+#
+# Do NOT symlink this. kit-init.sh generates a copy in .git/hooks with KIT_TOOLING
+# resolved to wherever the plugin actually lives on this machine — which differs per
+# developer, and which git cannot share (hooks are per-clone). That is why every team
+# member runs kit-init.sh after cloning.
+set -uo pipefail
+
+: "${KIT_TOOLING:=$(dirname "$0")}"
+if [ ! -f "$KIT_TOOLING/kit-lib.sh" ]; then
+  # A validation hook that cannot validate must fail loudly. Passing silently would
+  # let untrailered commits through while the repo looks protected -- the fail-open
+  # case this hook exists to prevent.
+  echo "commit-msg: cannot load kit-lib.sh from $KIT_TOOLING" >&2
+  echo "  re-run kit-init.sh in this repository to regenerate the hook." >&2
+  exit 1
+fi
+. "$KIT_TOOLING/kit-lib.sh"
+ROOT=$(kit_root) || exit 0
+kit_active "$ROOT" || exit 0
+PROFILE=$(kit_profile "$ROOT")
+MODE=$(kit_cfg "$PROFILE" git.trailer_enforcement warn)     # warn | enforce
+MSG=$(cat "$1")
+
+case "$MSG" in
+  Merge*|Revert*|fixup!*|squash!*) exit 0 ;;
+esac
+EXEMPT=$(kit_cfg "$PROFILE" git.trivial_pattern '^(chore|docs|style)(\(.*\))?:')
+printf '%s' "$MSG" | head -1 | grep -Eq "$EXEMPT" && exit 0
+
+fail=""
+printf '%s' "$MSG" | grep -Eq '^Task-Id:[[:space:]]*\S' || fail="$fail
+  missing  Task-Id:      which task does this commit belong to?"
+printf '%s' "$MSG" | grep -Eq '^Tier:[[:space:]]*T[0-3][[:space:]]*$' || fail="$fail
+  missing/invalid  Tier:  one of T0 T1 T2 T3 — required for escape-rate measurement"
+for t in Task-Status Fixes-Escape-Of; do
+  v=$(printf '%s' "$MSG" | sed -n "s/^$t:[[:space:]]*//p")
+  if [ "$t" = Task-Status ] && [ -n "$v" ]; then
+    case "$v" in started|progress|blocked|unblocked|done|abandoned) ;;
+      *) fail="$fail
+  invalid  Task-Status: $v" ;;
+    esac
+  fi
+done
+
+[ -z "$fail" ] && exit 0
+printf 'kit: commit trailers%s\n' "$fail" >&2
+if [ "$MODE" = enforce ]; then
+  printf '\nSet git.trailer_enforcement: warn in project-profile.md to downgrade this.\n' >&2
+  exit 1
+fi
+exit 0

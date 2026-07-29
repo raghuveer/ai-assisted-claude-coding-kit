@@ -1,0 +1,11 @@
+{
+  "name": "ai-assisted-claude-coding-kit",
+  "owner": { "name": "Raghuveer Dendukuri" },
+  "plugins": [
+    {
+      "name": "coding-kit",
+      "source": ".",
+      "description": "Risk-tiered review pipeline and derived project state for AI-assisted coding."
+    }
+  ]
+}
