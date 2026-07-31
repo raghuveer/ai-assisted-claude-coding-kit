@@ -156,7 +156,11 @@ export)
     kit_warn "project-profile.md before this export leaves the project."
   fi
   PH="p$(printf '%s\037%s' "$SALT" "$ORIGIN" | git hash-object --stdin | cut -c1-16)"
-  KV=$(kit_cfg "$PROFILE" kit.version "0.2.0")
+  # Not overridable from the project profile. The version stamped here is the kit's, not
+  # the project's; letting a repo relabel it is exactly the misinformation this field
+  # exists to prevent.
+  KV=$(kit_version)
+  [ -n "$KV" ] || { KV="unknown"; kit_warn "cannot read plugin.json — exporting kit version as 'unknown'"; }
   : > "$OUT"
   sqlite3 "$DB" "
     SELECT 'technology', lang, class, COUNT(*), SUM(COALESCE(vindicated,0)),

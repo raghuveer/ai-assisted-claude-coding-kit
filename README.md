@@ -52,12 +52,19 @@ same reason.
 ## Install
 
 ```sh
-/plugin marketplace add <this-repo-url>
+/plugin marketplace add raghuveer/ai-assisted-claude-coding-kit
 /plugin install coding-kit@ai-assisted-claude-coding-kit
 ```
 
 `coding-kit` is the plugin; `ai-assisted-claude-coding-kit` is the marketplace that
 carries it. They are not interchangeable in that second command.
+
+Pin a version when handing it to others — `@ref` with no version resolves to the default
+branch, which moves:
+
+```sh
+/plugin marketplace add raghuveer/ai-assisted-claude-coding-kit@v0.2.0
+```
 
 Then, in each repo that should use it:
 
@@ -127,6 +134,7 @@ sqlite3 .project/index.db "SELECT lang, class, COUNT(*) FROM finding
 |---|---|
 | [`INSTALL.md`](INSTALL.md) | Installing, adopting in a new repo, joining one that already uses it |
 | [`docs/HANDOFF.md`](docs/HANDOFF.md) | Why it is built this way — requirements, decisions with rationale, verified state, open gaps, and the constraints that must not be broken |
+| [`docs/VERSIONING.md`](docs/VERSIONING.md) | What MAJOR/MINOR/PATCH mean here, tag format, and the release sequence |
 | [`docs/MIGRATION.md`](docs/MIGRATION.md) | Moving from the 0.1 copy-based kit: commands → skills → hooks, and what was retired |
 | [`docs/agents-README.md`](docs/agents-README.md) | The subagent pipeline, risk tiering, and how routing picks a model |
 

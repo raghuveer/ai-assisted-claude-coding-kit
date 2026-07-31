@@ -34,7 +34,11 @@ Pin a version when handing it to others:
     /plugin marketplace add raghuveer/ai-assisted-claude-coding-kit@v0.2.0
 
 Pinning is not fussiness. Without it you cannot tell which version someone's feedback
-is about, and the comparison you are running becomes uninterpretable.
+is about, and the comparison you are running becomes uninterpretable. Unpinned resolves
+to the default branch, which moves under you between one install and the next.
+
+Tags are `vMAJOR.MINOR.PATCH`. See [`docs/VERSIONING.md`](docs/VERSIONING.md) for what a
+bump means here — the compatibility surface is state committed to your repo, not an API.
 
 Verify:
 

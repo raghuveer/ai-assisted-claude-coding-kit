@@ -7,10 +7,13 @@ that must not be broken.
 Repository: https://github.com/raghuveer/ai-assisted-claude-coding-kit (v0.1 released)
 Target: commit this work as v0.2.0 under the same repo name.
 
-Status: committed on branch `v0.2.0` off v0.1, pushed, **not tagged**. The tarball this
+Status: committed on branch `v0.2.0` off v0.1, pushed, **not released**. The tarball this
 brief was originally written against is superseded — git is now the artifact of record.
-Before tagging: load the plugin in Claude Code and run one real task, and exercise it once
-on macOS or Linux. Both remain undone. See §8 for what else is open.
+
+Two things remain undone before release: load the plugin in Claude Code and run one real
+task, and exercise it once on macOS or Linux. A third is easy to miss — `main` still points
+at v0.1, and unpinned installs clone the default branch, so **what a new user gets today is
+0.1**. See `docs/VERSIONING.md` for the release sequence and §8 for what else is open.
 
 ---
 
@@ -275,7 +278,7 @@ ai-assisted-claude-coding-kit/
 ├── tooling/            13 scripts + schema.sql
 ├── templates/          project-profile, task, CLAUDE.kit + legacy copies
 ├── accelerators/       technology/go, industry/bfsi (seeded drafts)
-├── docs/               HANDOFF.md (this file), MIGRATION.md, moved agent READMEs
+├── docs/               HANDOFF.md (this file), VERSIONING.md, MIGRATION.md, agent READMEs
 ├── legacy-commands/    3 originals, kept for reference, not wired
 ├── INSTALL.md  validate.py  README.md  LICENSE
 ```
@@ -379,7 +382,9 @@ anything.
 4. Adopt in one project. Delete the old `STATUS.md` and CSV — delete, not deprecate.
 5. Turn on instrumentation (findings + vindication). Ships nothing visible, which is why
    it gets skipped; everything later depends on it.
-6. Tag v0.2.0, publish the marketplace, hand pinned versions to other developers.
+6. Release per `docs/VERSIONING.md`: merge to `main` first — unpinned installs clone the
+   default branch, so a release that stops on a side branch has not shipped — then tag
+   `v0.2.0` on main and hand pinned versions to other developers.
 7. Collect paired feedback: same repo, their prior fortnight vs the kit. The load-bearing
    question is **"what did you turn off, and why?"** — anything switched off cost more
    than it returned, and that is the prioritised backlog handed over.

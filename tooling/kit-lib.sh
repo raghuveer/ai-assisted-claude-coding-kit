@@ -45,4 +45,15 @@ kit_cfg_all() {
     }' "$1" 2>/dev/null
 }
 
+# kit_version -> the plugin version, read from the single place it is defined.
+#
+# No hardcoded fallback on purpose. A literal here would be a second source of truth that
+# goes stale in silence, and this value is stamped into shared accelerator exports — a
+# wrong version is worse than an absent one, because a wrong one is believed. Empty means
+# "could not determine", which callers can say out loud.
+kit_version() {
+  sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "$(dirname "${BASH_SOURCE[0]}")/../.claude-plugin/plugin.json" 2>/dev/null | head -1
+}
+
 kit_warn() { printf 'kit: %s\n' "$*" >&2; }
