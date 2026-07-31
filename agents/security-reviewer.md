@@ -84,7 +84,13 @@ Your bias is caution — a review you cannot complete rigorously is not an APPRO
 ## Findings           [by dimension; severity critical / major / minor; file:line; concrete exploit/failure scenario]
 ## Required changes before testing   [numbered; empty if APPROVED]
 ## What I did not check
+## Findings (recordable)   [one per line: class|severity|lang|domain — empty if none]
 ```
+
+The `Findings (recordable)` lines are piped straight into `kit-finding.sh --task <id> --agent <you> --batch`, so emit them even when the verdict is
+APPROVED — a finding you raised and the operator overruled still teaches the accelerators.
+Run `kit-finding.sh --vocab` for the accepted class and severity values rather than guessing:
+an unrecognised value is rejected, not stored, and the finding is simply lost.
 
 ## What you do not do
 

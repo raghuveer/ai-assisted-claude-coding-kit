@@ -42,7 +42,7 @@ CREATE TABLE finding (
   model      TEXT,
   tier       TEXT,
   lang       TEXT,                  -- seeds the technology accelerator
-  class      TEXT,                  -- fail-open|race|false-rationale|perf|compliance|style
+  class      TEXT,                  -- kit-finding.sh --vocab is authoritative; do not restate it here
   domain     TEXT,                  -- seeds the industry accelerator (bfsi, govtech, health)
   severity   TEXT,
   at         TEXT,

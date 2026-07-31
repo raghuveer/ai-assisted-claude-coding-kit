@@ -32,18 +32,31 @@ less.
 
 ## Recording findings
 
-Every finding gets recorded, including from reviewers you disagree with:
+Every finding gets recorded, including from reviewers you disagree with. Take the
+reviewer's `Findings (recordable)` block and pipe it in unchanged:
 
 ```sh
 bash ${CLAUDE_PLUGIN_ROOT}/tooling/kit-finding.sh \
-  <task-id> <agent> <class> <severity> <lang> <model>
+  --task <task-id> --agent <agent> --batch <<'EOF'
+fail-open | critical | go
+race      | major    | go
+EOF
 ```
 
-`class` is one of `fail-open` `race` `false-rationale` `perf` `compliance` `style`,
-and `lang` is the language of the file the finding is in. These two fields are the
-entire mechanism by which technology and industry accelerators are later improved from
-real work rather than invented. A finding recorded without them is a finding that
-teaches nothing.
+One finding at a time takes named flags: `--task --agent --class --severity [--lang] [--domain]`.
+Both forms reject an unknown value rather than storing it, and a batch with any rejected row
+exits non-zero — a partly recorded review is a measurement gap, and you are the only one
+still holding the findings needed to fix it.
+
+Do not memorise the vocabularies; print them:
+
+```sh
+bash ${CLAUDE_PLUGIN_ROOT}/tooling/kit-finding.sh --vocab
+```
+
+`class` and `lang` are the entire mechanism by which technology and industry accelerators
+are later improved from real work rather than invented. A finding recorded without them is
+a finding that teaches nothing.
 
 ## Completion
 

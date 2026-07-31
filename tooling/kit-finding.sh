@@ -1,18 +1,36 @@
 #!/usr/bin/env bash
-# kit-finding.sh --task ID --agent NAME --class CLASS --severity SEV [--lang L] [--model M]
+# kit-finding.sh --task ID --agent NAME --class CLASS --severity SEV [--lang L] [--domain D] [--model M]
+# kit-finding.sh --task ID --agent NAME --batch    < lines of  class|severity|lang|domain
+# kit-finding.sh --vocab                           prints the accepted vocabularies
 #
-# Records one review finding. This table is what the technology and industry
-# accelerators are later derived from, so a silently mis-filled row is worse
-# than a missing one: named flags, and vocabularies are validated.
+# Records review findings. This table is what the technology and industry accelerators are
+# later derived from, so a silently mis-filled row is worse than a missing one: named
+# flags, and vocabularies are validated.
+#
+# --batch exists because a review produces many findings at once, and re-typing a flag line
+# per finding is where class and lang get dropped. Those two are the only fields that make
+# a finding teach anything, and they are the first casualties of tedium.
+#
+# --vocab exists because these lists were restated in the schema comment, in two skills and
+# in the agent output contracts, and all four had drifted -- the agents emitted severities
+# this script rejected outright, so most findings never recorded. Print the vocabulary
+# rather than remembering it.
 set -uo pipefail
 . "$(dirname "$0")/kit-lib.sh"
+
+# The one definition. Severity matches what the reviewer agents actually emit: a vocabulary
+# its own producers do not use is a vocabulary that silently discards their output.
+CLASSES="fail-open race false-rationale perf compliance correctness style unclassified"
+SEVERITIES="critical major minor nit"
+
+case "${1:-}" in
+  --vocab) printf 'class:    %s\nseverity: %s\n' "$CLASSES" "$SEVERITIES"; exit 0 ;;
+esac
+
 ROOT=$(kit_root) || exit 0
 kit_active "$ROOT" || exit 0
 
-CLASSES="fail-open race false-rationale perf compliance correctness style unclassified"
-SEVERITIES="critical high medium low"
-
-task=""; agent=""; class=""; sev=""; lang=""; model=""; domain=""
+task=""; agent=""; class=""; sev=""; lang=""; model=""; domain=""; batch=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --task) task=${2:-}; shift; shift ;;
@@ -22,22 +40,68 @@ while [ $# -gt 0 ]; do
     --lang) lang=${2:-}; shift; shift ;;
     --domain) domain=${2:-}; shift; shift ;;
     --model) model=${2:-}; shift; shift ;;
-    -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
+    --batch) batch=1; shift ;;
+    --vocab) printf 'class:    %s\nseverity: %s\n' "$CLASSES" "$SEVERITIES"; exit 0 ;;
+    -h|--help) sed -n '2,4p' "$0"; exit 0 ;;
     *) kit_warn "unknown argument: $1"; exit 2 ;;
   esac
 done
 
-for req in task agent class sev; do
+for req in task agent; do
   eval "v=\$$req"
-  [ -n "$v" ] || { kit_warn "missing --${req/sev/severity}"; exit 2; }
+  [ -n "$v" ] || { kit_warn "missing --$req"; exit 2; }
 done
-case " $CLASSES " in *" $class "*) ;; *)
-  kit_warn "unknown --class '$class' (one of: $CLASSES)"; exit 2 ;; esac
-case " $SEVERITIES " in *" $sev "*) ;; *)
-  kit_warn "unknown --severity '$sev' (one of: $SEVERITIES)"; exit 2 ;; esac
 
 STATE_DIR=$(kit_cfg "$(kit_profile "$ROOT")" paths.state ".project")
 mkdir -p "$ROOT/$STATE_DIR"
-printf '{"task":"%s","kind":"finding","at":"%s","agent":"%s","class":"%s","severity":"%s","lang":"%s","domain":"%s","model":"%s"}\n' \
-  "$task" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$agent" "$class" "$sev" "$lang" "$domain" "$model" \
-  >> "$ROOT/$STATE_DIR/events.ndjson"
+EV="$ROOT/$STATE_DIR/events.ndjson"
+
+# Name the bad value AND the accepted set. A rejection that does not say what was expected
+# just gets retried with another guess.
+validate() {  # validate <class> <severity>
+  case " $CLASSES " in *" $1 "*) ;; *)
+    kit_warn "unknown class '$1' (one of: $CLASSES)"; return 1 ;; esac
+  case " $SEVERITIES " in *" $2 "*) ;; *)
+    kit_warn "unknown severity '$2' (one of: $SEVERITIES)"; return 1 ;; esac
+  return 0
+}
+
+record() {  # record <class> <severity> <lang> <domain>
+  printf '{"task":"%s","kind":"finding","at":"%s","agent":"%s","class":"%s","severity":"%s","lang":"%s","domain":"%s","model":"%s"}\n' \
+    "$task" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$agent" "$1" "$2" "$3" "$4" "$model" >> "$EV"
+}
+
+if [ "$batch" = 1 ]; then
+  n=0; bad=0; line=0
+  while IFS= read -r L || [ -n "$L" ]; do
+    line=$((line + 1))
+    L=$(printf '%s' "$L" | tr -d '\r')
+    case "$L" in ''|'#'*) continue ;; esac
+    OIFS=$IFS; IFS='|'
+    # shellcheck disable=SC2086
+    set -- $L
+    IFS=$OIFS
+    c=$(printf '%s' "${1:-}" | tr -d ' '); s=$(printf '%s' "${2:-}" | tr -d ' ')
+    l=$(printf '%s' "${3:-}" | tr -d ' '); d=$(printf '%s' "${4:-}" | tr -d ' ')
+    if [ -z "$c" ] || [ -z "$s" ]; then
+      kit_warn "line $line: expected class|severity|lang|domain, got: $L"; bad=$((bad + 1)); continue
+    fi
+    if validate "$c" "$s"; then
+      record "$c" "$s" "$l" "$d"; n=$((n + 1))
+    else
+      kit_warn "  ...on line $line: $L"; bad=$((bad + 1))
+    fi
+  done
+  printf 'kit: recorded %d finding(s)' "$n" >&2
+  [ "$bad" -gt 0 ] && printf ', rejected %d' "$bad" >&2
+  printf '\n' >&2
+  # Non-zero on any rejection. A partially recorded review is a measurement gap, and the
+  # caller is the only one still holding the findings needed to fix it.
+  [ "$bad" -gt 0 ] && exit 1
+  exit 0
+fi
+
+[ -n "$class" ] || { kit_warn "missing --class"; exit 2; }
+[ -n "$sev" ]   || { kit_warn "missing --severity"; exit 2; }
+validate "$class" "$sev" || exit 2
+record "$class" "$sev" "$lang" "$domain"

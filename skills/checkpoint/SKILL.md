@@ -44,6 +44,16 @@ Every finding from this unit's reviews:
 kit-finding.sh --task <id> --agent <name> --class <class> --severity <sev> --lang <lang> [--domain <d>]
 ```
 
+A review produces several at once, so pipe the reviewer's `Findings (recordable)` block in
+unchanged rather than retyping it — that retyping is where `class` and `lang` get dropped:
+
+```
+kit-finding.sh --task <id> --agent <name> --batch    < class|severity|lang|domain lines
+```
+
+`kit-finding.sh --vocab` prints the accepted classes and severities. Print them; do not
+recall them. Every value is validated and an unknown one is rejected, not stored.
+
 `class` and `lang` are not optional detail — they are the mechanism by which the technology
 and industry accelerators are later derived from real work rather than invented. A finding
 recorded without them is a finding that teaches nothing.
