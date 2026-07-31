@@ -278,7 +278,7 @@ ai-assisted-claude-coding-kit/
 ├── tooling/            14 scripts + schema.sql
 ├── templates/          project-profile, task, CLAUDE.kit + legacy copies
 ├── accelerators/       technology/go, industry/bfsi (seeded drafts)
-├── docs/               HANDOFF.md (this file), VERSIONING.md, MIGRATION.md, agent READMEs
+├── docs/               HANDOFF, VERSIONING, ADAPTERS, DESIGN-NOTES, MODELS, MIGRATION, agents
 ├── legacy-commands/    3 originals, kept for reference, not wired
 ├── INSTALL.md  validate.py  README.md  LICENSE
 ```
@@ -341,9 +341,12 @@ ai-assisted-claude-coding-kit/
   path given: plain `.` resolves to `marketplace.json` and leaves the plugin unchecked,
   so `claude plugin validate .claude-plugin/plugin.json --strict` is also required.
   `validate.py` remains the structural check and is complementary, not redundant.
-- **A malformed event line still produces a degenerate empty finding row** — harmless
-  but pollutes the accelerator seed query.
-- **`%(trailers:...)` needs git ≥ 2.32**; tested on 2.43, no version check yet.
+- ~~**A malformed event line still produces a degenerate empty finding row**~~ — **done.**
+  `kit-index.sh` drops findings carrying no class and reports the count on stderr. A
+  classless finding cannot be grouped, counted or promoted, so it only added noise.
+- ~~**`%(trailers:...)` needs git ≥ 2.32**, no version check~~ — **done.** `kit-index.sh`
+  warns on older git and says what degrades: every commit indexes as untagged, which looks
+  like an idle repository rather than a broken one.
 
 ---
 
