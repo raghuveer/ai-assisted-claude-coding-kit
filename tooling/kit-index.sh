@@ -214,8 +214,6 @@ awk -F'\x1f' '
   # containing a backslash would arrive mangled and silently match nothing.
   BEGIN {
     sdir = ENVIRON["KIT_SDIR"]; tdir = ENVIRON["KIT_TDIR"]
-    CC = ENVIRON["KIT_CC"] + 0; CCCAP = ENVIRON["KIT_CCCAP"] + 0
-    CCHUB = ENVIRON["KIT_CCHUB"] + 0; CCMAXD = ENVIRON["KIT_CCMAXD"] + 0
   }
   function q(s){ gsub(/\x27/,"\x27\x27",s); return s }
   function trim(s){ gsub(/^[ \t\r]+|[ \t\r]+$/,"",s); return s }
@@ -301,50 +299,97 @@ awk -F'\x1f' '
     if (!inbody) emit()
     next
   }
-  NF && !inbody {
+  NF && cur!="" {
     p=$0
     # The kit'"'"'s own state is not project code. Every task edits its task file and appends to
     # the event log, so keeping these edges would make every pair of tasks look coupled --
     # inflating blast radius and collapsing semantic clustering into one blob.
     if (sdir != "" && index(p, sdir) == 1) next
     if (tdir != "" && index(p, tdir) == 1) next
-    # Co-change takes EVERY commit, trailered or not. That is the whole point: a repository
-    # adopted brownfield has no Task-Id anywhere in its history.
-    if (CC) cf[++nf] = p
     if (cur != "") {
       printf "INSERT OR IGNORE INTO node VALUES(\x27f:%s\x27,\x27file\x27,\x27%s\x27,NULL);\n", q(p), q(p)
       printf "INSERT OR IGNORE INTO edge VALUES(\x27%s\x27,\x27f:%s\x27,\x27touches\x27);\n", q(cur), q(p)
     }
   }
   END {
-    ccflush()
     printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_total\x27,\x27%d\x27);\n", total
     printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_untagged\x27,\x27%d\x27);\n", untagged
     printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_trailers_recovered\x27,\x27%d\x27);\n", recovered
-    if (ccabort)
-      print "kit: co-change exceeded the pair budget; graph withheld" > "/dev/stderr"
-    else if (CC && cctotal > 0) ccemit()
+  }'
+fi   # end SRC_COMMITS = git
+
+# ---- 2b. co-change: a SEPARATE pass, over the WHOLE history -------------------
+# Deliberately not folded into the pass above, and deliberately not bounded by
+# git.adopted_at. That key exists so pre-adoption commits, which carry no trailers, do not
+# pollute task state -- but commits with no trailers are exactly what co-change reads. A
+# repository that adopted the kit today has all of its structural signal behind that
+# boundary, so scoping this to adopted_at would return nothing in the one case the feature
+# was built for. Found by adopting the kit into its own repository, where it did.
+#
+# cochange.since bounds it only if a project genuinely wants that -- a vendored import, a
+# history rewrite. Empty means everything.
+if [ "$SRC_COMMITS" = git ] && [ "$CC_ON" = 1 ]; then
+CC_SINCE=$(kit_cfg "$PROFILE" cochange.since "")
+# %x01, not a shell-quoted $'\x01'. A format consisting only of a literal control byte
+# produces no output at all; git needs its own escape when there is nothing else in it.
+git -C "$ROOT" log --reverse --no-merges --name-only --format='%x01' \
+    ${CC_SINCE:+"$CC_SINCE..HEAD"} 2>/dev/null |
+KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" \
+KIT_CCCAP="$CC_CAP" KIT_CCHUB="$CC_HUB" KIT_CCMAXD="$CC_MAXD" awk '
+  BEGIN {
+    sdir = ENVIRON["KIT_SDIR"]; tdir = ENVIRON["KIT_TDIR"]
+    CCCAP = ENVIRON["KIT_CCCAP"] + 0
+    CCHUB = ENVIRON["KIT_CCHUB"] + 0; CCMAXD = ENVIRON["KIT_CCMAXD"] + 0
+  }
+  function q(s){ gsub(/\x27/,"\x27\x27",s); return s }
+
+  # A commit is only complete when the next one starts, so fold at the next header and END.
+  function flush(   i, j, a, b, t) {
+    if (nf == 0) return
+    if (nf > CCCAP) { nf = 0; return }        # a bulk commit connects everything
+    cctotal++
+    for (i = 1; i <= nf; i++) appear[cf[i]]++
+    for (i = 1; i <= nf; i++)
+      for (j = i + 1; j <= nf; j++) {
+        a = cf[i]; b = cf[j]
+        if (a > b) { t = a; a = b; b = t }
+        pc[a SUBSEP b]++
+        if (pc[a SUBSEP b] == 1) npairs++
+      }
+    nf = 0
+    # Pair count is quadratic in commit size. A repository that blows through this is one
+    # where the graph would be useless anyway.
+    if (npairs > 2000000) { aborted = 1; exit }
   }
 
-  # Emit the co-change graph, or refuse to. Hubs are dropped first -- a file in most
-  # commits links everything to everything -- then the surviving graph is measured, and a
-  # graph whose average file has more partners than max_degree is withheld. Reporting
-  # "everything" with confidence is worse than reporting "unknown" honestly, which is what
-  # blast radius already does without this.
-  function ccemit(   k, a, b, sp, hubthr, kept, files, tot, deg, dense, avg) {
+  /^\x01/ { flush(); next }
+  NF {
+    p = $0
+    if (sdir != "" && index(p, sdir) == 1) next   # kit state is not project code
+    if (tdir != "" && index(p, tdir) == 1) next
+    cf[++nf] = p
+  }
+
+  END {
+    flush()
+    if (aborted) { print "kit: co-change exceeded the pair budget; graph withheld" > "/dev/stderr"; exit }
+    if (cctotal == 0) exit
     hubthr = cctotal * CCHUB / 100
     for (k in pc) {
       sp = index(k, SUBSEP); a = substr(k, 1, sp-1); b = substr(k, sp+1)
-      if (appear[a] > hubthr || appear[b] > hubthr) { dropped_hub++; continue }
+      if (appear[a] > hubthr || appear[b] > hubthr) continue
       deg[a]++; deg[b]++; kept++
     }
-    for (k in deg) { files++; tot += deg[k]; if (deg[k] > 100) dense++ }
-    if (!files) return
+    for (k in deg) { files++; tot += deg[k] }
+    if (!files) exit
     avg = tot / files
+    # The self-check. A monolith may still produce a hairball; rather than predict that,
+    # measure it. Reporting "everything" with confidence is worse than the honest unknown
+    # blast radius already reports without this.
     if (avg > CCMAXD) {
       printf "kit: co-change graph withheld — average file co-changes with %.0f others\n", avg > "/dev/stderr"
       print  "kit: (threshold cochange.max_degree). Blast radius stays unknown, which is honest." > "/dev/stderr"
-      return
+      exit
     }
     for (k in pc) {
       sp = index(k, SUBSEP); a = substr(k, 1, sp-1); b = substr(k, sp+1)
@@ -359,7 +404,7 @@ awk -F'\x1f' '
     printf "INSERT OR REPLACE INTO meta VALUES(\x27cochange_avg_degree\x27,\x27%.1f\x27);\n", avg
     printf "INSERT OR REPLACE INTO meta VALUES(\x27cochange_commits\x27,\x27%d\x27);\n", cctotal
   }'
-fi   # end SRC_COMMITS = git
+fi
 
 # ---- 3. events.ndjson: transitions that never had a commit -------------------
 EV="$ROOT/$STATE_DIR/events.ndjson"

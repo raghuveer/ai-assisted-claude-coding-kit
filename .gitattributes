@@ -6,3 +6,6 @@
 commit-msg  text eol=lf
 *.py        text eol=lf
 *.sql       text eol=lf
+
+# append-only shared log: take both sides rather than conflicting
+.project/events.ndjson merge=union

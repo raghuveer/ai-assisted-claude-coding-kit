@@ -103,8 +103,18 @@ case "$CMD" in
     ;;
   range)
     [ -n "$ARG" ] || { kit_warn "usage: kit-trailers.sh range <rev-range>"; exit 2; }
+    # Exclude everything reachable from git.adopted_at. A repository that adopted the kit
+    # part-way through its life has history that predates the convention, and failing a
+    # pull request for commits written before the rule existed is how a gate gets removed.
+    ADOPT=$(kit_cfg "$PROFILE" git.adopted_at "")
+    if [ -n "$ADOPT" ] && git -C "$ROOT" rev-parse -q --verify "$ADOPT^{commit}" >/dev/null 2>&1; then
+      SET=$(git -C "$ROOT" rev-list --no-merges "$ARG" "^$ADOPT" 2>/dev/null | tr -d '\r')
+    else
+      [ -n "$ADOPT" ] && kit_warn "git.adopted_at '$ADOPT' is not a commit in this repository"
+      SET=$(git -C "$ROOT" rev-list --no-merges "$ARG" 2>/dev/null | tr -d '\r')
+    fi
     N=0; BAD=0
-    for SHA in $(git -C "$ROOT" rev-list --no-merges "$ARG" 2>/dev/null | tr -d '\r'); do
+    for SHA in $SET; do
       N=$((N + 1))
       OUT=$(check_msg "$(git -C "$ROOT" show -s --format=%B "$SHA")")
       if [ -n "$OUT" ]; then

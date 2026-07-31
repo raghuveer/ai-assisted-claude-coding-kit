@@ -326,29 +326,28 @@ ai-assisted-claude-coding-kit/
 
 ## 8. Not built — open work
 
-- **Cross-project accelerator aggregation.** `export` writes per-project NDJSON;
-  something must collect across projects and count distinct project hashes. Blocked on a
-  layout decision: public marketplace folder vs private collection repo. Recommendation
-  given the client mix — private collection, public promotion.
-- **Accelerator line budget and eviction.** Recommended, not implemented. Every
-  mechanism currently only adds; an accelerator that grows monotonically eventually costs
-  more than it buys, multiplied across every project that pins it. Eviction order:
-  refuted → stale → lowest occurrence.
-- **Priority weights are unvalidated.** `unblocks×3 + escapes×2 + tier` is defensible,
-  not proven. Recalibrate once escape data exists.
-- ~~**`claude plugin validate` not run**~~ — **done.** Both manifests pass `--strict`,
-  exit 0, on Windows with CLI 2.1.220. Note it validates ONE manifest, chosen from the
-  path given: plain `.` resolves to `marketplace.json` and leaves the plugin unchecked,
-  so `claude plugin validate .claude-plugin/plugin.json --strict` is also required.
-  `validate.py` remains the structural check and is complementary, not redundant.
-- ~~**A malformed event line still produces a degenerate empty finding row**~~ — **done.**
-  `kit-index.sh` drops findings carrying no class and reports the count on stderr. A
-  classless finding cannot be grouped, counted or promoted, so it only added noise.
-- ~~**`%(trailers:...)` needs git ≥ 2.32**, no version check~~ — **done.** `kit-index.sh`
-  warns on older git and says what degrades: every commit indexes as untagged, which looks
-  like an idle repository rather than a broken one.
+**This section is no longer a list.** The kit adopted itself on 2026-07-31, so open work
+lives in `.project/tasks/` and is reported by `kit-status.sh`. A hand-maintained backlog
+here would be a second source of truth, which is the failure this whole design exists to
+avoid — and it had already drifted twice before anyone noticed.
 
----
+```sh
+bash tooling/kit-index.sh && bash tooling/kit-status.sh && cat STATUS.generated.md
+```
+
+Two of those tasks gate the rest: one real run with the model in the loop, and one run on
+macOS or Linux. Everything in `docs/DESIGN-NOTES.md` is behind them.
+
+Closed since this brief was written, kept as a record of what moved:
+
+- ~~**`claude plugin validate` not run**~~ — both manifests pass `--strict`. Note it
+  validates ONE manifest chosen from the path, so `.` resolves to `marketplace.json` and
+  the plugin manifest needs its own invocation.
+- ~~**A malformed event line produces a degenerate empty finding row**~~ — `kit-index.sh`
+  drops findings carrying no class and reports the count on stderr.
+- ~~**`%(trailers:...)` needs git ≥ 2.32, no version check**~~ — it warns on older git and
+  names what degrades: every commit indexes as untagged, which looks like an idle
+  repository rather than a broken one.
 
 ## 9. Measurement — do this before switching over
 

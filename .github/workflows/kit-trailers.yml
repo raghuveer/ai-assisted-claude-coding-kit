@@ -1,0 +1,68 @@
+# The kit's own trailer gate.
+#
+# Adapted from templates/github-trailer-gate.yml, which checks out the kit at a pinned tag.
+# This repository IS the kit, so it runs its own tooling from the checkout instead. That is
+# the only difference; the contract is the same one every adopting project gets.
+#
+# WHAT THIS CANNOT SEE: on a squash-merge GitHub composes a new commit message at merge
+# time from the PR title and body, editable in the merge dialog, and no CI run observes it
+# before it lands. The push trigger is the mitigation -- it checks after the fact, so a bad
+# squash turns main red immediately instead of quietly costing a task. Detection, not
+# prevention.
+
+name: kit trailers
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  trailers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # the merge base must be present, so no shallow clone
+
+      - name: Validate commit trailers
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            RANGE='${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}'
+          else
+            BEFORE='${{ github.event.before }}'
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ] \
+               || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              RANGE='${{ github.sha }}~1..${{ github.sha }}'
+            else
+              RANGE="$BEFORE..${{ github.sha }}"
+            fi
+          fi
+          echo "range: $RANGE"
+          bash tooling/kit-trailers.sh range "$RANGE" --enforce
+
+  # The kit's own verification ladder, from commands.* in .claude/project-profile.md.
+  # Rungs 3 and 5 are declared unavailable there rather than faked, which raises the tier
+  # instead of lowering the bar.
+  structure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scripts parse
+        run: bash -n tooling/*.sh tooling/commit-msg templates/*.sh
+      - name: Exec bits survive a fresh clone
+        run: |
+          set -eu
+          bad=$(git ls-files -s tooling/ templates/*.sh |
+                awk '$1!="100755" && $4!="tooling/schema.sql" {print $4}')
+          if [ -n "$bad" ]; then
+            echo "not executable in the git index (they would not run on Linux):" >&2
+            echo "$bad" >&2
+            exit 1
+          fi
+      - name: Structure
+        run: python3 validate.py
