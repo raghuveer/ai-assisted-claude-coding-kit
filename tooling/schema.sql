@@ -26,6 +26,22 @@ CREATE TABLE edge (
   PRIMARY KEY (src, dst, rel)
 );
 
+-- Files that historically change together, from raw history. Deliberately NOT a row in
+-- edge: it is weighted, symmetric, and dense enough that folding it into the generic
+-- traversal would let a depth-3 walk reach most of the repository. It also carries no
+-- semantics -- co-change is correlation, not dependency.
+--
+-- Measured at recall@10 0.24, 2.4x a popularity baseline (docs/DESIGN-NOTES.md), which
+-- means roughly three quarters of genuinely related files are NOT here. Consume it as
+-- "and at least these", never as the boundary of a change.
+CREATE TABLE cochange (
+  src    TEXT NOT NULL,             -- f:<path>, both directions stored
+  dst    TEXT NOT NULL,
+  weight INTEGER NOT NULL,          -- commits in which both changed
+  PRIMARY KEY (src, dst)
+);
+CREATE INDEX cochange_src ON cochange(src, weight DESC);
+
 CREATE TABLE event (
   seq        INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id    TEXT,

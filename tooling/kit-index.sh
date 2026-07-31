@@ -31,6 +31,37 @@ SRC_TASKS=$(kit_cfg   "$PROFILE" ingest.tasks   files)    # files  | none | <exe
 SRC_EVENTS=$(kit_cfg  "$PROFILE" ingest.events  ndjson)   # ndjson | none | <executable>
 SRC_COMMITS=$(kit_cfg "$PROFILE" ingest.commits git)      # git    | none
 
+# ---- co-change ---------------------------------------------------------------------
+# `touches` edges need a Task-Id, so a repository adopted brownfield has an empty edge
+# table and blast radius is unknown for everything -- and unknown is floored at T2, so the
+# whole backlog over-tiers. Co-change is derived from raw history and needs no trailers,
+# which is the only signal available on day one.
+#
+# Parameters are the measured ones (docs/DESIGN-NOTES.md), not guesses:
+#   commit_cap  barely moves recall but is what stops bulk commits connecting everything
+#   hub_pct     15-25% measured best; 5-10% actively hurt. Same remedy as cluster.hub_cap
+#   max_degree  the self-check. A monolith may still produce a hairball -- that case is
+#               untested -- so the indexer measures its own graph and withholds it rather
+#               than emitting one that would report "everything" with false confidence.
+# A minimum edge weight is deliberately absent: it was measured and it HURT.
+CC_ON=$(kit_cfg  "$PROFILE" cochange.enabled    true)
+CC_CAP=$(kit_cfg "$PROFILE" cochange.commit_cap 50)
+CC_HUB=$(kit_cfg "$PROFILE" cochange.hub_pct    20)
+# 50 is calibrated, not round: a real 676-commit repository measured 20.8 average partners
+# per file, and a synthetic sweeping-change repository measured 79.4. A false refusal costs
+# nothing -- blast radius falls back to the honest "unknown" it reports today -- while a
+# false accept produces a graph that answers "everything" with confidence. Err low.
+CC_MAXD=$(kit_cfg "$PROFILE" cochange.max_degree 50)
+case "$CC_ON" in true|1|yes) CC_ON=1 ;; *) CC_ON=0 ;; esac
+# Name the profile key, not the shell variable. A message about CC_CAP tells the reader
+# nothing they can act on; cochange.commit_cap is a line they can go and fix.
+for _p in "CC_CAP cochange.commit_cap" "CC_HUB cochange.hub_pct" "CC_MAXD cochange.max_degree"; do
+  eval "_x=\${${_p%% *}}"
+  case "$_x" in ''|*[!0-9]*)
+    kit_warn "${_p##* } must be a whole number, got '$_x' — co-change disabled"; CC_ON=0 ;;
+  esac
+done
+
 # adapter_path <spec> -- absolute path to an external ingester, or empty for a built-in.
 adapter_path() {
   case "$1" in
@@ -176,10 +207,16 @@ RANGE=${ADOPT:+$ADOPT..HEAD}
 git -C "$ROOT" log --reverse --name-only --no-merges \
     --format=$'\x01%H\x1f%aI\x1f%an\x1f%(trailers:key=Task-Id,valueonly,separator=%x1e)\x1f%(trailers:key=Task-Status,valueonly,separator=%x1e)\x1f%(trailers:key=Tier,valueonly,separator=%x1e)\x1f%(trailers:key=Fixes-Escape-Of,valueonly,separator=%x1e)\x02%B\x03' \
     ${RANGE:+$RANGE} 2>/dev/null |
-KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" awk -F'\x1f' '
+KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" \
+KIT_CC="$CC_ON" KIT_CCCAP="$CC_CAP" KIT_CCHUB="$CC_HUB" KIT_CCMAXD="$CC_MAXD" \
+awk -F'\x1f' '
   # Via ENVIRON, not -v: awk applies escape processing to -v assignments, so any path
   # containing a backslash would arrive mangled and silently match nothing.
-  BEGIN { sdir = ENVIRON["KIT_SDIR"]; tdir = ENVIRON["KIT_TDIR"] }
+  BEGIN {
+    sdir = ENVIRON["KIT_SDIR"]; tdir = ENVIRON["KIT_TDIR"]
+    CC = ENVIRON["KIT_CC"] + 0; CCCAP = ENVIRON["KIT_CCCAP"] + 0
+    CCHUB = ENVIRON["KIT_CCHUB"] + 0; CCMAXD = ENVIRON["KIT_CCMAXD"] + 0
+  }
   function q(s){ gsub(/\x27/,"\x27\x27",s); return s }
   function trim(s){ gsub(/^[ \t\r]+|[ \t\r]+$/,"",s); return s }
 
@@ -229,7 +266,28 @@ KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" awk -F'\x1f' '
     }
   }
 
+  # Fold the file list of the previous commit into the co-change counts. Called at the next
+  # commit header and at END, because a commit is only complete when the next one starts.
+  function ccflush(   i, j, a, b, t) {
+    if (!CC || nf == 0) return
+    if (nf > CCCAP) { ccskipped++; nf = 0; return }   # a bulk commit connects everything
+    cctotal++
+    for (i = 1; i <= nf; i++) appear[cf[i]]++
+    for (i = 1; i <= nf; i++)
+      for (j = i + 1; j <= nf; j++) {
+        a = cf[i]; b = cf[j]
+        if (a > b) { t = a; a = b; b = t }
+        if (!((a SUBSEP b) in pc)) npairs++
+        pc[a SUBSEP b]++
+      }
+    nf = 0
+    # Memory backstop. Pair count is quadratic in commit size, and a repository that blows
+    # through this is one where the graph would be useless anyway.
+    if (npairs > 2000000) { CC = 0; ccabort = 1 }
+  }
+
   /^\x01/ {
+    ccflush()
     sub(/^\x01/,"",$1); sha=$1; at=$2; who=$3; tid=$4; st=$5; tier=$6
     p = index($7, "\x02")          # $7 is Fixes-Escape-Of, then \x02, then body line 1
     esc  = p ? substr($7, 1, p-1) : $7
@@ -243,20 +301,63 @@ KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" awk -F'\x1f' '
     if (!inbody) emit()
     next
   }
-  NF && cur!="" {
+  NF && !inbody {
     p=$0
     # The kit'"'"'s own state is not project code. Every task edits its task file and appends to
     # the event log, so keeping these edges would make every pair of tasks look coupled --
     # inflating blast radius and collapsing semantic clustering into one blob.
     if (sdir != "" && index(p, sdir) == 1) next
     if (tdir != "" && index(p, tdir) == 1) next
-    printf "INSERT OR IGNORE INTO node VALUES(\x27f:%s\x27,\x27file\x27,\x27%s\x27,NULL);\n", q(p), q(p)
-    printf "INSERT OR IGNORE INTO edge VALUES(\x27%s\x27,\x27f:%s\x27,\x27touches\x27);\n", q(cur), q(p)
+    # Co-change takes EVERY commit, trailered or not. That is the whole point: a repository
+    # adopted brownfield has no Task-Id anywhere in its history.
+    if (CC) cf[++nf] = p
+    if (cur != "") {
+      printf "INSERT OR IGNORE INTO node VALUES(\x27f:%s\x27,\x27file\x27,\x27%s\x27,NULL);\n", q(p), q(p)
+      printf "INSERT OR IGNORE INTO edge VALUES(\x27%s\x27,\x27f:%s\x27,\x27touches\x27);\n", q(cur), q(p)
+    }
   }
   END {
+    ccflush()
     printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_total\x27,\x27%d\x27);\n", total
     printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_untagged\x27,\x27%d\x27);\n", untagged
     printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_trailers_recovered\x27,\x27%d\x27);\n", recovered
+    if (ccabort)
+      print "kit: co-change exceeded the pair budget; graph withheld" > "/dev/stderr"
+    else if (CC && cctotal > 0) ccemit()
+  }
+
+  # Emit the co-change graph, or refuse to. Hubs are dropped first -- a file in most
+  # commits links everything to everything -- then the surviving graph is measured, and a
+  # graph whose average file has more partners than max_degree is withheld. Reporting
+  # "everything" with confidence is worse than reporting "unknown" honestly, which is what
+  # blast radius already does without this.
+  function ccemit(   k, a, b, sp, hubthr, kept, files, tot, deg, dense, avg) {
+    hubthr = cctotal * CCHUB / 100
+    for (k in pc) {
+      sp = index(k, SUBSEP); a = substr(k, 1, sp-1); b = substr(k, sp+1)
+      if (appear[a] > hubthr || appear[b] > hubthr) { dropped_hub++; continue }
+      deg[a]++; deg[b]++; kept++
+    }
+    for (k in deg) { files++; tot += deg[k]; if (deg[k] > 100) dense++ }
+    if (!files) return
+    avg = tot / files
+    if (avg > CCMAXD) {
+      printf "kit: co-change graph withheld — average file co-changes with %.0f others\n", avg > "/dev/stderr"
+      print  "kit: (threshold cochange.max_degree). Blast radius stays unknown, which is honest." > "/dev/stderr"
+      return
+    }
+    for (k in pc) {
+      sp = index(k, SUBSEP); a = substr(k, 1, sp-1); b = substr(k, sp+1)
+      if (appear[a] > hubthr || appear[b] > hubthr) continue
+      printf "INSERT OR IGNORE INTO node VALUES(\x27f:%s\x27,\x27file\x27,\x27%s\x27,NULL);\n", q(a), q(a)
+      printf "INSERT OR IGNORE INTO node VALUES(\x27f:%s\x27,\x27file\x27,\x27%s\x27,NULL);\n", q(b), q(b)
+      printf "INSERT OR REPLACE INTO cochange VALUES(\x27f:%s\x27,\x27f:%s\x27,%d);\n", q(a), q(b), pc[k]
+      printf "INSERT OR REPLACE INTO cochange VALUES(\x27f:%s\x27,\x27f:%s\x27,%d);\n", q(b), q(a), pc[k]
+    }
+    printf "INSERT OR REPLACE INTO meta VALUES(\x27cochange_pairs\x27,\x27%d\x27);\n", kept
+    printf "INSERT OR REPLACE INTO meta VALUES(\x27cochange_files\x27,\x27%d\x27);\n", files
+    printf "INSERT OR REPLACE INTO meta VALUES(\x27cochange_avg_degree\x27,\x27%.1f\x27);\n", avg
+    printf "INSERT OR REPLACE INTO meta VALUES(\x27cochange_commits\x27,\x27%d\x27);\n", cctotal
   }'
 fi   # end SRC_COMMITS = git
 

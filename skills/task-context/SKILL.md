@@ -65,7 +65,30 @@ is the failure this skill exists to prevent.
       GROUP BY n.id ORDER BY 3;"
    ```
 
-6. Read source files only from that result, and only those the acceptance criteria
+6. Widen with co-change, if the index has it. `touches` edges need a `Task-Id`, so a
+   repository adopted brownfield has none and step 5 returns nothing at all. Co-change is
+   derived from raw history and needs no trailers, which is the only signal available on
+   day one:
+
+   ```sh
+   sqlite3 .project/index.db "
+     SELECT n.path, c.weight
+       FROM cochange c JOIN node n ON n.id = c.dst
+      WHERE c.src IN (SELECT dst FROM edge WHERE src='<TASK-ID>' AND rel='touches')
+         OR c.src IN ('f:<file you are about to change>')
+      ORDER BY c.weight DESC LIMIT 10;"
+   ```
+
+   **This adds to blast radius. It never bounds it.** Measured recall@10 is 0.24 — roughly
+   three quarters of genuinely related files are *not* in this list. It turns "unknown"
+   into "unknown, and at least these". It never turns it into "only these", and a tier
+   must not be lowered because this query came back short.
+
+   An empty result means the graph was not built or was withheld — `kit-index.sh` refuses
+   to emit one whose average file co-changes with more than `cochange.max_degree` others,
+   because a graph that answers "everything" is worse than the honest unknown.
+
+7. Read source files only from that result, and only those the acceptance criteria
    require. The pack already named the cluster's files — do not re-derive them. Report
    which you skipped and why.
 
@@ -74,3 +97,5 @@ is the failure this skill exists to prevent.
 State the task, its tier if already assigned, the files you loaded, and anything the
 index could not tell you. If `depends_on` edges are absent for this stack, the blast
 radius is **unknown, not small** — say so, and let `tier-classify` treat it as unknown.
+Co-change neighbours do not change that: they widen what is known, and leave what is
+unknown exactly as unknown as it was.

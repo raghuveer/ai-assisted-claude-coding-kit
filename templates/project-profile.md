@@ -49,6 +49,17 @@ tier.default: T1
 # come out too fragmented; lower it if everything lands in cluster 1.
 cluster.hub_cap: 5
 
+# --- co-change: files that historically change together, from raw history -------
+# touches edges need a Task-Id, so a repo adopted brownfield has none and blast radius is
+# unknown for everything. Co-change needs no trailers. Parameters are measured, not guessed
+# (docs/DESIGN-NOTES.md): a minimum edge weight was tested and HURT, so there is no knob for
+# one. max_degree is the self-check -- a graph whose average file co-changes with more than
+# this is withheld rather than emitted, because answering "everything" is worse than unknown.
+cochange.enabled:    true
+cochange.commit_cap: 50
+cochange.hub_pct:    20
+cochange.max_degree: 50
+
 # --- accelerators are imported per project, never installed globally ------------
 # accelerator.technology: .claude/accelerators/go.md
 # accelerator.industry:   .claude/accelerators/bfsi.md
