@@ -1,0 +1,294 @@
+# Design notes — proposed, not built
+
+> **Status: seeded, not earned.** Nothing here is implemented. The field names, key names
+> and edge names below are deliberately provisional: they were derived from two described
+> projects and one architect's experience, not from a project this kit has run. By the
+> kit's own standard that makes them hypotheses, and shipping them as schema would be the
+> same mistake the `[seeded]` / `[earned]` marking exists to prevent.
+>
+> The *shapes* are argued from code that exists and constraints that are measured. The
+> *names* should be fixed by the first real project that needs them, not by this document.
+
+Read `HANDOFF.md` first for why the kit is built the way it is. This note only covers work
+that follows from it.
+
+---
+
+## 0. The constraint everything here has to satisfy
+
+Resident cost is ~1,259 tokens per session: ~440 for five skills, ~840 for eight agents.
+Agent descriptions are resident because that is how routing works, so **an agent is a
+permanent standing charge and a reference file is not**. Every proposal below therefore
+adds reference material and edges, never agents, and never skills where a file will do.
+
+The second constraint is measured rather than assumed: the caching thesis is close to its
+ceiling — cache-read ratio 97.5%, effective input multiplier 0.129× against a 0.100× floor,
+so **≤22% headroom**. The remaining levers are peak context window and model mix. A design
+that adds structure without touching either is not a token improvement, whatever else it is
+worth.
+
+---
+
+## 1. Components — the missing binding axis
+
+### The problem, stated from code
+
+`accelerator.technology` is already repeatable, with agent binding:
+
+```
+accelerator.technology: .claude/accelerators/react.md -> implementation-reviewer,coder
+```
+
+`<path> [-> agent,agent]`, and `kit-accel.sh resolve --agent X` returns only X's set. That
+works for a single-stack project. It cannot work for a polyglot one, for a reason visible
+in any modernization target:
+
+> Source: .NET 5 MVC + MSSQL, monolith.
+> Target: React UI, .NET 8 services, PostgreSQL (OLTP), Redshift (OLAP), AWS Glue,
+> RabbitMQ, Valkey, Redpanda — event-driven microservices, database-per-service.
+
+`implementation-reviewer` reviews **both** the React UI and the .NET services. Binding by
+agent cannot separate them, which leaves two bad options: load all eight accelerators for
+that agent — paying for them on every invocation and inviting a reviewer to cite a React
+rule against C# — or run one reviewer agent per stack, which multiplies the ~840 tok
+standing charge by eight.
+
+The binding axis has to be the **component**, resolved from the task, not the agent.
+
+This is not specific to modernization. It is the same gap in any polyglot greenfield build.
+
+### What the described projects demand beyond "two stacks"
+
+**Topology changes, not stack swaps.** Example 1 is one source component becoming many.
+Example 2 is three becoming two — *the local hub is eliminated*, absorbed into the client
+and the server. Redshift, Glue and Redpanda in example 1 have no source counterpart at all.
+A `source`/`target` pair of fields expresses neither case. The relation is many-to-many and
+must be able to say **eliminated** and **newly introduced**.
+
+**Stack is not language.** Example 2 is .NET → .NET 8: same language family, but
+Windows→Linux, MSSQL→MySQL, plus a new Android target via MAUI, plus SQLite on device.
+`task.lang` cannot select the right obligations for "the MAUI client on Android". The
+dimensions that matter are language, framework, datastore and runtime/OS.
+
+**Data fan-out is its own workstream.** One MSSQL becomes PostgreSQL-per-service plus
+Redshift plus Glue. Schema mapping is many-to-many, and the migration work is not code work.
+
+**Architecture rules are checkable invariants.** "Database-per-service", "adapter pattern
+over interface-first", "no service reads another service's store" are not stacks. They are
+obligations a reviewer can check, and a violation is a `compliance`-class finding.
+
+### Proposed shape
+
+A `component` node type; components carry a stack and a role. Tasks name a component.
+Accelerator declarations gain a component predicate alongside the existing agent one.
+`commands.*` become resolvable per component, with the bare form as the default.
+
+Illustrative only — names are not decided:
+
+```
+component: hub-legacy     stack: dotnet5,mssql,windows        role: source
+component: client-maui    stack: dotnet8,maui,sqlite          role: target
+component: server         stack: dotnet8,mysql,valkey,linux   role: target
+
+migrates: hub-legacy -> client-maui, server
+
+accelerator.technology: .claude/accelerators/maui.md  -> @client-maui
+accelerator.technology: .claude/accelerators/mysql.md -> @server
+```
+
+A task tagged `component: client-maui` then resolves MAUI and SQLite obligations and
+nothing about MySQL.
+
+### Why this is additive
+
+Section 1 of `kit-index.sh` reads frontmatter through `v["id"]`, `v["lang"]`, `v["tier"]`
+style lookups — **unknown keys are ignored, not errors**. So a new optional `component:`
+key is readable by older kits, which simply skip it.
+
+| Change | Bump under `VERSIONING.md` |
+|---|---|
+| optional `component:` on task frontmatter; `lang` retained, derived from component when set | MINOR |
+| new repeatable `component.*` profile keys | MINOR |
+| `component` node type, `migrates_to` edge rel | MINOR — index-only, and rebuild is lossless |
+| `-> @component` predicate; existing `-> agent` form untouched | MINOR |
+
+An earlier draft of this note claimed the model forced a MAJOR bump. That was wrong: it is
+only breaking if `lang` is removed or repurposed, and there is no reason to do either. The
+whole model can ship incrementally, which removes any argument for deferring it to a 2.0.
+
+### Free hooks already in place
+
+`constrained_by` and `covers` are **queried by `task-context` and written by nothing**. The
+edge vocabulary already anticipated architectural invariants and test-coverage links. Both
+slots are empty and neither needs a schema change to fill.
+
+---
+
+## 2. The solution-architect overlay
+
+A third accelerator kind, not a new subsystem:
+
+```
+accelerators/technology/   shared across projects
+accelerators/industry/     shared across projects
+accelerators/solution/     PROJECT-SCOPED — never shared
+```
+
+The binding mechanism is the one that already exists: large at rest, loaded only by the
+agents and components that must obey it, never reaching the orchestrator.
+
+The overlay is what populates `constrained_by`. An SA who declares "no service reads another
+service's store" is declaring a checkable obligation, and a violation of it is a
+`compliance` finding like any other — which means it flows into the same findings table,
+the same vindication, the same promotion.
+
+### The one rule that must be structural
+
+Technology and industry accelerators are shared, and `kit-accel.sh propose` exports
+aggregates from them. That export is safe because the redaction is **structural**: the query
+*cannot* select finding text, paths, task ids or titles — not by convention, by construction.
+
+A solution overlay is the opposite kind of thing. It is client architecture. It must be
+excluded from `propose` **by construction too**, the same way instance data already is. Not
+by a filter someone remembers to apply, and not by a naming convention.
+
+### Same mechanism, all three project types
+
+Greenfield, brownfield and modernization differ only in what feeds the overlay, not in how
+it binds. Greenfield starts with no derived context; brownfield starts with analysis of
+existing code, schema, diagrams and solution documents; modernization starts with that plus
+a target architecture. In every case the overlay is project-scoped context resolved per
+component.
+
+---
+
+## 3. Versioned accelerator library
+
+`HANDOFF.md` §8 records this as blocked:
+
+> Cross-project accelerator aggregation. `export` writes per-project NDJSON; something must
+> collect across projects and count distinct project hashes. Blocked on a layout decision:
+> public marketplace folder vs private collection repo. Recommendation given the client mix
+> — private collection, public promotion.
+
+`kit-accel.sh export` already emits a well-formed aggregate —
+`{kind, key, class, n, vindicated, refuted, project, kit}` with a salted project handle —
+and currently exports nowhere. This section proposes the destination.
+
+### Public library, private evidence
+
+Keep §8's recommendation, because the halves carry different risk.
+
+**The library is public.** Versioned accelerator files anyone can import. These are
+conclusions, and conclusions carry no client data.
+
+**The export stream stays private.** It is aggregate-only by construction, but aggregate is
+not the same as non-sensitive: `{industry: bfsi, class: fail-open, n: 17}` still asserts a
+fact about an engagement, and some clients would object regardless of how the handle is
+hashed. Publish what was learned; do not publish who taught it.
+
+### Version each accelerator independently of the plugin
+
+`VERSIONING.md` classes accelerator changes as MINOR. If the library ships inside the plugin
+and improves after every project, the plugin's minor version churns on content that never
+touches the engine — and the version stops signalling anything about the engine, which is
+the entire reason it is pinned.
+
+The cadences are genuinely different. The engine changes slowly. A .NET accelerator should
+improve whenever a project teaches it something, without asking anyone to upgrade tooling.
+
+So: frontmatter carrying `id`, `version` and `source`, alongside the per-line
+`[seeded]`/`[earned]` marking that already exists. An imported copy keeps its version
+header, so a year later the file itself answers *which version was this project reviewed
+against* — the property that made pinning the plugin worth doing, applied one level down.
+
+A `kit-accel.sh import <id>@<version>` fetches into the project. Whether the library lives
+in its own repository or a folder of this one is then packaging, not versioning. Lean to its
+own repository so accelerator releases do not appear in the engine's release feed.
+
+### Two provenance states, not three
+
+Knowledge from projects delivered outside this kit enters as `[seeded]` — a hypothesis,
+honestly labelled — and promotes to `[earned]` when findings confirm it across distinct
+projects. Resist a third tier for "expert-provided". The operational question is only
+*has this system observed it*, and an experienced architect's judgement is still a
+hypothesis until the findings table agrees. Record attribution as metadata if useful; keep
+the two states.
+
+### Line budget is a prerequisite, not a follow-up
+
+`HANDOFF.md` §8 also records:
+
+> Accelerator line budget and eviction. Every mechanism currently only adds; an accelerator
+> that grows monotonically eventually costs more than it buys, **multiplied across every
+> project that pins it.** Eviction order: refuted → stale → lowest occurrence.
+
+A central library that improves continuously is a library that grows continuously.
+Versioning protects a project from *drift* — it pins and stays put — but the head version
+keeps accreting, so every new project starts heavier than the last. Eventually an
+accelerator costs more per invocation than the defects it prevents, and nothing in the
+system would say so.
+
+The library therefore ships with a per-accelerator line budget, the eviction order above,
+and a **published size per version**, so the cost of pinning is visible before pinning.
+
+---
+
+## 4. What must be true before any of this is built
+
+Every defect found on 2026-07-31 — the trailer parser, the enforcement fail-open, the four
+breaks in the findings pipeline, the hardcoded version — was in a path that had never been
+executed. None was found by reading. That is evidence about method, and it applies directly
+to everything above.
+
+**Gate 1 — one real run.** One task, model in the loop, on a real repository. Not a parallel
+track; a precondition. It is the only activity that has reliably found defects here.
+
+**Gate 2 — co-change edges must be shown to help before they are shipped.** `touches` edges
+require a `Task-Id` (`kit-index.sh`), so a brownfield repo starts with an empty edge table
+and blast radius reports *unknown*. Deriving co-change edges from raw history would fix that
+without needing trailers — **but co-change is correlation, not dependency**. In a legacy
+monolith where commits routinely touch dozens of files, every file co-changes with every
+other, and the result is a hairball that reports "everything" with false confidence. That is
+worse than today, because *unknown* is at least honest.
+
+Two measurements decide it, both cheap and both runnable against an existing repository
+before any plugin code changes:
+
+1. **Degree distribution.** If the median file co-changes with hundreds of others, the idea
+   is dead for monoliths and should be reported as dead.
+2. **Predictive power.** For a sample of historical commits, does the graph rank the files
+   that actually changed above chance?
+
+**Gate 3 — component field names are bound by the first real polyglot project**, not by this
+note.
+
+---
+
+## 5. Open questions
+
+**Is the backend moving?** GitHub Issues, a REST API, or a hosted database have been raised
+as future tracking options. If that move is likely, deepening the *task-file* schema with
+components and migration edges is work that migrates badly, and the explicit ingest adapter
+boundary should come first. The derived-index invariant is what makes an alternative backend
+cheap at all — the derivation, planning, clustering and status logic downstream of ingest
+are already source-agnostic — but the seam is currently implicit, hardcoded to markdown
+frontmatter and `events.ndjson` in `kit-index.sh`. **This question should be answered before
+section 1 is built, not after.**
+
+**Behaviour preservation has no rung.** For modernization the real acceptance criterion is
+whether the new component reproduces the old one's observable behaviour. The ladder's five
+rungs do not include equivalence or characterization testing against the source system.
+`covers` is the natural edge and is currently unwritten.
+
+**Non-Claude models are out of scope, and that is a protocol fact rather than a decision.**
+Claude Code accepts Anthropic Messages, Bedrock InvokeModel and Google Agent Platform
+formats. OpenAI's `/v1/chat/completions` is not among them, gateway model discovery ignores
+ids that do not begin with `claude` or `anthropic`, and routing to non-Claude models through
+a gateway is explicitly unsupported. Translating wire formats is a proxy by definition.
+
+What this *does* mean for design: the agents pin `model: opus|sonnet|haiku`, and those are
+**aliases**, remapped by `ANTHROPIC_DEFAULT_OPUS_MODEL` and its siblings. The agents depend
+on three tiers — deep reasoning, working, cheap — not on three products. **Never pin a full
+model id in agent frontmatter**, because that converts a remappable alias into a hard
+dependency for every operator downstream.

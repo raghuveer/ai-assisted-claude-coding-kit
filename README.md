@@ -147,6 +147,7 @@ sqlite3 .project/index.db "SELECT lang, class, COUNT(*) FROM finding
 | [`INSTALL.md`](INSTALL.md) | Installing, adopting in a new repo, joining one that already uses it |
 | [`docs/HANDOFF.md`](docs/HANDOFF.md) | Why it is built this way — requirements, decisions with rationale, verified state, open gaps, and the constraints that must not be broken |
 | [`docs/VERSIONING.md`](docs/VERSIONING.md) | What MAJOR/MINOR/PATCH mean here, tag format, and the release sequence |
+| [`docs/DESIGN-NOTES.md`](docs/DESIGN-NOTES.md) | Proposed and **not built**: per-component accelerator binding, the solution overlay, a versioned accelerator library — and what must be measured before any of it ships |
 | [`docs/MIGRATION.md`](docs/MIGRATION.md) | Moving from the 0.1 copy-based kit: commands → skills → hooks, and what was retired |
 | [`docs/agents-README.md`](docs/agents-README.md) | The subagent pipeline, risk tiering, and how routing picks a model |
 
