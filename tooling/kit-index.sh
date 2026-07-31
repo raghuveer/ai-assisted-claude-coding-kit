@@ -204,8 +204,22 @@ fi
 RANGE=${ADOPT:+$ADOPT..HEAD}
 # %B rides along so a commit whose trailers git declines to parse can still be recovered
 # below. \x02 opens the raw body, \x03 closes it, and the --name-only file list follows.
-git -C "$ROOT" log --reverse --name-only --no-merges \
-    --format=$'\x01%H\x1f%aI\x1f%an\x1f%(trailers:key=Task-Id,valueonly,separator=%x1e)\x1f%(trailers:key=Task-Status,valueonly,separator=%x1e)\x1f%(trailers:key=Tier,valueonly,separator=%x1e)\x1f%(trailers:key=Fixes-Escape-Of,valueonly,separator=%x1e)\x02%B\x03' \
+# %ad in an explicit UTC format, not %aI. Two reasons, both found by running one fixture on
+# Windows and Debian and diffing the resulting index:
+#
+#   1. %aI renders the same instant differently across git versions -- 2.47 emits
+#      ...T00:00:00Z where 2.41 emits ...T00:00:00+00:00 -- so a mixed-platform team
+#      derives different index content from identical history.
+#   2. %aI carries the author LOCAL offset, and `at` is TEXT that ORDER BY compares as a
+#      string. A commit at 05:30+05:30 then sorts after one at 02:00Z despite being
+#      earlier, so state, owner and tier could be derived from the wrong commit.
+#
+# TZ=UTC0 with format-local renders every commit in one canonical zone, matching the
+# `date -u` format kit-finding.sh already writes into events.ndjson. Both sources now
+# produce strings whose lexical order is their chronological order.
+TZ=UTC0 git -C "$ROOT" log --reverse --name-only --no-merges \
+    --date=format-local:%Y-%m-%dT%H:%M:%SZ \
+    --format=$'\x01%H\x1f%ad\x1f%an\x1f%(trailers:key=Task-Id,valueonly,separator=%x1e)\x1f%(trailers:key=Task-Status,valueonly,separator=%x1e)\x1f%(trailers:key=Tier,valueonly,separator=%x1e)\x1f%(trailers:key=Fixes-Escape-Of,valueonly,separator=%x1e)\x02%B\x03' \
     ${RANGE:+$RANGE} 2>/dev/null |
 KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" \
 KIT_CC="$CC_ON" KIT_CCCAP="$CC_CAP" KIT_CCHUB="$CC_HUB" KIT_CCMAXD="$CC_MAXD" \
