@@ -20,7 +20,17 @@ fi
 ROOT=$(kit_root) || exit 0
 kit_active "$ROOT" || exit 0
 PROFILE=$(kit_profile "$ROOT")
-MODE=$(kit_cfg "$PROFILE" git.trailer_enforcement warn)     # warn | enforce
+MODE=$(kit_cfg "$PROFILE" git.trailer_enforcement warn)
+# An unrecognised value must not degrade to warn in silence. The only reason to touch this
+# key is to make it stricter, so a plausible guess -- block, strict, on, true -- would
+# otherwise leave the repo looking enforced while every commit sailed through. That is the
+# same fail-open case the kit-lib.sh check above exists to prevent, eleven lines earlier.
+case "$MODE" in
+  warn|enforce) ;;
+  *) echo "commit-msg: git.trailer_enforcement is '$MODE' — valid values are warn|enforce." >&2
+     echo "  treating as enforce; correct it in .claude/project-profile.md." >&2
+     MODE=enforce ;;
+esac
 MSG=$(cat "$1")
 
 case "$MSG" in

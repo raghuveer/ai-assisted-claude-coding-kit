@@ -10,6 +10,9 @@ paths.state:  .project
 paths.status: STATUS.generated.md
 
 git.adopted_at:           
+# warn = print what is missing and commit anyway. enforce = reject the commit.
+# Those two words are the whole vocabulary; anything else is treated as enforce and
+# says so, rather than quietly downgrading a repo you believed was protected.
 git.trailer_enforcement:  warn
 git.trivial_pattern:      ^(chore|docs|style)(\(.*\))?:
 
