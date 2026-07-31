@@ -102,6 +102,23 @@ Plus the POSIX text utilities that ship alongside those: `awk`, `sed`, `grep`, `
 `cut`, `tr`, `wc`. No language runtime. Bash is reachable on Windows via the shell git
 already ships, and git is a hard dependency anyway since status is derived from it.
 
+## Platforms
+
+| | verified on | awk | bash |
+|---|---|---|---|
+| Linux | CI, every push | mawk | 5.2 |
+| macOS | CI, every push | one-true-awk 20200816 | **3.2.57** |
+| Windows | git-bash | gawk 5.0 | 5.2 |
+
+Not a compatibility claim — `tests/conformance.sh` builds a fixture with fixed author and
+committer dates, so every commit SHA is identical everywhere, and asserts that the derived
+index comes out byte-identical. All three currently produce the same fingerprint.
+
+That check exists because it earned its place: running one fixture on a second platform is
+what exposed timestamps being stored with the author's local offset and compared as strings,
+which could derive state from the wrong commit. Neither platform showed anything wrong
+alone — only the diff between them did.
+
 ## Trailers — frozen once adopted
 
 Trailers are written into commit history, so changing the vocabulary later means either
@@ -165,6 +182,12 @@ than procedural.
   `kit-plan.sh`. What does not ship is a per-stack extractor deriving them from the code
   itself, so blast radius reports **unknown, not low** — `tier-classify` treats unknown
   as at least T2.
+
+  Co-change edges narrow this without closing it. They are derived from raw history and
+  need no trailers, so a repository adopted brownfield gets *some* signal on day one — but
+  measured recall@10 is 0.24, meaning roughly three quarters of genuinely related files are
+  absent. They turn "unknown" into "unknown, and at least these", never into "only these",
+  and `kit-index.sh` withholds the graph entirely when it measures as a hairball.
 - The write guard is a net, not a security boundary. It fails open on a malformed payload,
   because a guard that blocks every edit on a parse error is a guard people remove.
 - Coder and reviewer currently share a model family, so they share blind spots.
