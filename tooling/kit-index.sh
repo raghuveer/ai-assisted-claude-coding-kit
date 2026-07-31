@@ -16,24 +16,94 @@ ADOPT=$(kit_cfg "$PROFILE" git.adopted_at "")   # commit-ish; history before it 
 
 DB="$ROOT/$STATE_DIR/index.db"
 
+# ---- the ingest seam ---------------------------------------------------------------
+# Sections 1-3 below turn a SOURCE into SQL. Section 4 derives current state from that SQL
+# and knows nothing about where it came from. That split is what makes an alternative
+# backend -- GitHub issues, a REST API, a hosted database -- a matter of replacing one
+# producer rather than rewriting the indexer, and it only holds because the index is
+# derived: delete it, rebuild, and nothing is lost. See docs/ADAPTERS.md for the contract.
+#
+# Built-ins stay inline rather than being spawned through the same contract. A bare process
+# spawn costs ~0.2s on Windows and this runs at the start of every session; paying three of
+# them to make the default path symmetrical would undo the optimisation section 1 exists for.
+# They honour the same contract, they just are not invoked across a process boundary.
+SRC_TASKS=$(kit_cfg   "$PROFILE" ingest.tasks   files)    # files  | none | <executable>
+SRC_EVENTS=$(kit_cfg  "$PROFILE" ingest.events  ndjson)   # ndjson | none | <executable>
+SRC_COMMITS=$(kit_cfg "$PROFILE" ingest.commits git)      # git    | none
+
+# adapter_path <spec> -- absolute path to an external ingester, or empty for a built-in.
+adapter_path() {
+  case "$1" in
+    files|ndjson|git|none|'') return 1 ;;
+    /*|?:*) printf '%s' "$1" ;;
+    *) printf '%s/%s' "$ROOT" "$1" ;;
+  esac
+}
+
+# run_adapter <spec> <verb> -- invoke an external ingester. `emit` writes SQL to stdout,
+# `fingerprint` writes a short opaque string describing the current state of the source.
+#
+# The statement filter is a net, not a security boundary: an adapter is trusted code named
+# in a committed, reviewed profile, and it necessarily emits SQL that gets executed. The
+# filter catches an adapter that accidentally reshapes the database, not one that means to.
+run_adapter() {
+  _ap=$(adapter_path "$1") || return 1
+  if [ ! -x "$_ap" ] && [ ! -f "$_ap" ]; then
+    kit_warn "ingest adapter not found: $1"; return 2
+  fi
+  _out=$(KIT_ROOT="$ROOT" KIT_PROFILE="$PROFILE" KIT_STATE_DIR="$STATE_DIR" \
+         KIT_TASKS_DIR="$TASKS_DIR" KIT_ADOPT="$ADOPT" KIT_DB="$DB" \
+         bash "$_ap" "$2" 2>/dev/null) || {
+    # Fail closed. A partial index is not a smaller truth, it is a wrong one -- an absent
+    # task reads as a finished backlog, which is the failure derived status exists to avoid.
+    kit_warn "ingest adapter failed: $1 $2"; return 2
+  }
+  if [ "$2" = emit ] && printf '%s' "$_out" |
+     grep -qiE '(^|[[:space:];])(attach|detach|pragma|drop|alter|vacuum)[[:space:]]'; then
+    kit_warn "ingest adapter $1 emitted a schema-altering statement; refusing"; return 2
+  fi
+  printf '%s\n' "$_out"
+}
+
 # --if-stale: skip the rebuild when nothing it derives from has changed. task-context runs
 # this at the start of every session, and a full reindex there is pure latency on a backlog
-# that has not moved. The inputs are exactly the three text sources plus the profile, so
-# "none of them is newer than the index" is a sound reason to keep the current one.
+# that has not moved.
+#
+# Local sources are compared by mtime. An external adapter cannot be: a GitHub issue changes
+# with no local file touched, so mtime would report fresh forever. Those declare a
+# fingerprint instead, which is stored in meta and compared on the next run.
 if [ "${1:-}" = "--if-stale" ] && [ -f "$DB" ]; then
-  HEADF=$(cd "$ROOT" && git rev-parse --git-path HEAD 2>/dev/null)
-  case "$HEADF" in /*|?:*) ;; *) HEADF="$ROOT/$HEADF" ;; esac
-  if [ -z "$(find "$ROOT/$TASKS_DIR" "$ROOT/$STATE_DIR/events.ndjson" "$PROFILE" "$HEADF" \
-                  -newer "$DB" 2>/dev/null | head -1)" ]; then
+  STALE=0
+  WATCH="$PROFILE"
+  [ "$SRC_TASKS"  = files ]  && WATCH="$WATCH $ROOT/$TASKS_DIR"
+  [ "$SRC_EVENTS" = ndjson ] && WATCH="$WATCH $ROOT/$STATE_DIR/events.ndjson"
+  if [ "$SRC_COMMITS" = git ]; then
+    HEADF=$(cd "$ROOT" && git rev-parse --git-path HEAD 2>/dev/null)
+    case "$HEADF" in /*|?:*) ;; *) HEADF="$ROOT/$HEADF" ;; esac
+    WATCH="$WATCH $HEADF"
+  fi
+  # shellcheck disable=SC2086
+  [ -n "$(find $WATCH -newer "$DB" 2>/dev/null | head -1)" ] && STALE=1
+  if [ "$STALE" = 0 ]; then
+    for _s in "$SRC_TASKS" "$SRC_EVENTS"; do
+      adapter_path "$_s" >/dev/null || continue
+      _now=$(run_adapter "$_s" fingerprint) || { STALE=1; break; }
+      _was=$(sqlite3 "$DB" "SELECT value FROM meta WHERE key='fingerprint:$_s';" 2>/dev/null | tr -d '\r')
+      [ "$_now" = "$_was" ] || { STALE=1; break; }
+    done
+  fi
+  if [ "$STALE" = 0 ]; then
     printf '%s\n' "${DB#$ROOT/}"
     exit 0
   fi
 fi
 SQL=$(mktemp); trap 'rm -f "$SQL"' EXIT
 mkdir -p "$ROOT/$STATE_DIR"
-rm -f "$DB"
-sqlite3 "$DB" < "$(dirname "$0")/schema.sql"
+ADAPTER_FAILED=0
 
+# The whole build is assembled before the existing index is touched. An ingest source can
+# now fail -- an adapter for a remote backend fails whenever the network does -- and
+# destroying the index first would turn a transient outage into an empty backlog.
 { echo "BEGIN;"
 
 # ---- 1. tasks: frontmatter is authoritative for identity ----------------------
@@ -42,7 +112,9 @@ sqlite3 "$DB" < "$(dirname "$0")/schema.sql"
 # so a six-task backlog took ~50s to reindex, and task-context reindexes at the start of
 # every session. Identical SQL, identical precedence (first occurrence of a key wins).
 HAVE_TASKS=0
-if [ -d "$ROOT/$TASKS_DIR" ]; then
+if [ "$SRC_TASKS" != files ]; then
+  HAVE_TASKS=0
+elif [ -d "$ROOT/$TASKS_DIR" ]; then
   for f in "$ROOT/$TASKS_DIR"/*.md; do
     if [ -e "$f" ]; then HAVE_TASKS=1; break; fi
   done
@@ -93,6 +165,7 @@ fi
 # empty, so every commit indexes as untagged: no state transitions, and escape-rate-by-tier
 # -- the headline metric -- has nothing to work from. That degradation is invisible in the
 # output (it looks like an idle repo), so it has to be said out loud here.
+if [ "$SRC_COMMITS" = git ]; then
 if [ "$(git --version | awk '{ n=split($3,v,"."); print (v[1]>2 || (v[1]==2 && v[2]>=32)) ? 1 : 0 }')" != 1 ]; then
   kit_warn "git $(git --version | awk '{print $3}') is older than 2.32 — commit trailers"
   kit_warn "cannot be parsed; every commit will index as untagged. Upgrade git."
@@ -185,10 +258,11 @@ KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" awk -F'\x1f' '
     printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_untagged\x27,\x27%d\x27);\n", untagged
     printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_trailers_recovered\x27,\x27%d\x27);\n", recovered
   }'
+fi   # end SRC_COMMITS = git
 
 # ---- 3. events.ndjson: transitions that never had a commit -------------------
 EV="$ROOT/$STATE_DIR/events.ndjson"
-if [ -f "$EV" ]; then
+if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
   # Sorted by timestamp, then by the whole line, so the index is a function of the SET of
   # events rather than of their order in the file. .gitattributes marks events.ndjson
   # merge=union, so two developers' appends interleave arbitrarily on merge; without this
@@ -237,6 +311,22 @@ if [ -f "$EV" ]; then
     }'
 fi
 
+# ---- 3b. external ingest adapters --------------------------------------------
+# Same position in the pipeline as the built-ins: emit SQL, before any derivation runs. An
+# adapter that fails aborts the build rather than producing a thinner index, because a
+# missing task reads as a finished backlog rather than as an error.
+for _spec in "$SRC_TASKS" "$SRC_EVENTS"; do
+  adapter_path "$_spec" >/dev/null || continue
+  run_adapter "$_spec" emit || { ADAPTER_FAILED=1; break; }
+  _fp=$(run_adapter "$_spec" fingerprint 2>/dev/null || true)
+  [ -n "$_fp" ] && printf "INSERT OR REPLACE INTO meta VALUES('fingerprint:%s','%s');\n" \
+    "$(printf '%s' "$_spec" | sed "s/'/''/g")" "$(printf '%s' "$_fp" | sed "s/'/''/g")"
+done
+for _spec in $(kit_cfg_all "$PROFILE" ingest.extra); do
+  [ -n "$_spec" ] || continue
+  run_adapter "$_spec" emit || { ADAPTER_FAILED=1; break; }
+done
+
 # ---- 4. derive current state; text sources always win over stale columns -----
 cat <<'DERIVE'
 -- Order matters: a task may exist only in commits, with no task file. Its row must
@@ -276,6 +366,14 @@ DERIVE
 echo "COMMIT;"
 } > "$SQL"
 
+if [ "$ADAPTER_FAILED" != 0 ]; then
+  kit_warn "an ingest adapter failed; the existing index was left unchanged."
+  kit_warn "Derived status is therefore stale, not wrong — rerun once the source is reachable."
+  exit 1
+fi
+
+rm -f "$DB"
+sqlite3 "$DB" < "$(dirname "$0")/schema.sql"
 sqlite3 "$DB" < "$SQL" || { kit_warn "index build failed; index.db may be incomplete"; exit 1; }
 
 # Recovering these commits keeps derived status correct, but doing it quietly would hide a

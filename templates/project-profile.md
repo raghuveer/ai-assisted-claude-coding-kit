@@ -9,6 +9,14 @@ paths.tasks:  .project/tasks
 paths.state:  .project
 paths.status: STATUS.generated.md
 
+# Where each kind of state is ingested from. Defaults are the built-in text sources; point
+# one at an executable to read from somewhere else (GitHub issues, an API, a database).
+# See docs/ADAPTERS.md for the contract. `none` disables a source entirely.
+# ingest.tasks:   files      # files  | none | <path to executable>
+# ingest.events:  ndjson     # ndjson | none | <path to executable>
+# ingest.commits: git        # git    | none
+# ingest.extra:   <path>     # repeatable; additive, never replaces a built-in
+
 git.adopted_at:           
 # warn = print what is missing and commit anyway. enforce = reject the commit.
 # Those two words are the whole vocabulary; anything else is treated as enforce and
