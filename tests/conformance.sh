@@ -102,7 +102,10 @@ Tier: T2" >/dev/null 2>&1
 check $? "accepts a well-formed one"
 
 step "pipeline"
-bash "$KIT/tooling/kit-index.sh" > idx.log 2>&1; check $? "kit-index.sh"
+bash "$KIT/tooling/kit-index.sh" > idx.log 2>&1
+rc=$?; check $rc "kit-index.sh"
+# Show why. Swallowing this cost a full CI round trip to diagnose a one-character fix.
+[ $rc = 0 ] || { echo "  --- kit-index.sh output ---"; sed 's/^/  /' idx.log | head -20; }
 grep -q "recovered by full-message scan" idx.log; check $? "recovers the squash-stranded trailers"
 bash "$KIT/tooling/kit-plan.sh" --next 5 >/dev/null 2>&1; check $? "kit-plan.sh"
 bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1; check $? "kit-status.sh"

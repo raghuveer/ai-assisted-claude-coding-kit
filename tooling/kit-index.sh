@@ -221,9 +221,17 @@ TZ=UTC0 git -C "$ROOT" log --reverse --name-only --no-merges \
     --date=format-local:%Y-%m-%dT%H:%M:%SZ \
     --format=$'\x01%H\x1f%ad\x1f%an\x1f%(trailers:key=Task-Id,valueonly,separator=%x1e)\x1f%(trailers:key=Task-Status,valueonly,separator=%x1e)\x1f%(trailers:key=Tier,valueonly,separator=%x1e)\x1f%(trailers:key=Fixes-Escape-Of,valueonly,separator=%x1e)\x02%B\x03' \
     ${RANGE:+$RANGE} 2>/dev/null |
+# -F$'\x1f', not -F'\x1f'. gawk and mawk interpret a \x escape in the -F argument; the
+# one-true-awk that macOS ships does NOT -- it received the four literal characters
+# backslash-x-1-f, split nothing, and every field but the first came back empty. Letting the
+# shell expand it to the real byte first is understood by every awk. Escapes INSIDE the
+# program text work everywhere; only -F differs.
+#
+# Note the comment sits ABOVE the assignments: a trailing \ continues onto the next line,
+# so a comment placed between them and the awk call silently destroys the whole command.
 KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" \
 KIT_CC="$CC_ON" KIT_CCCAP="$CC_CAP" KIT_CCHUB="$CC_HUB" KIT_CCMAXD="$CC_MAXD" \
-awk -F'\x1f' '
+awk -F$'\x1f' '
   # Via ENVIRON, not -v: awk applies escape processing to -v assignments, so any path
   # containing a backslash would arrive mangled and silently match nothing.
   BEGIN {
