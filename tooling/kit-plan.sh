@@ -168,7 +168,7 @@ END {
   # ---- score, then rank strictly within layer ---------------------------------
   tierw["T3"]=3; tierw["T2"]=2; tierw["T1"]=1; tierw["T0"]=0
   print "BEGIN;"
-  printf "INSERT OR IGNORE INTO goal(id,title,created_at) VALUES(\x27%s\x27,\x27%s\x27,datetime(\x27now\x27));\n", q(goal), q(goal)
+  printf "INSERT OR IGNORE INTO goal(id,title,created_at) VALUES(\x27%s\x27,\x27%s\x27,strftime(\x27%%Y-%%m-%%dT%%H:%%M:%%SZ\x27,\x27now\x27));\n", q(goal), q(goal)
   printf "DELETE FROM plan_item WHERE goal_id=\x27%s\x27;\n", q(goal)
   for (i=1; i<=n; i++) {
     id=ids[i]; if (!placed[id]) continue

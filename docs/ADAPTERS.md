@@ -97,6 +97,19 @@ byte-identical SQL. Delete-and-rebuild is verified as lossless; an adapter that 
 output by a hash-map walk or stamps a timestamp breaks that quietly, and breaks it across a
 team rather than on one machine.
 
+**Timestamps in canonical UTC: `YYYY-MM-DDTHH:MM:SSZ`.** Every timestamp column is TEXT and
+every `ORDER BY` in the derivation compares it as a **string**, so lexical order has to be
+chronological order. That holds only if every source renders in one zone and one format.
+
+This is not theoretical. Before 0.5.2 the git source used `%aI`, which carries the author's
+local offset: a commit at `05:30+05:30` sorted *after* one at `02:00Z` despite being earlier,
+and state, owner and tier could be derived from the wrong commit. A GitHub adapter passing
+through `created_at` unmodified would be fine — that API returns `Z` — but one reading a
+database column typed `TIMESTAMP WITH TIME ZONE`, or a CSV written by a spreadsheet in local
+time, would put the same defect back through a different door.
+
+Convert at the adapter boundary. Do not assume the upstream already agrees.
+
 **No schema statements.** `ATTACH`, `DETACH`, `PRAGMA`, `DROP`, `ALTER` and `VACUUM` are
 refused and abort the build.
 

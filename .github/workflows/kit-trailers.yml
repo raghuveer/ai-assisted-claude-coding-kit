@@ -66,3 +66,26 @@ jobs:
           fi
       - name: Structure
         run: python3 validate.py
+
+  # The kit was built and tested on Windows through 0.5.1. Running one deterministic
+  # fixture on a second platform is what found 0.5.2's timestamp defect -- neither platform
+  # alone showed anything wrong, only the diff between them did. This keeps that property
+  # proven rather than true-once. macOS is here because it ships bash 3.2, far older than
+  # anything else the kit runs on.
+  conformance:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install sqlite3
+        run: |
+          if command -v apt-get >/dev/null; then
+            sudo apt-get -qq update && sudo apt-get -qq install -y sqlite3
+          else
+            sqlite3 --version || brew install sqlite
+          fi
+      - name: Conformance
+        run: KIT="$PWD" WORK="${RUNNER_TEMP}/fixture" bash tests/conformance.sh
