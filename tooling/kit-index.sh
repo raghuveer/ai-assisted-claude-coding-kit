@@ -152,22 +152,22 @@ elif [ -d "$ROOT/$TASKS_DIR" ]; then
 fi
 if [ "$HAVE_TASKS" = 1 ]; then
   KIT_PREFIX="$ROOT/" awk '
-    function q(s){ gsub(/\x27/,"\x27\x27",s); return s }
+    function q(s){ gsub(/\047/,"\047\047",s); return s }
     function emit(   id, ti, st, bb, parts, nd, j) {
       id = v["id"]
       if (id == "") { printf "kit: no id in frontmatter, skipped: %s\n", rel > "/dev/stderr"; return }
       ti = (v["title"] != "" ? v["title"] : id)
       st = (v["state"] != "" ? v["state"] : "open")
-      printf "INSERT OR REPLACE INTO node VALUES(\x27%s\x27,\x27task\x27,\x27%s\x27,\x27%s\x27);\n", q(id), q(rel), q(ti)
-      printf "INSERT OR REPLACE INTO task(id,epic,state,tier,lang,blocked_by) VALUES(\x27%s\x27,\x27%s\x27,\x27%s\x27,\x27%s\x27,\x27%s\x27,\x27%s\x27);\n", q(id), q(v["epic"]), q(st), q(v["tier"]), q(v["lang"]), q(v["blocked_by"])
+      printf "INSERT OR REPLACE INTO node VALUES(\047%s\047,\047task\047,\047%s\047,\047%s\047);\n", q(id), q(rel), q(ti)
+      printf "INSERT OR REPLACE INTO task(id,epic,state,tier,lang,blocked_by) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047);\n", q(id), q(v["epic"]), q(st), q(v["tier"]), q(v["lang"]), q(v["blocked_by"])
       # blocked_by is a comma/space separated list of task ids. Frontmatter is where a
       # human declares dependency; edges are how the planner consumes it.
       bb = v["blocked_by"]; gsub(/,/, " ", bb)
       nd = split(bb, parts, /[ \t]+/)
       for (j = 1; j <= nd; j++) {
         if (parts[j] == "") continue
-        printf "INSERT OR IGNORE INTO node VALUES(\x27%s\x27,\x27task\x27,NULL,\x27%s\x27);\n", q(parts[j]), q(parts[j])
-        printf "INSERT OR IGNORE INTO edge VALUES(\x27%s\x27,\x27%s\x27,\x27depends_on\x27);\n", q(id), q(parts[j])
+        printf "INSERT OR IGNORE INTO node VALUES(\047%s\047,\047task\047,NULL,\047%s\047);\n", q(parts[j]), q(parts[j])
+        printf "INSERT OR IGNORE INTO edge VALUES(\047%s\047,\047%s\047,\047depends_on\047);\n", q(id), q(parts[j])
       }
     }
     # ENVIRON, not -v: awk applies escape processing to -v assignments.
@@ -203,7 +203,7 @@ if [ "$(git --version | awk '{ n=split($3,v,"."); print (v[1]>2 || (v[1]==2 && v
 fi
 RANGE=${ADOPT:+$ADOPT..HEAD}
 # %B rides along so a commit whose trailers git declines to parse can still be recovered
-# below. \x02 opens the raw body, \x03 closes it, and the --name-only file list follows.
+# below. \002 opens the raw body, \003 closes it, and the --name-only file list follows.
 # %ad in an explicit UTC format, not %aI. Two reasons, both found by running one fixture on
 # Windows and Debian and diffing the resulting index:
 #
@@ -219,9 +219,9 @@ RANGE=${ADOPT:+$ADOPT..HEAD}
 # produce strings whose lexical order is their chronological order.
 TZ=UTC0 git -C "$ROOT" log --reverse --name-only --no-merges \
     --date=format-local:%Y-%m-%dT%H:%M:%SZ \
-    --format=$'\x01%H\x1f%ad\x1f%an\x1f%(trailers:key=Task-Id,valueonly,separator=%x1e)\x1f%(trailers:key=Task-Status,valueonly,separator=%x1e)\x1f%(trailers:key=Tier,valueonly,separator=%x1e)\x1f%(trailers:key=Fixes-Escape-Of,valueonly,separator=%x1e)\x02%B\x03' \
+    --format=$'\001%H\037%ad\037%an\037%(trailers:key=Task-Id,valueonly,separator=%x1e)\037%(trailers:key=Task-Status,valueonly,separator=%x1e)\037%(trailers:key=Tier,valueonly,separator=%x1e)\037%(trailers:key=Fixes-Escape-Of,valueonly,separator=%x1e)\002%B\003' \
     ${RANGE:+$RANGE} 2>/dev/null |
-# -F$'\x1f', not -F'\x1f'. gawk and mawk interpret a \x escape in the -F argument; the
+# -F$'\037', not -F'\037'. gawk and mawk interpret a \x escape in the -F argument; the
 # one-true-awk that macOS ships does NOT -- it received the four literal characters
 # backslash-x-1-f, split nothing, and every field but the first came back empty. Letting the
 # shell expand it to the real byte first is understood by every awk. Escapes INSIDE the
@@ -231,13 +231,13 @@ TZ=UTC0 git -C "$ROOT" log --reverse --name-only --no-merges \
 # so a comment placed between them and the awk call silently destroys the whole command.
 KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" \
 KIT_CC="$CC_ON" KIT_CCCAP="$CC_CAP" KIT_CCHUB="$CC_HUB" KIT_CCMAXD="$CC_MAXD" \
-awk -F$'\x1f' '
+awk -F$'\037' '
   # Via ENVIRON, not -v: awk applies escape processing to -v assignments, so any path
   # containing a backslash would arrive mangled and silently match nothing.
   BEGIN {
     sdir = ENVIRON["KIT_SDIR"]; tdir = ENVIRON["KIT_TDIR"]
   }
-  function q(s){ gsub(/\x27/,"\x27\x27",s); return s }
+  function q(s){ gsub(/\047/,"\047\047",s); return s }
   function trim(s){ gsub(/^[ \t\r]+|[ \t\r]+$/,"",s); return s }
 
   # separator=%x1e rather than the empty separator used before: a squash-merge routinely
@@ -245,7 +245,7 @@ awk -F$'\x1f' '
   # that match no task and tiers like T2T2 that fail the tier regex -- so the commit both
   # lost its task and counted as untiered. First value wins, the precedence already used
   # for task frontmatter.
-  function first(s,  i){ i = index(s, "\x1e"); return trim(i ? substr(s,1,i-1) : s) }
+  function first(s,  i){ i = index(s, "\036"); return trim(i ? substr(s,1,i-1) : s) }
 
   # Git recognises a trailer block only in the LAST paragraph. GitHub squash-merge appends
   # Co-authored-by:, which becomes that paragraph and strands Task-Id: in a middle one --
@@ -278,11 +278,11 @@ awk -F$'\x1f' '
     }
     if (tid=="") { untagged++; cur=""; return }
     cur=tid
-    if (st!="")   printf "INSERT INTO event(task_id,kind,at,commit_sha,actor) VALUES(\x27%s\x27,\x27%s\x27,\x27%s\x27,\x27%s\x27,\x27%s\x27);\n", q(tid), q(st), q(at), q(sha), q(who)
-    if (tier!="") printf "INSERT INTO event(task_id,kind,at,commit_sha,payload) VALUES(\x27%s\x27,\x27tiered\x27,\x27%s\x27,\x27%s\x27,\x27%s\x27);\n", q(tid), q(at), q(sha), q(tier)
+    if (st!="")   printf "INSERT INTO event(task_id,kind,at,commit_sha,actor) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047);\n", q(tid), q(st), q(at), q(sha), q(who)
+    if (tier!="") printf "INSERT INTO event(task_id,kind,at,commit_sha,payload) VALUES(\047%s\047,\047tiered\047,\047%s\047,\047%s\047,\047%s\047);\n", q(tid), q(at), q(sha), q(tier)
     if (esc!="") {
-      printf "INSERT INTO event(task_id,kind,at,commit_sha) VALUES(\x27%s\x27,\x27escaped\x27,\x27%s\x27,\x27%s\x27);\n", q(esc), q(at), q(sha)
-      printf "INSERT OR IGNORE INTO edge VALUES(\x27%s\x27,\x27%s\x27,\x27regressed\x27);\n", q(tid), q(esc)
+      printf "INSERT INTO event(task_id,kind,at,commit_sha) VALUES(\047%s\047,\047escaped\047,\047%s\047,\047%s\047);\n", q(esc), q(at), q(sha)
+      printf "INSERT OR IGNORE INTO edge VALUES(\047%s\047,\047%s\047,\047regressed\047);\n", q(tid), q(esc)
     }
   }
 
@@ -306,17 +306,17 @@ awk -F$'\x1f' '
     if (npairs > 2000000) { CC = 0; ccabort = 1 }
   }
 
-  /^\x01/ {
+  /^\001/ {
     ccflush()
-    sub(/^\x01/,"",$1); sha=$1; at=$2; who=$3; tid=$4; st=$5; tier=$6
-    p = index($7, "\x02")          # $7 is Fixes-Escape-Of, then \x02, then body line 1
+    sub(/^\001/,"",$1); sha=$1; at=$2; who=$3; tid=$4; st=$5; tier=$6
+    p = index($7, "\002")          # $7 is Fixes-Escape-Of, then \002, then body line 1
     esc  = p ? substr($7, 1, p-1) : $7
     body = p ? substr($7, p+1)    : ""
     inbody = 1
     next
   }
   inbody {
-    if (index($0, "\x03")) { sub(/\x03.*$/, "", $0); inbody = 0 }
+    if (index($0, "\003")) { sub(/\003.*$/, "", $0); inbody = 0 }
     body = body "\n" $0
     if (!inbody) emit()
     next
@@ -329,14 +329,14 @@ awk -F$'\x1f' '
     if (sdir != "" && index(p, sdir) == 1) next
     if (tdir != "" && index(p, tdir) == 1) next
     if (cur != "") {
-      printf "INSERT OR IGNORE INTO node VALUES(\x27f:%s\x27,\x27file\x27,\x27%s\x27,NULL);\n", q(p), q(p)
-      printf "INSERT OR IGNORE INTO edge VALUES(\x27%s\x27,\x27f:%s\x27,\x27touches\x27);\n", q(cur), q(p)
+      printf "INSERT OR IGNORE INTO node VALUES(\047f:%s\047,\047file\047,\047%s\047,NULL);\n", q(p), q(p)
+      printf "INSERT OR IGNORE INTO edge VALUES(\047%s\047,\047f:%s\047,\047touches\047);\n", q(cur), q(p)
     }
   }
   END {
-    printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_total\x27,\x27%d\x27);\n", total
-    printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_untagged\x27,\x27%d\x27);\n", untagged
-    printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_trailers_recovered\x27,\x27%d\x27);\n", recovered
+    printf "INSERT OR REPLACE INTO meta VALUES(\047commits_total\047,\047%d\047);\n", total
+    printf "INSERT OR REPLACE INTO meta VALUES(\047commits_untagged\047,\047%d\047);\n", untagged
+    printf "INSERT OR REPLACE INTO meta VALUES(\047commits_trailers_recovered\047,\047%d\047);\n", recovered
   }'
 fi   # end SRC_COMMITS = git
 
@@ -352,7 +352,7 @@ fi   # end SRC_COMMITS = git
 # history rewrite. Empty means everything.
 if [ "$SRC_COMMITS" = git ] && [ "$CC_ON" = 1 ]; then
 CC_SINCE=$(kit_cfg "$PROFILE" cochange.since "")
-# %x01, not a shell-quoted $'\x01'. A format consisting only of a literal control byte
+# %x01, not a shell-quoted $'\001'. A format consisting only of a literal control byte
 # produces no output at all; git needs its own escape when there is nothing else in it.
 git -C "$ROOT" log --reverse --no-merges --name-only --format='%x01' \
     ${CC_SINCE:+"$CC_SINCE..HEAD"} 2>/dev/null |
@@ -363,7 +363,7 @@ KIT_CCCAP="$CC_CAP" KIT_CCHUB="$CC_HUB" KIT_CCMAXD="$CC_MAXD" awk '
     CCCAP = ENVIRON["KIT_CCCAP"] + 0
     CCHUB = ENVIRON["KIT_CCHUB"] + 0; CCMAXD = ENVIRON["KIT_CCMAXD"] + 0
   }
-  function q(s){ gsub(/\x27/,"\x27\x27",s); return s }
+  function q(s){ gsub(/\047/,"\047\047",s); return s }
 
   # A commit is only complete when the next one starts, so fold at the next header and END.
   function flush(   i, j, a, b, t) {
@@ -384,7 +384,7 @@ KIT_CCCAP="$CC_CAP" KIT_CCHUB="$CC_HUB" KIT_CCMAXD="$CC_MAXD" awk '
     if (npairs > 2000000) { aborted = 1; exit }
   }
 
-  /^\x01/ { flush(); next }
+  /^\001/ { flush(); next }
   NF {
     p = $0
     if (sdir != "" && index(p, sdir) == 1) next   # kit state is not project code
@@ -416,15 +416,15 @@ KIT_CCCAP="$CC_CAP" KIT_CCHUB="$CC_HUB" KIT_CCMAXD="$CC_MAXD" awk '
     for (k in pc) {
       sp = index(k, SUBSEP); a = substr(k, 1, sp-1); b = substr(k, sp+1)
       if (appear[a] > hubthr || appear[b] > hubthr) continue
-      printf "INSERT OR IGNORE INTO node VALUES(\x27f:%s\x27,\x27file\x27,\x27%s\x27,NULL);\n", q(a), q(a)
-      printf "INSERT OR IGNORE INTO node VALUES(\x27f:%s\x27,\x27file\x27,\x27%s\x27,NULL);\n", q(b), q(b)
-      printf "INSERT OR REPLACE INTO cochange VALUES(\x27f:%s\x27,\x27f:%s\x27,%d);\n", q(a), q(b), pc[k]
-      printf "INSERT OR REPLACE INTO cochange VALUES(\x27f:%s\x27,\x27f:%s\x27,%d);\n", q(b), q(a), pc[k]
+      printf "INSERT OR IGNORE INTO node VALUES(\047f:%s\047,\047file\047,\047%s\047,NULL);\n", q(a), q(a)
+      printf "INSERT OR IGNORE INTO node VALUES(\047f:%s\047,\047file\047,\047%s\047,NULL);\n", q(b), q(b)
+      printf "INSERT OR REPLACE INTO cochange VALUES(\047f:%s\047,\047f:%s\047,%d);\n", q(a), q(b), pc[k]
+      printf "INSERT OR REPLACE INTO cochange VALUES(\047f:%s\047,\047f:%s\047,%d);\n", q(b), q(a), pc[k]
     }
-    printf "INSERT OR REPLACE INTO meta VALUES(\x27cochange_pairs\x27,\x27%d\x27);\n", kept
-    printf "INSERT OR REPLACE INTO meta VALUES(\x27cochange_files\x27,\x27%d\x27);\n", files
-    printf "INSERT OR REPLACE INTO meta VALUES(\x27cochange_avg_degree\x27,\x27%.1f\x27);\n", avg
-    printf "INSERT OR REPLACE INTO meta VALUES(\x27cochange_commits\x27,\x27%d\x27);\n", cctotal
+    printf "INSERT OR REPLACE INTO meta VALUES(\047cochange_pairs\047,\047%d\047);\n", kept
+    printf "INSERT OR REPLACE INTO meta VALUES(\047cochange_files\047,\047%d\047);\n", files
+    printf "INSERT OR REPLACE INTO meta VALUES(\047cochange_avg_degree\047,\047%.1f\047);\n", avg
+    printf "INSERT OR REPLACE INTO meta VALUES(\047cochange_commits\047,\047%d\047);\n", cctotal
   }'
 fi
 
@@ -447,11 +447,11 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
       if (match(s, "\"" k "\"[ ]*:[ ]*\"[^\"]*\"")) {
         r=substr(s,RSTART,RLENGTH); sub(/^[^:]*:[ ]*"/,"",r); sub(/"$/,"",r) }
       return r }
-    function q(s){ gsub(/\x27/,"\x27\x27",s); return s }
+    function q(s){ gsub(/\047/,"\047\047",s); return s }
     NF {
       t=jf($0,"task"); k=jf($0,"kind"); a=jf($0,"at")
       if (k=="") next
-      printf "INSERT INTO event(task_id,kind,at,payload) VALUES(\x27%s\x27,\x27%s\x27,\x27%s\x27,\x27%s\x27);\n", q(t), q(k), q(a), q($0)
+      printf "INSERT INTO event(task_id,kind,at,payload) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047);\n", q(t), q(k), q(a), q($0)
       if (k=="finding") {
         cls = jf($0,"class")
         # A classless finding cannot be grouped, counted or promoted -- it only adds a
@@ -460,7 +460,7 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
         if (cls == "") { dropped++ }
         else {
           n++
-          printf "INSERT OR REPLACE INTO finding(id,task_id,agent,model,tier,lang,domain,class,severity,at) VALUES(\x27%s:%d\x27,\x27%s\x27,\x27%s\x27,\x27%s\x27,NULL,\x27%s\x27,\x27%s\x27,\x27%s\x27,\x27%s\x27,\x27%s\x27);\n", q(a), n, q(t), q(jf($0,"agent")), q(jf($0,"model")), q(jf($0,"lang")), q(jf($0,"domain")), q(cls), q(jf($0,"severity")), q(a)
+          printf "INSERT OR REPLACE INTO finding(id,task_id,agent,model,tier,lang,domain,class,severity,at) VALUES(\047%s:%d\047,\047%s\047,\047%s\047,\047%s\047,NULL,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047);\n", q(a), n, q(t), q(jf($0,"agent")), q(jf($0,"model")), q(jf($0,"lang")), q(jf($0,"domain")), q(cls), q(jf($0,"severity")), q(a)
         }
       }
       if (k=="vindication") {
@@ -469,7 +469,7 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
         # then reads that finding as unrefuted and proposes it -- exactly the laundering
         # kit-vindicate.sh exists to prevent. Sorted input makes last-write-wins correct.
         nv++
-        v[nv] = sprintf("UPDATE finding SET vindicated=%s WHERE task_id=\x27%s\x27 AND class=\x27%s\x27;", (index($0,"\"vindicated\":1")?"1":"0"), q(t), q(jf($0,"class")))
+        v[nv] = sprintf("UPDATE finding SET vindicated=%s WHERE task_id=\047%s\047 AND class=\047%s\047;", (index($0,"\"vindicated\":1")?"1":"0"), q(t), q(jf($0,"class")))
       }
     }
     END {

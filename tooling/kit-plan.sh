@@ -87,7 +87,7 @@ sqlite3 -separator $'\t' "$DB" "
    GROUP BY a.t, b.t ORDER BY a.t, b.t;
 " 2>/dev/null | awk -F'\t' -v goal="$GOAL" \
     -v wu="$W_UNBLOCKS" -v we="$W_ESCAPES" -v wt="$W_TIER" '
-function q(s){ gsub(/\x27/,"\x27\x27",s); return s }
+function q(s){ gsub(/\047/,"\047\047",s); return s }
 function find(x){ while (par[x] != x) { par[x] = par[par[x]]; x = par[x] } return x }
 function union(a,b,  ra,rb){ ra=find(a); rb=find(b); if (ra!=rb) par[rb]=ra }
 # Rank order inside one layer: strongest cluster first, each cluster kept contiguous so
@@ -168,8 +168,8 @@ END {
   # ---- score, then rank strictly within layer ---------------------------------
   tierw["T3"]=3; tierw["T2"]=2; tierw["T1"]=1; tierw["T0"]=0
   print "BEGIN;"
-  printf "INSERT OR IGNORE INTO goal(id,title,created_at) VALUES(\x27%s\x27,\x27%s\x27,strftime(\x27%%Y-%%m-%%dT%%H:%%M:%%SZ\x27,\x27now\x27));\n", q(goal), q(goal)
-  printf "DELETE FROM plan_item WHERE goal_id=\x27%s\x27;\n", q(goal)
+  printf "INSERT OR IGNORE INTO goal(id,title,created_at) VALUES(\047%s\047,\047%s\047,strftime(\047%%Y-%%m-%%dT%%H:%%M:%%SZ\047,\047now\047));\n", q(goal), q(goal)
+  printf "DELETE FROM plan_item WHERE goal_id=\047%s\047;\n", q(goal)
   for (i=1; i<=n; i++) {
     id=ids[i]; if (!placed[id]) continue
     s = wu*unblocks[id] + we*esc[id] + wt*(tier[id] in tierw ? tierw[tier[id]] : 0)
@@ -195,7 +195,7 @@ END {
       srt[p+1]=k }
     for (j=1;j<=c;j++) {
       id=srt[j]
-      printf "INSERT INTO plan_item VALUES(\x27%s\x27,\x27%s\x27,%d,%d,%.3f,%d);\n", \
+      printf "INSERT INTO plan_item VALUES(\047%s\047,\047%s\047,%d,%d,%.3f,%d);\n", \
              q(goal), q(id), L, j, score[id], cluster[id]
     }
     delete srt

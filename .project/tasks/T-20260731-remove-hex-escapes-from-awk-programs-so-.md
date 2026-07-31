@@ -22,10 +22,10 @@ repro on current Debian passes and proves nothing. Only the older build macOS sh
 
 ## Acceptance criteria
 
-- [ ] no hex escape remains inside any awk program text
-- [ ] tests/conformance.sh passes on macos-latest
-- [ ] continue-on-error is removed from the macOS matrix leg
-- [ ] Linux and Windows index fingerprints are unchanged
+- [x] no hex escape remains inside any awk program text
+- [x] tests/conformance.sh passes on macos-latest
+- [x] continue-on-error is removed from the macOS matrix leg
+- [x] Linux and Windows index fingerprints are unchanged
 
 ## Notes
 
