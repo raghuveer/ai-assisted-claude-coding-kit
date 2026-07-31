@@ -98,19 +98,55 @@ if [ "$(git --version | awk '{ n=split($3,v,"."); print (v[1]>2 || (v[1]==2 && v
   kit_warn "cannot be parsed; every commit will index as untagged. Upgrade git."
 fi
 RANGE=${ADOPT:+$ADOPT..HEAD}
+# %B rides along so a commit whose trailers git declines to parse can still be recovered
+# below. \x02 opens the raw body, \x03 closes it, and the --name-only file list follows.
 git -C "$ROOT" log --reverse --name-only --no-merges \
-    --format=$'\x01%H\x1f%aI\x1f%an\x1f%(trailers:key=Task-Id,valueonly,separator=)\x1f%(trailers:key=Task-Status,valueonly,separator=)\x1f%(trailers:key=Tier,valueonly,separator=)\x1f%(trailers:key=Fixes-Escape-Of,valueonly,separator=)' \
+    --format=$'\x01%H\x1f%aI\x1f%an\x1f%(trailers:key=Task-Id,valueonly,separator=%x1e)\x1f%(trailers:key=Task-Status,valueonly,separator=%x1e)\x1f%(trailers:key=Tier,valueonly,separator=%x1e)\x1f%(trailers:key=Fixes-Escape-Of,valueonly,separator=%x1e)\x02%B\x03' \
     ${RANGE:+$RANGE} 2>/dev/null |
 KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" awk -F'\x1f' '
   # Via ENVIRON, not -v: awk applies escape processing to -v assignments, so any path
   # containing a backslash would arrive mangled and silently match nothing.
   BEGIN { sdir = ENVIRON["KIT_SDIR"]; tdir = ENVIRON["KIT_TDIR"] }
   function q(s){ gsub(/\x27/,"\x27\x27",s); return s }
-  /^\x01/ {
-    sub(/^\x01/,"",$1); sha=$1; at=$2; who=$3; tid=$4; st=$5; tier=$6; esc=$7
-    gsub(/[ \t\r]+$/,"",tid); gsub(/[ \t\r]+$/,"",st); gsub(/[ \t\r]+$/,"",tier); gsub(/[ \t\r]+$/,"",esc)
+  function trim(s){ gsub(/^[ \t\r]+|[ \t\r]+$/,"",s); return s }
+
+  # separator=%x1e rather than the empty separator used before: a squash-merge routinely
+  # carries the same trailer twice, and concatenating the values yielded ids like T-9T-9
+  # that match no task and tiers like T2T2 that fail the tier regex -- so the commit both
+  # lost its task and counted as untiered. First value wins, the precedence already used
+  # for task frontmatter.
+  function first(s,  i){ i = index(s, "\x1e"); return trim(i ? substr(s,1,i-1) : s) }
+
+  # Git recognises a trailer block only in the LAST paragraph. GitHub squash-merge appends
+  # Co-authored-by:, which becomes that paragraph and strands Task-Id: in a middle one --
+  # still visible to the commit-msg hook, which greps the whole message, and invisible to
+  # %(trailers:). The commit passes the gate at author time and then disappears from
+  # derived status, in exactly the collaborative flow this kit exists for. The scan is
+  # deliberately narrow: only the four keys the kit defines, only at column 0, and only
+  # when git found nothing -- it recovers a known shape, it does not add a second dialect.
+  function scan(key,  n,a,i,v){
+    n = split(body, a, "\n")
+    for (i = 1; i <= n; i++)
+      if (index(a[i], key ":") == 1) {
+        v = trim(substr(a[i], length(key) + 2))
+        if (v != "") return v
+      }
+    return ""
+  }
+
+  function emit(){
     total++
-    if (tid=="") { untagged++; cur=""; next }
+    tid=first(tid); st=first(st); tier=first(tier); esc=first(esc)
+    if (tid == "") {
+      tid = scan("Task-Id")
+      if (tid != "") {
+        recovered++
+        if (st   == "") st   = scan("Task-Status")
+        if (tier == "") tier = scan("Tier")
+        if (esc  == "") esc  = scan("Fixes-Escape-Of")
+      }
+    }
+    if (tid=="") { untagged++; cur=""; return }
     cur=tid
     if (st!="")   printf "INSERT INTO event(task_id,kind,at,commit_sha,actor) VALUES(\x27%s\x27,\x27%s\x27,\x27%s\x27,\x27%s\x27,\x27%s\x27);\n", q(tid), q(st), q(at), q(sha), q(who)
     if (tier!="") printf "INSERT INTO event(task_id,kind,at,commit_sha,payload) VALUES(\x27%s\x27,\x27tiered\x27,\x27%s\x27,\x27%s\x27,\x27%s\x27);\n", q(tid), q(at), q(sha), q(tier)
@@ -118,6 +154,20 @@ KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" awk -F'\x1f' '
       printf "INSERT INTO event(task_id,kind,at,commit_sha) VALUES(\x27%s\x27,\x27escaped\x27,\x27%s\x27,\x27%s\x27);\n", q(esc), q(at), q(sha)
       printf "INSERT OR IGNORE INTO edge VALUES(\x27%s\x27,\x27%s\x27,\x27regressed\x27);\n", q(tid), q(esc)
     }
+  }
+
+  /^\x01/ {
+    sub(/^\x01/,"",$1); sha=$1; at=$2; who=$3; tid=$4; st=$5; tier=$6
+    p = index($7, "\x02")          # $7 is Fixes-Escape-Of, then \x02, then body line 1
+    esc  = p ? substr($7, 1, p-1) : $7
+    body = p ? substr($7, p+1)    : ""
+    inbody = 1
+    next
+  }
+  inbody {
+    if (index($0, "\x03")) { sub(/\x03.*$/, "", $0); inbody = 0 }
+    body = body "\n" $0
+    if (!inbody) emit()
     next
   }
   NF && cur!="" {
@@ -133,6 +183,7 @@ KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" awk -F'\x1f' '
   END {
     printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_total\x27,\x27%d\x27);\n", total
     printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_untagged\x27,\x27%d\x27);\n", untagged
+    printf "INSERT OR REPLACE INTO meta VALUES(\x27commits_trailers_recovered\x27,\x27%d\x27);\n", recovered
   }'
 
 # ---- 3. events.ndjson: transitions that never had a commit -------------------
@@ -226,4 +277,14 @@ echo "COMMIT;"
 } > "$SQL"
 
 sqlite3 "$DB" < "$SQL" || { kit_warn "index build failed; index.db may be incomplete"; exit 1; }
+
+# Recovering these commits keeps derived status correct, but doing it quietly would hide a
+# merge flow that mangles trailers -- and the next thing that reads them (a CI gate, another
+# tool, git itself) will not recover them. Say it once per rebuild, with the fix.
+REC=$(sqlite3 "$DB" "SELECT value FROM meta WHERE key='commits_trailers_recovered';" 2>/dev/null | tr -d '\r')
+case "${REC:-0}" in ''|0) ;; *)
+  kit_warn "$REC commit(s) carry trailers git will not parse — recovered by full-message scan."
+  kit_warn "Git reads trailers only from the LAST paragraph; a squash-merge that appends"
+  kit_warn "Co-authored-by: strands them mid-message. Keep the kit's trailers last." ;;
+esac
 echo "${DB#$ROOT/}"

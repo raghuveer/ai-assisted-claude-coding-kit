@@ -117,6 +117,12 @@ rewriting history or parsing two dialects forever.
 `Tier:` is not bookkeeping. Without it, escape rate per tier is not computable, and the
 tier table in `project-profile.md` stays a guess instead of becoming a measured output.
 
+**Trailers must be the last paragraph.** Git only parses a trailer block at the end of the
+message, so anything after them — most commonly the `Co-authored-by:` lines GitHub appends
+on squash-merge — strands them where `%(trailers:)` cannot see them. The `commit-msg` hook
+rejects that shape, and `kit-index.sh` recovers it with a full-message scan and says so,
+because a merge flow that mangles trailers will also defeat anything else that reads them.
+
 ## Accelerators
 
 Imported per project, never installed globally. See `accelerators/README.md`. The two

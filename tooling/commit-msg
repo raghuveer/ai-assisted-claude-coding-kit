@@ -44,6 +44,19 @@ printf '%s' "$MSG" | grep -Eq '^Task-Id:[[:space:]]*\S' || fail="$fail
   missing  Task-Id:      which task does this commit belong to?"
 printf '%s' "$MSG" | grep -Eq '^Tier:[[:space:]]*T[0-3][[:space:]]*$' || fail="$fail
   missing/invalid  Tier:  one of T0 T1 T2 T3 — required for escape-rate measurement"
+
+# The checks above grep the whole message; git reads trailers only from the LAST paragraph.
+# A message with the trailers followed by any further prose therefore passes this hook and
+# is invisible to `git log --format=%(trailers:...)`, which is what the indexer reads -- the
+# commit sails through the gate and never reaches derived status. Catch the divergence here,
+# where moving three lines is free, rather than at index time in someone else's clone.
+PARSED=$(printf '%s\n' "$MSG" | git interpret-trailers --parse 2>/dev/null)
+for k in Task-Id Tier Task-Status Fixes-Escape-Of; do
+  printf '%s' "$MSG" | grep -Eq "^$k:[[:space:]]*\S" || continue
+  printf '%s' "$PARSED" | grep -Eq "^$k:[[:space:]]*\S" && continue
+  fail="$fail
+  stranded  $k:  present, but not in the final paragraph — git will not index it"
+done
 for t in Task-Status Fixes-Escape-Of; do
   v=$(printf '%s' "$MSG" | sed -n "s/^$t:[[:space:]]*//p")
   if [ "$t" = Task-Status ] && [ -n "$v" ]; then
