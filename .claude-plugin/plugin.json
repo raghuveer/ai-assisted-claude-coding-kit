@@ -1,6 +1,6 @@
 {
   "name": "coding-kit",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Risk-tiered review pipeline and derived project state for AI-assisted coding. Stack-agnostic: no MCP servers, five skills, all project state in the project repo.",
   "author": { "name": "Raghuveer Dendukuri" },
   "homepage": "https://github.com/raghuveer/ai-assisted-claude-coding-kit",

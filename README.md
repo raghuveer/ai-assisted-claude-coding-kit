@@ -123,6 +123,12 @@ on squash-merge — strands them where `%(trailers:)` cannot see them. The `comm
 rejects that shape, and `kit-index.sh` recovers it with a full-message scan and says so,
 because a merge flow that mangles trailers will also defeat anything else that reads them.
 
+**Enforcement needs both sides.** `.git/hooks/` is per-clone and git cannot share it, so
+the hook only protects developers who ran `kit-init.sh`. Copy
+`templates/github-trailer-gate.yml` into `.github/workflows/` for the server-side check
+that survives a clone. Both call the same validator — `tooling/kit-trailers.sh` — because
+two copies of these rules would drift, which is the bug 0.2.1 existed to fix.
+
 ## Accelerators
 
 Imported per project, never installed globally. See `accelerators/README.md`. The two

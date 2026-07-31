@@ -1,76 +1,23 @@
 #!/usr/bin/env bash
-# commit-msg — trailer validation.
+# commit-msg — trailer validation. A thin caller; the rules live in kit-trailers.sh.
 #
 # Do NOT symlink this. kit-init.sh generates a copy in .git/hooks with KIT_TOOLING
 # resolved to wherever the plugin actually lives on this machine — which differs per
 # developer, and which git cannot share (hooks are per-clone). That is why every team
 # member runs kit-init.sh after cloning.
+#
+# The validation itself is deliberately NOT inlined here. The CI gate checks the same
+# trailers, and a second copy of these rules would drift from this one — which is exactly
+# the bug 0.2.1 fixed, where the hook and the indexer disagreed about what a trailer is.
 set -uo pipefail
 
 : "${KIT_TOOLING:=$(dirname "$0")}"
-if [ ! -f "$KIT_TOOLING/kit-lib.sh" ]; then
+if [ ! -f "$KIT_TOOLING/kit-trailers.sh" ]; then
   # A validation hook that cannot validate must fail loudly. Passing silently would
   # let untrailered commits through while the repo looks protected -- the fail-open
   # case this hook exists to prevent.
-  echo "commit-msg: cannot load kit-lib.sh from $KIT_TOOLING" >&2
+  echo "commit-msg: cannot load kit-trailers.sh from $KIT_TOOLING" >&2
   echo "  re-run kit-init.sh in this repository to regenerate the hook." >&2
   exit 1
 fi
-. "$KIT_TOOLING/kit-lib.sh"
-ROOT=$(kit_root) || exit 0
-kit_active "$ROOT" || exit 0
-PROFILE=$(kit_profile "$ROOT")
-MODE=$(kit_cfg "$PROFILE" git.trailer_enforcement warn)
-# An unrecognised value must not degrade to warn in silence. The only reason to touch this
-# key is to make it stricter, so a plausible guess -- block, strict, on, true -- would
-# otherwise leave the repo looking enforced while every commit sailed through. That is the
-# same fail-open case the kit-lib.sh check above exists to prevent, eleven lines earlier.
-case "$MODE" in
-  warn|enforce) ;;
-  *) echo "commit-msg: git.trailer_enforcement is '$MODE' — valid values are warn|enforce." >&2
-     echo "  treating as enforce; correct it in .claude/project-profile.md." >&2
-     MODE=enforce ;;
-esac
-MSG=$(cat "$1")
-
-case "$MSG" in
-  Merge*|Revert*|fixup!*|squash!*) exit 0 ;;
-esac
-EXEMPT=$(kit_cfg "$PROFILE" git.trivial_pattern '^(chore|docs|style)(\(.*\))?:')
-printf '%s' "$MSG" | head -1 | grep -Eq "$EXEMPT" && exit 0
-
-fail=""
-printf '%s' "$MSG" | grep -Eq '^Task-Id:[[:space:]]*\S' || fail="$fail
-  missing  Task-Id:      which task does this commit belong to?"
-printf '%s' "$MSG" | grep -Eq '^Tier:[[:space:]]*T[0-3][[:space:]]*$' || fail="$fail
-  missing/invalid  Tier:  one of T0 T1 T2 T3 — required for escape-rate measurement"
-
-# The checks above grep the whole message; git reads trailers only from the LAST paragraph.
-# A message with the trailers followed by any further prose therefore passes this hook and
-# is invisible to `git log --format=%(trailers:...)`, which is what the indexer reads -- the
-# commit sails through the gate and never reaches derived status. Catch the divergence here,
-# where moving three lines is free, rather than at index time in someone else's clone.
-PARSED=$(printf '%s\n' "$MSG" | git interpret-trailers --parse 2>/dev/null)
-for k in Task-Id Tier Task-Status Fixes-Escape-Of; do
-  printf '%s' "$MSG" | grep -Eq "^$k:[[:space:]]*\S" || continue
-  printf '%s' "$PARSED" | grep -Eq "^$k:[[:space:]]*\S" && continue
-  fail="$fail
-  stranded  $k:  present, but not in the final paragraph — git will not index it"
-done
-for t in Task-Status Fixes-Escape-Of; do
-  v=$(printf '%s' "$MSG" | sed -n "s/^$t:[[:space:]]*//p")
-  if [ "$t" = Task-Status ] && [ -n "$v" ]; then
-    case "$v" in started|progress|blocked|unblocked|done|abandoned) ;;
-      *) fail="$fail
-  invalid  Task-Status: $v" ;;
-    esac
-  fi
-done
-
-[ -z "$fail" ] && exit 0
-printf 'kit: commit trailers%s\n' "$fail" >&2
-if [ "$MODE" = enforce ]; then
-  printf '\nSet git.trailer_enforcement: warn in project-profile.md to downgrade this.\n' >&2
-  exit 1
-fi
-exit 0
+exec bash "$KIT_TOOLING/kit-trailers.sh" message "$1"

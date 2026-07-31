@@ -1,0 +1,64 @@
+# Copy to .github/workflows/kit-trailers.yml in your project.
+#
+# Why this exists: .git/hooks is per-clone and git cannot share it, so the commit-msg hook
+# only protects developers who ran kit-init.sh. Anyone who skipped it has no enforcement at
+# all, and the repo looks protected. Server-side is the only check that survives a clone.
+#
+# WHAT THIS CANNOT SEE: if you squash-merge, GitHub composes a NEW commit message at merge
+# time from the PR title and body, and it can be edited in the merge dialog. No CI run
+# observes that message before it lands. The `push` trigger below is the mitigation — it
+# checks the message after the fact, so a bad squash turns the default branch red
+# immediately instead of quietly costing you a task. It is detection, not prevention.
+#
+# If you need prevention with squash-merge, require this check on a merge queue, which
+# builds the real merge commit before it lands.
+
+name: kit trailers
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  trailers:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the project
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # the merge base must be present, so no shallow clone
+
+      - name: Check out the kit
+        uses: actions/checkout@v4
+        with:
+          repository: raghuveer/ai-assisted-claude-coding-kit
+          # Pin it. An unpinned gate changes its own rules under you, and then a build that
+          # went red tells you nothing about whether your commits or the rules moved.
+          ref: v0.3.0
+          path: .kit
+
+      - name: Validate commit trailers
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            RANGE='${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}'
+          else
+            BEFORE='${{ github.event.before }}'
+            # All-zeros on branch creation, and gone entirely after a force-push. Falling
+            # back to the single head commit checks something real rather than erroring on
+            # a range git cannot resolve.
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ] \
+               || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              RANGE='${{ github.sha }}~1..${{ github.sha }}'
+            else
+              RANGE="$BEFORE..${{ github.sha }}"
+            fi
+          fi
+          echo "range: $RANGE"
+          # --enforce overrides git.trailer_enforcement in the profile. A gate that only
+          # warns is not a gate: the whole point is to fail where the hook was skipped.
+          bash .kit/tooling/kit-trailers.sh range "$RANGE" --enforce

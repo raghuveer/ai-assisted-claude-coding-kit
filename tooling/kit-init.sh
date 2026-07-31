@@ -84,4 +84,9 @@ else
   echo "  2. append templates/CLAUDE.kit.md to your CLAUDE.md"
   echo "  3. commit .claude/project-profile.md and .project/tasks/ — the team shares them"
   echo "  4. delete any hand-maintained STATUS.md or task CSV — a surviving copy WILL be edited"
+  # The hook only protects developers who ran this script. Git cannot share .git/hooks, so
+  # for anyone who skipped it there is no enforcement at all and the repo merely looks
+  # protected. Server-side is the only check that survives a clone.
+  echo "  5. copy templates/github-trailer-gate.yml to .github/workflows/ — the hook is"
+  echo "     per-clone, so CI is the only trailer check that survives someone skipping it"
 fi

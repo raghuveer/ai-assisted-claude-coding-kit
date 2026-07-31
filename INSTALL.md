@@ -109,6 +109,31 @@ clone; the index is rebuilt locally and never shared.
 is per-clone, so trailer validation does not exist for you until you generate it. The
 hook is generated rather than symlinked because the plugin's path differs per machine.
 
+---
+
+## The CI gate — the only check that survives a clone
+
+Because hooks are per-clone, a teammate who skips `kit-init.sh` has **no** enforcement,
+and the repo looks protected. Copy `templates/github-trailer-gate.yml` to
+`.github/workflows/kit-trailers.yml` and commit it:
+
+    cp $CLAUDE_PLUGIN_ROOT/templates/github-trailer-gate.yml .github/workflows/kit-trailers.yml
+
+It checks out the kit at a pinned tag and runs `kit-trailers.sh range … --enforce` over the
+commits in a pull request. Pin it: an unpinned gate changes its own rules under you, and
+then a red build tells you nothing about whether your commits moved or the rules did.
+
+The hook and the gate call the **same** validator. That is not tidiness — 0.2.1 fixed a bug
+that existed precisely because two readers of the same trailers disagreed, so commits passed
+one check and vanished at the other. Two copies of these rules would drift; one cannot.
+
+**What CI cannot see.** If you squash-merge, GitHub composes a new commit message at merge
+time from the PR title and body, editable in the merge dialog, and no CI run observes it
+before it lands. The workflow's `push` trigger is the mitigation: it checks after the fact,
+so a bad squash turns the default branch red immediately rather than quietly costing you a
+task. That is detection, not prevention. For prevention with squash-merge, require the check
+on a merge queue, which builds the real merge commit before it lands.
+
 If the plugin later moves or you reinstall it, re-run `kit-init.sh`. The hook fails
 loudly if it cannot find its library — a validation hook that silently passes is worse
 than no hook, because the repo looks protected when it is not.

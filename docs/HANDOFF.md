@@ -275,7 +275,7 @@ ai-assisted-claude-coding-kit/
 ├── agents/             8 agents, FLAT (see §7 bug 1)
 ├── skills/             5, each a directory with SKILL.md
 ├── hooks/hooks.json    PreToolUse guard, Stop checkpoint — ${CLAUDE_PLUGIN_ROOT}
-├── tooling/            13 scripts + schema.sql
+├── tooling/            14 scripts + schema.sql
 ├── templates/          project-profile, task, CLAUDE.kit + legacy copies
 ├── accelerators/       technology/go, industry/bfsi (seeded drafts)
 ├── docs/               HANDOFF.md (this file), VERSIONING.md, MIGRATION.md, agent READMEs
