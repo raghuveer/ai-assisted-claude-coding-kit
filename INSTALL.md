@@ -81,6 +81,11 @@ belongs in a task file.
 **2. Append `templates/CLAUDE.kit.md` to your `CLAUDE.md`.** ~15 lines: the tiering
 obligation, the write boundary, where truth lives.
 
+If the repository you are adopting is *itself* a Claude Code plugin, put it in
+`.claude/CLAUDE.md` instead. Both locations load as project context, but a `CLAUDE.md` at a
+plugin root is not loaded as plugin context, and `claude plugin validate --strict` fails on
+one. This kit hit that when it adopted itself.
+
 **3. Commit the shared parts.**
 
     git add .claude/project-profile.md .project/tasks .gitignore .gitattributes
