@@ -260,6 +260,59 @@ before any plugin code changes:
 2. **Predictive power.** For a sample of historical commits, does the graph rank the files
    that actually changed above chance?
 
+### Result — measured 2026-07-31: conditional pass
+
+Method: train on the oldest 80% of commits, test on the newest 20%, no leakage. For each
+test commit, rank candidates by co-change with one of its files and measure recall@10
+against the rest. The control is a **popularity baseline** — ranking by raw change
+frequency — because co-change may do nothing but recapitulate "these files change a lot".
+
+Primary repository: 747 commits, 901 files, polyglot microservices.
+
+| | recall@10 | vs popularity | vs chance | median degree |
+|---|---|---|---|---|
+| commit cap 50, no damping | 0.239 | **2.44×** | 18.8× | 13 |
+| + hub cap at 15% of commits | 0.245 | **2.49×** | — | 13 |
+
+**Not a hairball, and not merely popularity.** Both gates pass where measured.
+
+Parameter findings:
+
+- **Commit size cap matters for the tail, not the median.** Recall is flat at 0.237–0.243
+  across caps of 30/50/100, but the cap is what prevents bulk commits from connecting
+  everything. On a second, much smaller repository (37 usable commits) the *uncapped* graph
+  had median degree 472 of 706 files, with 89% of files having more than 100 partners —
+  the hairball failure mode, exactly as feared, and produced entirely by large commits.
+- **A minimum edge weight hurts.** Requiring weight ≥2 drops lift from 2.44× to 1.91× and
+  coverage from 787 files to 336. Single co-occurrences carry real signal; do not threshold.
+- **A light hub cap helps slightly, an aggressive one hurts.** Excluding files that appear
+  in more than 15–25% of commits removed one file, nudged recall up and cut maximum degree
+  from 329 to 249. At 10% recall fell to 0.208, at 5% to 0.196. This is the same remedy
+  `cluster.hub_cap` already applies for the same reason.
+- The hubs are the expected class: a roadmap doc, `docker-compose.yml`, service entry
+  points, a barrel `App.tsx`, a backlog CSV.
+
+**What this does not establish, and must be said with the result:**
+
+- **n=1.** One repository had enough history to evaluate. The second did not.
+- **Neither is a legacy monolith.** The primary repository is microservices — the case of
+  most concern, where everything plausibly changes together, remains untested.
+- **recall@10 = 0.24 means 76% of co-changed files are not in the top ten.** Co-change
+  edges must therefore **add to** blast radius and never bound it. The "unknown, not small"
+  reporting stays; what changes is that some neighbours become known, not that the set
+  becomes complete.
+- **Cold start was ~50%** — half the query files had no co-change history in training. For
+  legacy modernization the files being touched are old and would have history, so this is
+  plausibly better in the real case. Plausibly, not measured.
+- Co-change predicts *changed in the same commit*, which is a proxy for blast radius rather
+  than blast radius itself.
+
+**Design conclusion.** Ship it with a commit-size cap and a light hub cap, no weight
+threshold — and have the indexer **measure its own degree distribution and refuse to emit
+a graph that is a hairball**, reporting the source as uninformative for that repository
+instead. That is what makes the untested monolith case safe: the failure mode is
+detectable from the data itself, so it does not have to be predicted.
+
 **Gate 3 — component field names are bound by the first real polyglot project**, not by this
 note.
 
