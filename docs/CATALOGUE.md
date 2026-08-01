@@ -31,6 +31,24 @@ AWS and another who mandates on-premises — then the catalogue is not an optimi
 must pay for itself in saved tokens. It is the thing that makes the requirement satisfiable
 at all, and the savings are a side effect worth measuring but not worth waiting for.
 
+### Why it has to be a catalogue and not a practice
+
+Portability promised per engagement is a per-engagement tax, and it is charged at exactly the
+wrong moment. The interface work lands early, before the deadline is real; the pressure to
+"just call the SDK directly, we can abstract it later" arrives late, when the abstraction is
+the only thing standing between the team and a shipped feature. Later does not come, and the
+portability that was sold is quietly not delivered — usually without anyone deciding to drop
+it.
+
+A catalogue moves that cost off the project entirely. The interface already exists, the
+adapters already exist, and using them is the path of least resistance rather than the
+disciplined path. That inversion is the point: portability survives schedule pressure only
+when the portable option is also the easy one.
+
+It also changes what can be shown to a client. "We designed it to be portable" is an
+assertion. "No vendor SDK is imported outside its adapter, and here is the check that proves
+it" is a deliverable — see section 5, which needs no catalogue to be useful.
+
 The rest of this note assumes that framing.
 
 ## 2. Which capabilities need an interface
