@@ -100,49 +100,83 @@ legitimate.
 What cannot be hidden is redelivery: a visibility timeout and an ack/requeue are not two
 spellings of one behaviour. That belongs in the declared guarantees below, not papered over.
 
-### Swap cost is not uniform inside a kind
+### Portability tiers inside a kind
 
-The stream kind makes this obvious, and the catalogue should record it rather than implying
-that everything behind one interface is equally interchangeable:
+Implementations of one kind are not equidistant. They fall into tiers, and the tier decides
+what work a swap actually costs:
 
-- **Kafka ↔ Redpanda** is close to free. Redpanda speaks the Kafka wire protocol, so the
-  same client library binds to either. This is the cheapest swap in the entire seed list and
-  the best first proof that an interface works.
-- **Kafka ↔ Valkey/Redis Streams** is a reimplementation. Consumer groups exist in both and
-  do not mean the same thing; partitioning, retention and ordering guarantees all differ.
-- **Kafka ↔ NATS JetStream** differs again, with its own consumer and acknowledgement model.
+| Tier | What differs | Swap cost | Examples |
+|---|---|---|---|
+| **1 — protocol-identical** | operator, not protocol | configuration only | RabbitMQ ↔ AmazonMQ (RabbitMQ engine) · Kafka ↔ Redpanda |
+| **2 — same model, different protocol** | wire format, redelivery, partitioning | the adapter absorbs it | RabbitMQ ↔ SQS · Kafka ↔ NATS JetStream · Kafka ↔ Valkey/Redis Streams |
+| **3 — different consumption model** | the application's own structure | not a swap | queue ↔ log |
 
-So each implementation carries a **guarantee profile**, and the swap cost between any two is
-the delta between their profiles. An entry that does not record its profile is an entry
-nobody can safely swap.
+Tier 1 is where a managed service pairs with the engine it manages, and it is why the seed
+list pairs them that way. Tier 2 is where the interface earns its keep. Tier 3 is section 3's
+rule: not portable, by construction.
 
-### Which leaves the design decision
+### Absorb, then declare, then separate
 
-Given profiles, three ways to define an interface, one dishonest:
+For each difference between two implementations, in this order:
 
-1. **Intersection.** Define on what every member can meet. Portable, and you give up what
-   you paid the vendor for.
-2. **Declared guarantees.** The interface states what it *requires* — ordered-per-key,
-   replayable, at-least-once, exactly-once-effective — and each implementation states what it
-   *provides*. Binding **fails at startup** on a mismatch. More work, and the only design
-   that stays honest as the catalogue grows.
-3. **Leak the strongest member's model and hope.** What most such layers do, and why
-   "cloud-agnostic" so often means "runs on the one we built it against".
+1. **Absorb it.** The adapter reconciles the difference so the application never sees it.
+   SQS long-polling presented as a per-message handler; a visibility timeout derived from the
+   interface's redelivery-delay; a partition key mapped onto a NATS subject. Cost is adapter
+   complexity, paid once, by the catalogue rather than by every project.
+2. **Declare it.** Where absorption would be a lie, the interface states the guarantee it
+   *requires* and each implementation states what it *provides*, and binding **fails at
+   startup** on a mismatch. Replay is the clean example: it cannot be synthesised on SQS
+   without becoming a broker.
+3. **Separate it.** Where the difference is the application's own architecture, it is a
+   different kind. Queue against log.
 
-Recommend (2). **Portability is a property of a declared guarantee set, not of an interface
-name.** A project needing replay is not portable to SQS, and the system should say so at bind
-time rather than in production.
+**Prefer absorption.** Every difference absorbed widens the portable set, and that is the
+whole point — a difference the adapter swallows is one no project ever pays for again.
+
+### The line absorption must not cross
+
+Absorption is a lie when it holds in the happy path and breaks under failure, concurrency or
+load. Two tests:
+
+- **Does it survive the operational characteristic the implementation was chosen for?** An
+  adapter that emulates ordering by single-threading has technically absorbed the difference
+  and destroyed the throughput someone chose Kafka for. That is a lie by performance.
+- **Does it survive failure?** An adapter that emulates replay by buffering messages itself
+  has become a broker, with its own durability and its own failure modes, and nobody
+  reviewed it as one.
+
+If absorption cannot pass both, escalate to declare. This is the judgement the conformance
+suite exists to check: a suite that only runs the happy path certifies exactly the absorption
+that is about to fail in production.
+
+So each implementation carries a **guarantee profile** recording what it provides natively,
+what its adapter absorbs, and at what cost. The swap cost between any two is the delta
+between profiles, and an entry without a profile is one nobody can safely swap.
 
 ## 4. Seed catalogue
 
 Offered as a starting point. Two or three concretes per kind, more added by priority.
 
-| Kind | Model | Interface concern | Self-hostable | Managed |
-|---|---|---|---|---|
-| **Message queue** | destructive, per-message ack | publish, consume, ack/nack, dead-letter, retry budget, redelivery semantics | RabbitMQ | AmazonMQ · SQS |
-| **Streams** | cursor, replayable | append, consume from offset, consumer groups, partition key, ordering, retention | Kafka · Redpanda · Valkey/Redis Streams · NATS JetStream | MSK · managed equivalents per vendor |
-| **Cache** | — | get/set/delete, TTL, bounded append, tenant-scoped keys, degradation owner | Valkey · Dragonfly | ElastiCache |
-| **Secrets** | — | fetch by reference, rotate, envelope encrypt/decrypt | HashiCorp Vault | Secrets Manager + KMS |
+| Kind | Model | Tier 1 pair (config-only) | Tier 2 reach (adapter absorbs) |
+|---|---|---|---|
+| **Message queue** | destructive, per-message ack | RabbitMQ ↔ **AmazonMQ** | SQS |
+| **Streams** | cursor, replayable | Kafka ↔ **Redpanda** | NATS JetStream · Valkey/Redis Streams |
+| **Cache** | — | Valkey ↔ **ElastiCache** | Dragonfly |
+| **Secrets** | — | HashiCorp Vault ↔ **HCP Vault** | Secrets Manager + KMS |
+
+Managed in bold. Each row has a tier-1 pair that proves the interface cheaply and a tier-2
+reach that proves it abstracts. Build the tier-1 pair first for every kind: it is the
+smallest thing that produces a working interface, a conformance suite and a portability
+test, and it is the evidence needed before committing to tier 2.
+
+Interface concerns per kind:
+
+| Kind | The interface has to express |
+|---|---|
+| Message queue | publish · consume · ack/nack · dead-letter · retry budget · redelivery semantics |
+| Streams | append · consume from position · consumer groups · partition key · ordering guarantee · retention |
+| Cache | get/set/delete · TTL · bounded append · tenant-scoped key construction · degradation owner |
+| Secrets | fetch by reference · rotate · envelope encrypt/decrypt |
 
 Each entry needs, before any code:
 
@@ -253,15 +287,19 @@ against a second implementation has not been shown to abstract anything.
 Run it in CI for at least one kind, early, against one self-hosted and one managed
 implementation. If it cannot pass there, the catalogue is documentation.
 
-**Start with Kafka and Redpanda.** They share a wire protocol, so the swap is close to free
-and the test isolates whether the *interface* is sound rather than whether two very different
-brokers can be reconciled. If the suite cannot pass across those two, nothing further down
-the list will pass either, and the failure is in the abstraction rather than in the distance
-between implementations.
+**Start inside tier 1** — Kafka against Redpanda, or RabbitMQ against AmazonMQ. A shared
+protocol means the swap is nearly free, so the test isolates whether the *interface* is sound
+rather than whether two dissimilar brokers can be reconciled. If it cannot pass there,
+nothing further down will, and the fault is the abstraction rather than the distance.
 
-Then RabbitMQ against SQS as the second proof, because that pair genuinely differs — push
-subscription against poll with a visibility timeout — while remaining one consumption model.
-Passing both is evidence the interface spans real difference and not just a rebrand.
+**Then cross into tier 2** — RabbitMQ against SQS, or Kafka against NATS JetStream. That is
+where absorption is actually exercised: push subscription against poll-with-visibility-timeout,
+explicit partitions against subject routing. Passing tier 1 proves the interface is coherent;
+passing tier 2 proves it abstracts something.
+
+Run the tier-2 suite under failure and concurrency, not only the happy path. Absorption that
+holds when nothing goes wrong is exactly the absorption that fails in production, and a green
+happy-path suite is how it gets certified on the way there.
 
 ## 10. The gate on everything else
 
