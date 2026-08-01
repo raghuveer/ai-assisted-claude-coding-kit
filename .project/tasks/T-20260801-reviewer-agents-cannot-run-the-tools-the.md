@@ -17,29 +17,43 @@ state: open
 
 None of them can run it. The instruction is unexecutable as written, in all three.
 
-Observed on a real run (greenfield TypeScript project, 2026-08-01):
+DIAGNOSIS NARROWED after the model-tier test -- see the numbers in
+[[T-20260801-finding-vocabulary-has-no-class-for-test]]. The failure is not random
+guessing. Vocabulary compliance tracks MODEL TIER, and the opus-tier agents work around
+the missing shell while the tiers below cannot:
 
-- `approach-reviewer` guessed the vocabulary correctly. 18 findings, all valid classes.
-- `implementation-reviewer` guessed wrong. It emitted `fail-open-guard`,
-  `missing-integration-test`, `unverified-claim` and `scope-discipline-clean`. Three of
-  its four findings were rejected as unknown classes -- exactly the outcome the
-  instruction was written to prevent.
+- `security-reviewer` (opus, no shell) READ `tooling/kit-finding.sh:23-24` directly and
+  confirmed the vocabulary from source. 17/17 valid. It then disclosed that it could not
+  run `--vocab` and had verified the list another way.
+- `approach-reviewer` (opus) 18/18 valid.
+- `approach-reviewer` forced onto sonnet: 0/9 valid.
+- `approach-reviewer` forced onto haiku: 0/8 valid, and it appended prose after the
+  fourth pipe field, breaking the batch format outright.
 
-The same tool gap has a second, larger cost. `implementation-reviewer` was asked to
-confirm four ladder commands exit 0. It cannot execute, so it ranked "independently
-confirm the commands run" as its TOP required change -- a finding unresolvable by
-construction, which recurs on every run where verification matters. It spent 104,769
-tokens, comparable to the coder it was reviewing, and concluded "strong circumstantial
-evidence, but this is not independent confirmation."
+`implementation-reviewer` is pinned to sonnet per `docs/MODELS.md`. Its 3-of-4 rejection
+rate is not an outlier -- it is the sonnet tier behaving as the sonnet tier does.
+
+So the fix is not "tell the agent where the vocabulary lives". An opus agent already finds
+it. The fix has to make the contract satisfiable WITHOUT inference, because the tiers that
+carry most of the review volume do not infer it.
+
+The second, separate cost of the same tool gap stands unchanged.
+`implementation-reviewer` was asked to confirm four ladder commands exit 0. It cannot
+execute, so it ranked "independently confirm the commands run" as its TOP required change
+-- unresolvable by construction, and it will recur on every run where verification
+matters. 104,769 tokens, comparable to the coder it was reviewing, to reach "strong
+circumstantial evidence, but this is not independent confirmation."
 
 It also has no `git`, so on an uncommitted change it cannot diff. It reviewed the whole
-tree instead of the change, and resorted to reading the operator's
-`.claude/settings.local.json` to reverse-engineer which commands the coder had run.
+tree instead of the change, and read the operator's `.claude/settings.local.json` to
+reverse-engineer which commands the coder had run.
 
 ## Acceptance criteria
 
 - [ ] every instruction in an agent file is executable with that agent's declared tools,
       or the tool is granted
+- [ ] the vocabulary reaches sonnet- and haiku-tier agents without requiring them to
+      locate and read the script -- inlining, or validation at emission, or both
 - [ ] a reviewer asked to verify behaviour can execute, or is never asked to
 - [ ] `implementation-reviewer` can diff the change under review rather than reading the
       whole tree
@@ -52,7 +66,10 @@ tree instead of the change, and resorted to reading the operator's
 design review is a reading task and the current toolset fits it; implementation review is
 an execution task and it does not. The two rungs have identical tool grants and should not.
 
-Cheapest fix is granting Bash to `implementation-reviewer`. Whether the other two need it
-is a separate call -- the `--vocab` line is a problem for all three regardless, and could
-be fixed by inlining the vocabulary, though that duplication is what caused the original
-drift.
+Tool-use count also predicts review depth across tiers. On the same prompt: opus 19 tool
+uses, sonnet 20, haiku 5. Haiku reviewed the prompt rather than the repository and missed
+the one critical security finding the other two confirmed independently.
+
+Cheapest fix for the verification half is granting Bash to `implementation-reviewer`.
+The vocabulary half cannot be fixed by tool grants alone, because inlining the list is
+what caused the original four-way drift -- see the sibling task.
