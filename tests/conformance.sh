@@ -66,6 +66,26 @@ for a in "$KIT"/agents/*.md; do
 done
 check $ungranted "no Bash-less agent is instructed to execute a script"
 
+step "a domain outside the declared industries is dropped, not stored"
+# An unknown class is rejected loudly. A wrong domain was accepted SILENTLY and polluted the
+# industry accelerator it feeds -- reviewers put the finding's subject there (`caching`,
+# `cache-adapter-design`) because nothing said what a domain was. The `pattern` axis is where
+# that belongs now, and a domain the project never declared must not survive.
+step_dir="$WORK.dom"; rm -rf "$step_dir"; mkdir -p "$step_dir/.claude" "$step_dir/.project"
+( cd "$step_dir" && git init -q -b main 2>/dev/null
+  printf -- '---
+paths.state: .project
+accelerator.industry: .claude/bfsi.md
+---
+' > .claude/project-profile.md
+  : > .claude/bfsi.md
+  bash "$KIT/tooling/kit-finding.sh" --task T --agent a --batch >/dev/null 2>&1 <<'BATCH'
+fail-open|major|go|cache-port|not-an-industry
+BATCH
+  grep -q '"domain":""' .project/events.ndjson && grep -q '"pattern":"cache-port"' .project/events.ndjson )
+check $? "undeclared domain dropped, pattern retained"
+rm -rf "$step_dir"
+
 step "validate.py"
 (cd "$KIT" && { python3 validate.py >/dev/null 2>&1 || python validate.py >/dev/null 2>&1; })
 check $? "validate.py exits 0"
@@ -111,7 +131,11 @@ Task-Status: done
 
 Co-authored-by: X <x@example.com>"
 echo "  commits: $(git rev-list --count HEAD)"
-EXPECT_HEAD=42cf211d585d9ccfe516f24b0510b7f6c8ad5a5f
+# Moves whenever templates/project-profile.md changes, because kit-init.sh copies it into
+# the fixture's first commit. That is the cost of also using this as a drift detector:
+# it forces a template edit to be noticed rather than silently changing what two
+# platforms are comparing. Update it deliberately, never to make a red run go green.
+EXPECT_HEAD=53000060db14454d607a4db4bacef4e758ed0382
 
 step "trailer hook"
 sed -i.bak 's|^git.trailer_enforcement:.*|git.trailer_enforcement:  enforce|' .claude/project-profile.md

@@ -56,7 +56,7 @@ redirected to a run log; return only N passed / M failed / K skipped · failing 
 ERROR/FAIL/assertion lines · the log path — do NOT paste the full log (the operator reads it on demand).
 3. Mutation results: what you reverted and whether a test caught it; name any mutant that survived.
 4. Design-level concerns surfaced (route serious ones to `approach-reviewer`). 5. A 5–10 line summary for
-the operator. 6. **Findings (recordable)** — one per line, `class|severity|lang|domain`, for every surviving mutant and design concern; these pipe into `kit-finding.sh --batch`. `class` is one of: fail-open race false-rationale perf compliance correctness style unclassified; `severity` is one of: critical major minor nit. Use `unclassified` rather than inventing a name -- an unrecognised value is rejected, not stored. Asserted against `kit-finding.sh --vocab` by tests/conformance.sh.
+the operator. 6. **Findings (recordable)** — one per line, `class|severity|lang|pattern|domain`, for every surviving mutant and design concern; these pipe into `kit-finding.sh --batch`. `class` is one of: fail-open race false-rationale perf compliance correctness style unclassified; `severity` is one of: critical major minor nit. Use `unclassified` rather than inventing a name -- an unrecognised value is rejected, not stored. Asserted against `kit-finding.sh --vocab` by tests/conformance.sh.
 
 ## What you do not do
 

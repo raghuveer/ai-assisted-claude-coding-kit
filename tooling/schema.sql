@@ -60,6 +60,13 @@ CREATE TABLE finding (
   lang       TEXT,                  -- seeds the technology accelerator
   class      TEXT,                  -- kit-finding.sh --vocab is authoritative; do not restate it here
   domain     TEXT,                  -- seeds the industry accelerator (bfsi, govtech, health)
+  pattern    TEXT,                  -- seeds the PATTERN accelerator: the reusable design
+                                    -- this finding is about, independent of language and
+                                    -- of industry (cache-port, adapter-boundary, retry,
+                                    -- idempotent-consumer). Added because reviewers kept
+                                    -- putting exactly this in `domain`, which is the
+                                    -- taxonomy reporting a missing axis rather than the
+                                    -- reviewers being careless.
   severity   TEXT,
   at         TEXT,
   vindicated INTEGER                -- NULL unknown | 1 real | 0 false positive
@@ -70,6 +77,7 @@ CREATE INDEX idx_edge_dst ON edge(dst, rel);
 CREATE INDEX idx_event_task ON event(task_id, at);
 CREATE INDEX idx_finding_task ON finding(task_id);
 CREATE INDEX idx_finding_lang ON finding(lang, class);
+CREATE INDEX idx_finding_pattern ON finding(pattern, class);
 
 -- ---------------------------------------------------------------------------
 -- Dependency grouping, priority ordering, accelerator provenance. Part of 0.2.0 like
@@ -102,7 +110,7 @@ CREATE TABLE plan_item (
 -- an automatic write: auto-accumulation compounds one project's mistake across all.
 CREATE TABLE accelerator (
   id        TEXT PRIMARY KEY,    -- e.g. technology/go, industry/bfsi
-  kind      TEXT NOT NULL,       -- technology | industry
+  kind      TEXT NOT NULL,       -- technology | industry | pattern
   version   TEXT,
   loaded_by TEXT                 -- comma-separated agents that receive it
 );
@@ -112,11 +120,12 @@ CREATE TABLE accel_candidate (
   class      TEXT NOT NULL,
   lang       TEXT,
   domain     TEXT,
+  pattern    TEXT,
   occurrences INTEGER NOT NULL,
   vindicated  INTEGER NOT NULL,
   first_at   TEXT,
   last_at    TEXT,
-  PRIMARY KEY (accel_id, class, lang, domain)
+  PRIMARY KEY (accel_id, class, lang, domain, pattern)
 );
 
 CREATE INDEX idx_plan_goal ON plan_item(goal_id, layer, rank);

@@ -41,15 +41,20 @@ stack has no mutation tooling, `ladder.rung3` in the profile is empty — that m
 Every finding from this unit's reviews:
 
 ```
-kit-finding.sh --task <id> --agent <name> --class <class> --severity <sev> --lang <lang> [--domain <d>]
+kit-finding.sh --task <id> --agent <name> --class <class> --severity <sev> --lang <lang> [--pattern <p>] [--domain <d>]
 ```
 
 A review produces several at once, so pipe the reviewer's `Findings (recordable)` block in
 unchanged rather than retyping it — that retyping is where `class` and `lang` get dropped:
 
 ```
-kit-finding.sh --task <id> --agent <name> --batch    < class|severity|lang|domain lines
+kit-finding.sh --task <id> --agent <name> --batch    < class|severity|lang|pattern|domain lines
 ```
+
+`pattern` names the reusable DESIGN a finding is about -- `cache-port`, `retry-budget` --
+independent of language and of industry. It is the axis with the best amortisation: a
+design reviewed once and recorded here is not re-derived in the next project. `domain` is
+an industry and is dropped unless the profile declared it.
 
 `kit-finding.sh --vocab` prints the accepted classes and severities. Print them; do not
 recall them. Every value is validated and an unknown one is rejected, not stored.

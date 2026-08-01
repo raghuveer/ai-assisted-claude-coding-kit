@@ -61,8 +61,17 @@ cochange.hub_pct:    20
 cochange.max_degree: 50
 
 # --- accelerators are imported per project, never installed globally ------------
+# Three axes, because reuse has three shapes and they do not overlap:
+#   technology  what is true of the LANGUAGE          (go, typescript)
+#   industry    what is true of the VERTICAL          (bfsi, govtech, health)
+#   pattern     what is true of the DESIGN, whatever  (cache-port, idempotent-consumer)
+#               the language and whatever the vertical
+# The pattern axis exists because reviewers kept putting exactly this in `domain`. A cache
+# port degrades the same way in TypeScript and in Go, and that is the reuse with the best
+# amortisation: the design cost is paid once, not once per project.
 # accelerator.technology: .claude/accelerators/go.md
 # accelerator.industry:   .claude/accelerators/bfsi.md
+# accelerator.pattern:    .claude/accelerators/cache-port.md -> approach-reviewer,researcher
 
 # Salt for the project handle written by `kit-accel.sh export`. Without it that handle is
 # an unsalted digest of the origin URL, which anyone able to guess the URL can reverse.

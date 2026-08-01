@@ -23,31 +23,64 @@ Claude Code. Stack-agnostic baseline.
 2. **Verify at the level the failure lives.** The ladder states obligations, not commands.
    A rung with no tooling in this stack is *declared unavailable and raises the tier* —
    less mechanical verification means more adversarial reading, not a lower bar.
-3. **Session length is the cost lever.** Tier before spawning. Load the least context
-   that supports the work.
+3. **Spawning is the cost lever, and reuse is the only way to lower it.** Tier before
+   spawning, because one task is two agents and one design stage is three. Then make the
+   result reusable — a finding that becomes an accelerator is paid for once, and a session
+   trimmed by a few thousand tokens is not.
 
-## Layers
+## What it costs
 
-Measured with `claude --plugin-dir . plugin details coding-kit`, not estimated:
+Measured on a real greenfield project, not estimated. Full figures and method in
+[`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md).
 
-| Layer | Holds | Resident cost |
-|---|---|---|
-| Always-on (`templates/CLAUDE.kit.md`) | tiering obligation, write boundary, where truth lives | ~15 lines, cached |
-| Hooks (2) | write guard, checkpoint, trailer validation | **zero** — harness-only |
-| Skills (5) | task-context, tier-classify, verify-ladder, status-report, checkpoint | **~440 tok** (80–100 each) |
-| Subagents (8) | your reviewers | **~840 tok** — descriptions are resident |
-| MCP | none | zero |
-| | | **~1,259 tok always-on** |
+| | tokens |
+|---|---|
+| One T2 task — coder + implementation review | **220,336** |
+| One T3 design stage — researcher + two reviewers | **196,060** |
+| Resident always-on cost | **1,259** — *0.57% of one task* |
 
-Bodies load only on use — a skill costs ~500–1,400 tok when it fires, an agent ~570–2,000
-when spawned — so what you pay in every session is the descriptions.
+**This kit does not save tokens. It spends them deliberately.** Read the third row against
+the first: everything the plugin costs by merely being installed is half a percent of a
+single task. Optimising it is not where the money is, and a document that leads with it is
+pointing at the wrong number.
 
-**Subagents are not free at rest.** Routing works by matching your request against each
-agent's `description`, so all eight are in context on every request whether or not any of
-them runs. At ~840 tok they are two thirds of the always-on cost — more than the five
-skills combined. Adding a ninth agent is a bigger standing charge than adding a sixth
-skill, and **accelerators arrive as reference files, not new skills or agents** for the
-same reason.
+The cost lever is **how many agents you spawn and on which model**, which is what
+`tier-classify` exists to decide. And the models cannot simply be downgraded: measured on
+one design review, haiku missed the critical security finding entirely and sonnet found it
+but returned REVISE where opus returned REJECT — a calibration failure, and the more
+dangerous kind. The tiering is expensive on purpose.
+
+### What that buys
+
+On the same project: two High security findings absent from a 28-item human review
+register, and two escapes found in work that had already passed review and been committed.
+One of those escapes had `ladder.rung3` reporting **available** while proving nothing, so
+every task was being reviewed one rung shallow.
+
+Whether that is worth 220k per task is a judgement about your defect economics, and the kit
+should give you the number rather than an adjective.
+
+### The bet
+
+Per project, per task, this costs more than it returns. The wager that changes that is
+**amortisation**: the 196k spent designing a cache port is a one-time cost if it becomes an
+accelerator and a recurring one if it does not. Trimming context within a session cannot
+compete with not re-deriving the same design in the next project.
+
+That bet is currently **unproven**. It was unprovable until the findings loop was repaired,
+because nothing was accumulating. The test that settles it is to earn an accelerator on one
+project, import it into a second, and measure whether the equivalent stage costs 196k or
+30k.
+
+### Resident cost, for completeness
+
+~1,259 tok: five skills at ~440, eight subagent descriptions at ~840, hooks and MCP at zero.
+Agent descriptions are resident because routing matches against them, so all eight are in
+context whether or not any runs. Bodies load only on use.
+
+It is a footnote, not a headline — but it is why **accelerators arrive as reference files
+rather than new skills or agents**: a reference file costs nothing until read, and the
+catalogue is meant to grow without bound.
 
 ## Install
 

@@ -475,7 +475,7 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
         if (cls == "") { dropped++ }
         else {
           n++
-          printf "INSERT OR REPLACE INTO finding(id,task_id,agent,model,tier,lang,domain,class,severity,at) VALUES(\047%s:%d\047,\047%s\047,\047%s\047,\047%s\047,NULL,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047);\n", q(a), n, q(t), q(jf($0,"agent")), q(jf($0,"model")), q(jf($0,"lang")), q(jf($0,"domain")), q(cls), q(jf($0,"severity")), q(a)
+          printf "INSERT OR REPLACE INTO finding(id,task_id,agent,model,tier,lang,domain,pattern,class,severity,at) VALUES(\047%s:%d\047,\047%s\047,\047%s\047,\047%s\047,NULL,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047);\n", q(a), n, q(t), q(jf($0,"agent")), q(jf($0,"model")), q(jf($0,"lang")), q(jf($0,"domain")), q(jf($0,"pattern")), q(cls), q(jf($0,"severity")), q(a)
         }
       }
       if (k=="vindication") {

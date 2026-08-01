@@ -52,12 +52,12 @@ reviewer's `Findings (recordable)` block and pipe it in unchanged:
 ```sh
 bash ${CLAUDE_PLUGIN_ROOT}/tooling/kit-finding.sh \
   --task <task-id> --agent <agent> --batch <<'EOF'
-fail-open | critical | go
-race      | major    | go
+fail-open | critical | go | cache-port
+race      | major    | go | cache-port
 EOF
 ```
 
-One finding at a time takes named flags: `--task --agent --class --severity [--lang] [--domain]`.
+One finding at a time takes named flags: `--task --agent --class --severity [--lang] [--pattern] [--domain]`.
 Both forms reject an unknown value rather than storing it, and a batch with any rejected row
 exits non-zero — a partly recorded review is a measurement gap, and you are the only one
 still holding the findings needed to fix it.

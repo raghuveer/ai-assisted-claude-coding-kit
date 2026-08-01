@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# kit-finding.sh --task ID --agent NAME --class CLASS --severity SEV [--lang L] [--domain D] [--model M]
-# kit-finding.sh --task ID --agent NAME --batch    < lines of  class|severity|lang|domain
+# kit-finding.sh --task ID --agent NAME --class CLASS --severity SEV [--lang L] [--domain D]
+#                [--pattern P] [--model M]
+# kit-finding.sh --task ID --agent NAME --batch    < lines of  class|severity|lang|pattern[|domain]
 # kit-finding.sh --vocab                           prints the accepted vocabularies
 #
 # Records review findings. This table is what the technology and industry accelerators are
@@ -30,7 +31,7 @@ esac
 ROOT=$(kit_root) || exit 0
 kit_active "$ROOT" || exit 0
 
-task=""; agent=""; class=""; sev=""; lang=""; model=""; domain=""; batch=0
+task=""; agent=""; class=""; sev=""; lang=""; model=""; domain=""; pattern=""; batch=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --task) task=${2:-}; shift; shift ;;
@@ -39,6 +40,7 @@ while [ $# -gt 0 ]; do
     --severity) sev=${2:-}; shift; shift ;;
     --lang) lang=${2:-}; shift; shift ;;
     --domain) domain=${2:-}; shift; shift ;;
+    --pattern) pattern=${2:-}; shift; shift ;;
     --model) model=${2:-}; shift; shift ;;
     --batch) batch=1; shift ;;
     --vocab) printf 'class:    %s\nseverity: %s\n' "$CLASSES" "$SEVERITIES"; exit 0 ;;
@@ -52,7 +54,8 @@ for req in task agent; do
   [ -n "$v" ] || { kit_warn "missing --$req"; exit 2; }
 done
 
-STATE_DIR=$(kit_cfg "$(kit_profile "$ROOT")" paths.state ".project")
+PROFILE=$(kit_profile "$ROOT")
+STATE_DIR=$(kit_cfg "$PROFILE" paths.state ".project")
 mkdir -p "$ROOT/$STATE_DIR"
 EV="$ROOT/$STATE_DIR/events.ndjson"
 
@@ -66,9 +69,24 @@ validate() {  # validate <class> <severity>
   return 0
 }
 
-record() {  # record <class> <severity> <lang> <domain>
-  printf '{"task":"%s","kind":"finding","at":"%s","agent":"%s","class":"%s","severity":"%s","lang":"%s","domain":"%s","model":"%s"}\n' \
-    "$task" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$agent" "$1" "$2" "$3" "$4" "$model" >> "$EV"
+record() {  # record <class> <severity> <lang> <pattern> <domain>
+  printf '{"task":"%s","kind":"finding","at":"%s","agent":"%s","class":"%s","severity":"%s","lang":"%s","pattern":"%s","domain":"%s","model":"%s"}\n' \
+    "$task" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$agent" "$1" "$2" "$3" "$4" "$5" "$model" >> "$EV"
+}
+
+# A domain names an INDUSTRY and seeds the industry accelerator, so an arbitrary string
+# there invents a vertical no project ever declared. Unlike an unknown class, which is
+# rejected loudly, a wrong domain was accepted SILENTLY and polluted the thing it feeds.
+#
+# Reviewers reliably put the SUBJECT of the finding here instead -- `caching`,
+# `cache-adapter-design` -- which is why `pattern` now exists: it was the axis they were
+# reaching for. Accept a domain only if this project declared it.
+declared_domain() {
+  [ -n "$1" ] || return 0
+  _decl=$(kit_cfg_all "$PROFILE" accelerator.industry |
+          sed 's/[[:space:]]*->.*//' | sed 's|.*/||' | sed 's/\.md[[:space:]]*$//' | tr -d ' ')
+  [ -n "$_decl" ] || return 1
+  printf '%s\n' "$_decl" | grep -qx "$1"
 }
 
 if [ "$batch" = 1 ]; then
@@ -82,12 +100,18 @@ if [ "$batch" = 1 ]; then
     set -- $L
     IFS=$OIFS
     c=$(printf '%s' "${1:-}" | tr -d ' '); s=$(printf '%s' "${2:-}" | tr -d ' ')
-    l=$(printf '%s' "${3:-}" | tr -d ' '); d=$(printf '%s' "${4:-}" | tr -d ' ')
+    l=$(printf '%s' "${3:-}" | tr -d ' '); pt=$(printf '%s' "${4:-}" | tr -d ' ')
+    d=$(printf '%s' "${5:-}" | tr -d ' ')
+    if [ -n "$d" ] && ! declared_domain "$d"; then
+      kit_warn "line $line: domain '$d' is not declared in accelerator.industry — dropped"
+      kit_warn "  (a domain is an industry; put the reusable design in the pattern field)"
+      d=""
+    fi
     if [ -z "$c" ] || [ -z "$s" ]; then
       kit_warn "line $line: expected class|severity|lang|domain, got: $L"; bad=$((bad + 1)); continue
     fi
     if validate "$c" "$s"; then
-      record "$c" "$s" "$l" "$d"; n=$((n + 1))
+      record "$c" "$s" "$l" "$pt" "$d"; n=$((n + 1))
     else
       kit_warn "  ...on line $line: $L"; bad=$((bad + 1))
     fi
@@ -104,4 +128,9 @@ fi
 [ -n "$class" ] || { kit_warn "missing --class"; exit 2; }
 [ -n "$sev" ]   || { kit_warn "missing --severity"; exit 2; }
 validate "$class" "$sev" || exit 2
-record "$class" "$sev" "$lang" "$domain"
+if [ -n "$domain" ] && ! declared_domain "$domain"; then
+  kit_warn "domain '$domain' is not declared in accelerator.industry — dropped"
+  kit_warn "  (a domain is an industry; put the reusable design in --pattern)"
+  domain=""
+fi
+record "$class" "$sev" "$lang" "$pattern" "$domain"

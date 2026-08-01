@@ -38,7 +38,7 @@ done
 # rather than trusting it at each site.
 case "$MIN" in ''|*[!0-9]*) kit_warn "--min must be a whole number"; exit 2 ;; esac
 
-# accelerator.technology / accelerator.industry are repeatable in the profile.
+# accelerator.technology / accelerator.industry / accelerator.pattern are repeatable.
 # Form: <path> [-> agent,agent]   — omitting the arrow means every reviewing agent.
 emit_group() {
   local key=$1 kind=$2
@@ -69,7 +69,8 @@ resolve)
   # Deterministic path lookup — the project declares which accelerators apply, so
   # selection is never a model judgement and never reads the wrong file.
   found=$( { emit_group accelerator.technology technology
-             emit_group accelerator.industry   industry; } )
+             emit_group accelerator.industry   industry
+             emit_group accelerator.pattern    pattern; } )
   if [ -z "$found" ]; then
     [ -n "$AGENT" ] && exit 0
     kit_warn "no accelerators declared in project-profile.md"; exit 0
@@ -126,6 +127,31 @@ propose)
       printf '_none above threshold_\n'
     fi
 
+    printf '\n## Pattern candidates\n\n'
+    # Not filtered on lang or domain, unlike the two above. A cache port degrades the same
+    # way in TypeScript and in Go, and the reuse this axis exists for is precisely the
+    # reuse the other two cannot express. It is also where amortisation lives: the design
+    # cost is paid once and read by every later project that imports it.
+    pat=$(sqlite3 -separator ' | ' "$DB" "
+      SELECT pattern, class, COUNT(*), SUM(COALESCE(vindicated,0)),
+             COUNT(DISTINCT COALESCE(NULLIF(lang,''),'?'))
+        FROM finding
+       WHERE pattern IS NOT NULL AND pattern <> ''
+       GROUP BY pattern, class
+      HAVING COUNT(*) >= $MIN AND SUM(CASE WHEN vindicated=0 THEN 1 ELSE 0 END)=0
+       ORDER BY 5 DESC, COUNT(*) DESC;" 2>/dev/null)
+    if [ -n "$pat" ]; then
+      printf '%s\n' "$pat" | while IFS='|' read -r pt class n v langs; do
+        # Languages spanned is the signal that matters here: a pattern seen in one stack
+        # may just be that stack, and one seen in three is a design property.
+        printf -- '- [ ] `%s` / **%s** — seen%s times across%s language(s), %s confirmed  `[earned]`\n' \
+          "$(echo "$pt" | xargs)" "$(echo "$class" | xargs)" " $(echo "$n" | xargs)" \
+          " $(echo "$langs" | xargs)" "$(echo "$v" | xargs)"
+      done
+    else
+      printf '_none above threshold_\n'
+    fi
+
     printf '\n## Below threshold (not proposed)\n\n'
     sqlite3 -separator ' | ' "$DB" "
       SELECT COALESCE(NULLIF(lang,''),NULLIF(domain,''),'?'), class, COUNT(*)
@@ -172,7 +198,16 @@ export)
            SUM(CASE WHEN vindicated=0 THEN 1 ELSE 0 END)
       FROM finding
      WHERE domain IS NOT NULL AND domain <> ''
-     GROUP BY domain, class HAVING COUNT(*) >= $MIN;" 2>/dev/null |
+     GROUP BY domain, class HAVING COUNT(*) >= $MIN;
+    -- Pattern candidates. Deliberately NOT filtered on lang or domain: a cache port
+    -- degrades the same way in TypeScript and in Go, and the whole point of this axis is
+    -- that the design is reusable where neither of the other two is. That also makes it
+    -- the axis with the best amortisation -- the cost of designing it is paid once.
+    SELECT 'pattern', pattern, class, COUNT(*), SUM(COALESCE(vindicated,0)),
+           SUM(CASE WHEN vindicated=0 THEN 1 ELSE 0 END)
+      FROM finding
+     WHERE pattern IS NOT NULL AND pattern <> ''
+     GROUP BY pattern, class HAVING COUNT(*) >= $MIN;" 2>/dev/null |
   while IFS='|' read -r kind key class n vind refuted; do
     [ -n "$kind" ] || continue
     printf '{"kind":"%s","key":"%s","class":"%s","n":%s,"vindicated":%s,"refuted":%s,"project":"%s","kit":"%s"}\n' \
