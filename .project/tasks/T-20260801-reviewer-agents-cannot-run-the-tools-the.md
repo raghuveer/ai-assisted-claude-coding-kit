@@ -38,12 +38,12 @@ tree instead of the change, and resorted to reading the operator's
 
 ## Acceptance criteria
 
-- [ ] every instruction in an agent file is executable with that agent's declared tools,
+- [~] every instruction in an agent file is executable with that agent's declared tools,
       or the tool is granted
-- [ ] a reviewer asked to verify behaviour can execute, or is never asked to
-- [ ] `implementation-reviewer` can diff the change under review rather than reading the
+- [~] a reviewer asked to verify behaviour can execute, or is never asked to
+- [~] `implementation-reviewer` can diff the change under review rather than reading the
       whole tree
-- [ ] a check that fails when an agent file references a script the agent cannot run --
+- [~] a check that fails when an agent file references a script the agent cannot run --
       this drifted back after being fixed once, so it needs a test, not just a fix
 
 ## Notes

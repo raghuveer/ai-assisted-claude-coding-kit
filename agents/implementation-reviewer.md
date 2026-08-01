@@ -63,8 +63,11 @@ The project overlay adds the ones this repo has actually shipped, with citations
 
 The `Findings (recordable)` lines are piped straight into `kit-finding.sh --task <id> --agent <you> --batch`, so emit them even when the verdict is
 APPROVED — a finding you raised and the operator overruled still teaches the accelerators.
-Run `kit-finding.sh --vocab` for the accepted class and severity values rather than guessing:
-an unrecognised value is rejected, not stored, and the finding is simply lost.
+`class` is one of: fail-open race false-rationale perf compliance correctness style
+unclassified. `severity` is one of: critical major minor nit. An unrecognised value is
+rejected, not stored, and the finding is simply lost -- so use `unclassified` rather
+than inventing a name. These lists are asserted against `kit-finding.sh --vocab` by
+tests/conformance.sh, so they cannot drift from the recorder unnoticed.
 
 ## What you do not do
 

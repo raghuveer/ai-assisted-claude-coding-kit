@@ -35,6 +35,37 @@ for f in $(git -C "$KIT" ls-files tooling templates | grep -E '\.sh$|commit-msg'
 done
 check $nx "every script is 100755"
 
+step "finding vocabulary has not drifted"
+# The reviewers have no Bash, so they cannot run `kit-finding.sh --vocab` and the lists are
+# inlined in their instructions. That is the only form they can use, and it is exactly the
+# duplication the script's own header warns about -- the vocabulary already diverged across
+# four locations once, and the agents emitted classes the recorder rejected. Inlining is
+# safe only while something checks it, so this checks it.
+V=$(bash "$KIT/tooling/kit-finding.sh" --vocab)
+VC=$(printf '%s' "$V" | sed -n 's/^class:[[:space:]]*//p')
+VS=$(printf '%s' "$V" | sed -n 's/^severity:[[:space:]]*//p')
+drift=0
+for a in "$KIT"/agents/*.md; do
+  grep -q 'kit-finding.sh' "$a" || continue
+  flat=$(tr '\n' ' ' < "$a" | tr -s ' ')
+  case "$flat" in *"$VC"*) ;; *) echo "  class list differs: $(basename "$a")"; drift=1 ;; esac
+  case "$flat" in *"$VS"*) ;; *) echo "  severity list differs: $(basename "$a")"; drift=1 ;; esac
+done
+check $drift "every agent's inlined vocabulary matches kit-finding.sh --vocab"
+
+step "no agent is told to run a tool it does not have"
+# implementation-reviewer was told to run kit-finding.sh --vocab with tools: Read, Grep,
+# Glob. It guessed the classes instead, and 3 of its 4 would have been rejected.
+ungranted=0
+for a in "$KIT"/agents/*.md; do
+  tools=$(sed -n 's/^tools:[[:space:]]*//p' "$a" | head -1)
+  case "$tools" in *Bash*) continue ;; esac
+  if grep -qE 'Run `kit-[a-z-]+\.sh' "$a"; then
+    echo "  $(basename "$a") has no Bash but is told to run a script"; ungranted=1
+  fi
+done
+check $ungranted "no Bash-less agent is instructed to execute a script"
+
 step "validate.py"
 (cd "$KIT" && { python3 validate.py >/dev/null 2>&1 || python validate.py >/dev/null 2>&1; })
 check $? "validate.py exits 0"
