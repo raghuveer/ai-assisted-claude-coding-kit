@@ -13,6 +13,10 @@ PROFILE=$(kit_profile "$ROOT")
 TASKS_DIR=$(kit_cfg "$PROFILE" paths.tasks ".project/tasks")
 STATE_DIR=$(kit_cfg "$PROFILE" paths.state  ".project")
 ADOPT=$(kit_cfg "$PROFILE" git.adopted_at "")   # commit-ish; history before it has no trailers
+# Same key the commit-msg hook uses. Read here so the untagged counter and the hook
+# agree on what "trivial" means -- they disagreed, so the discipline warning fired on
+# repositories whose every non-trivial commit was correctly tagged.
+EXEMPT=$(kit_cfg "$PROFILE" git.trivial_pattern '^(chore|docs|style)(\(.*\))?:')
 
 DB="$ROOT/$STATE_DIR/index.db"
 
@@ -229,13 +233,14 @@ TZ=UTC0 git -C "$ROOT" log --reverse --name-only --no-merges \
 #
 # Note the comment sits ABOVE the assignments: a trailing \ continues onto the next line,
 # so a comment placed between them and the awk call silently destroys the whole command.
-KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" \
+KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" KIT_EXEMPT="$EXEMPT" \
 KIT_CC="$CC_ON" KIT_CCCAP="$CC_CAP" KIT_CCHUB="$CC_HUB" KIT_CCMAXD="$CC_MAXD" \
 awk -F$'\037' '
   # Via ENVIRON, not -v: awk applies escape processing to -v assignments, so any path
   # containing a backslash would arrive mangled and silently match nothing.
   BEGIN {
     sdir = ENVIRON["KIT_SDIR"]; tdir = ENVIRON["KIT_TDIR"]
+    exempt_re = ENVIRON["KIT_EXEMPT"]
   }
   function q(s){ gsub(/\047/,"\047\047",s); return s }
   function trim(s){ gsub(/^[ \t\r]+|[ \t\r]+$/,"",s); return s }
@@ -264,8 +269,17 @@ awk -F$'\037' '
     return ""
   }
 
-  function emit(){
+  # subj is the first line of %B. git.trivial_pattern is what the commit-msg hook uses
+  # to decide a commit need not carry Task-Id/Tier; this counter must apply the SAME
+  # rule or the warning fires on repositories following it exactly -- and a warning
+  # that is always on is one people stop reading. Exempt commits still have their
+  # trailers indexed: a chore: that legitimately carries a Task-Id keeps its events.
+  # Only the counters differ.
+  function emit(   bl, n, subj, isexempt){
     total++
+    n = split(body, bl, "\n"); subj = (n ? bl[1] : "")
+    isexempt = (exempt_re != "" && subj ~ exempt_re)
+    if (isexempt) exemptn++
     tid=first(tid); st=first(st); tier=first(tier); esc=first(esc)
     if (tid == "") {
       tid = scan("Task-Id")
@@ -276,7 +290,7 @@ awk -F$'\037' '
         if (esc  == "") esc  = scan("Fixes-Escape-Of")
       }
     }
-    if (tid=="") { untagged++; cur=""; return }
+    if (tid=="") { if (!isexempt) untagged++; cur=""; return }
     cur=tid
     if (st!="")   printf "INSERT INTO event(task_id,kind,at,commit_sha,actor) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047);\n", q(tid), q(st), q(at), q(sha), q(who)
     if (tier!="") printf "INSERT INTO event(task_id,kind,at,commit_sha,payload) VALUES(\047%s\047,\047tiered\047,\047%s\047,\047%s\047,\047%s\047);\n", q(tid), q(at), q(sha), q(tier)
@@ -336,6 +350,7 @@ awk -F$'\037' '
   END {
     printf "INSERT OR REPLACE INTO meta VALUES(\047commits_total\047,\047%d\047);\n", total
     printf "INSERT OR REPLACE INTO meta VALUES(\047commits_untagged\047,\047%d\047);\n", untagged
+    printf "INSERT OR REPLACE INTO meta VALUES(\047commits_exempt\047,\047%d\047);\n", exemptn
     printf "INSERT OR REPLACE INTO meta VALUES(\047commits_trailers_recovered\047,\047%d\047);\n", recovered
   }'
 fi   # end SRC_COMMITS = git
