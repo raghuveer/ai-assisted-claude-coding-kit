@@ -18,6 +18,8 @@ against an empty catalogue -- it just always answers "no entry".
 
 ## Acceptance criteria
 
+- [ ] a vendor SDK imported outside its own adapter is a compliance finding
+- [ ] a profile key names the deployment targets the project must support
 - [ ] a profile key declares which catalogue and which version a project draws from, pinned
 - [ ] a pattern accelerator entry can name its catalogue implementations per language
 - [ ] reviewers are obliged to ask whether a catalogue entry existed for the work
@@ -26,6 +28,17 @@ against an empty catalogue -- it just always answers "no entry".
 - [ ] an empty or undeclared catalogue costs nothing and warns nothing
 
 ## Notes
+
+The driver is deployment portability, not savings: the same application source must run on
+a cloud or on-premises with only configuration and the bound implementation differing. That
+reordering matters -- a catalogue that saved zero tokens would still be required if the same
+system is sold to a client mandating AWS and another mandating their own data centre.
+
+The first acceptance criterion is the one to build first. It is cheap, it needs NO catalogue
+to exist, and it works on any project: one `import boto3` in a service and the portability
+claim is false, not degraded. Structurally checkable by grep or lint, exactly like the
+tenant-key argument, and it tells a project where its lock-in already lives before anyone
+commits to building libraries.
 
 Blocked in spirit, not mechanically, on the amortisation test in docs/CATALOGUE.md section
 8. The catalogue is the same bet as the pattern accelerators with roughly an order of

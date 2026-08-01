@@ -7,182 +7,220 @@
 >
 > **Scope warning up front:** this proposal is larger than the kit. The catalogue is an
 > N-languages × M-solutions engineering programme with its own release cadence. The kit's
-> role is selection and enforcement — it must not host the code. Read [`VERSIONING.md`](VERSIONING.md)
-> for why: coupling a library catalogue to a plugin means every RabbitMQ adapter fix churns
-> the plugin version, and the version stops signalling anything about the engine.
+> role is selection and enforcement — it must not host the code. See [`VERSIONING.md`](VERSIONING.md):
+> coupling a library catalogue to a plugin means every RabbitMQ adapter fix churns the
+> plugin version, and the version stops signalling anything about the engine.
 
-## 1. The idea, and where it already connects
+## 1. The driver is deployment portability
 
-Interface first, adapters behind it. A message-queue interface is defined once per
-language and committed; concrete implementations for RabbitMQ, AmazonMQ and others follow,
-each typically wrapping that vendor's own SDK. Repeat per language. Prioritise which
-concretes get built. The result is a catalogue whose methods are contextually similar
-across languages while each implementation stays idiomatic in its own.
+The goal is that **the same application source runs unchanged whether it is deployed on
+AWS, on another cloud, or on-premises** — only the deployed infrastructure and the bound
+implementation differ. Interfaces and adapters are the mechanism that makes that claim
+true rather than aspirational.
 
-**This is the pattern accelerator at a later maturity.** `accelerators/pattern/cache-port.md`
-lists seven obligations — one owner for degradation, no backend primitives on the port,
-state an atomicity requirement, key on the resolved permission set. Those are not review
-notes. They are *the specification for a cache library*. An obligation that recurs across
-enough projects stops being something each project checks and becomes something every
-project depends on.
+This ordering matters, because it changes what the proposal has to be judged against:
 
-So the on-ramp already exists. What is new is the destination:
+| | |
+|---|---|
+| **Primary** | portability — no code change across deployment targets |
+| Secondary | reuse across projects, and the token savings that follow |
+| Secondary | uniform quality across languages |
 
-| | form | lives in | the kit's role |
-|---|---|---|---|
-| Pattern accelerator | knowledge | this repo, or a shared accelerator repo | resolve it to the agents that need it |
-| **Catalogue library** | **code** | **its own repositories, per language** | **declare it, select from it, enforce its use** |
+If portability is a product requirement — selling the same system to a client who mandates
+AWS and another who mandates on-premises — then the catalogue is not an optimisation that
+must pay for itself in saved tokens. It is the thing that makes the requirement satisfiable
+at all, and the savings are a side effect worth measuring but not worth waiting for.
 
-## 2. When an interface earns its place
+The rest of this note assumes that framing.
 
-Not everything deserves one, and the UUID example is the clean illustration of both sides.
+## 2. Which capabilities need an interface
 
-**The test: is the implementation a deployment decision or a library choice?**
+An earlier draft of this note proposed: *is the implementation a deployment decision or a
+library choice?* Portability sharpens that into something you can apply mechanically:
 
-A UUID generator is a *library choice*. Nobody deploys a different UUID service; you pick a
-package and you are done. Wrapping it in an interface with adapters buys an abstraction
-nobody will ever exercise, and pays for it in indirection forever. Use the language's
-native facility, or at most a thin façade so the dependency is named in one place.
+> **Does this capability have a vendor-specific managed service?**
 
-A message queue is a *deployment decision*. RabbitMQ or AmazonMQ is chosen by operations,
-by cost, by what the client already runs — and it can change after the code is written.
-There the interface is load-bearing: switching becomes deploying different infrastructure
-and binding a different implementation, with no application change at all.
+A UUID generator does not. Nobody deploys a UUID service; you pick a package, and wrapping
+it buys an abstraction nobody will ever exercise while charging indirection forever. Use the
+language's native facility, or a thin façade so the dependency is named in one place.
 
-Apply the test before adding a catalogue entry. An interface with exactly one implementation
-that will never have a second is ceremony, and it is the most common way this kind of
-catalogue accumulates weight without buying anything.
+A message queue does. So do cache, streams, object storage, secrets, and identity — those
+are precisely the surfaces every cloud vendor sells a managed version of, and precisely the
+surfaces that pin an application to a vendor when used directly.
 
-## 3. Seed catalogue
+The corollary is a rule the seed list below already follows but which should be stated:
+
+> **Every kind needs at least one self-hostable implementation and at least one managed
+> one. Otherwise the portability claim is false for one of the two deployment targets.**
+
+RabbitMQ and AmazonMQ. Valkey and ElastiCache. HashiCorp Vault and Secrets Manager + KMS.
+A kind with only managed implementations cannot deploy on-premises; a kind with only
+self-hosted ones gives up the operational reason to be on a cloud at all.
+
+## 3. The hard problem: semantics, not signatures
+
+This is where vendor-agnostic abstraction layers usually fail, and it deserves to be
+decided before any code is written.
+
+Implementations of the same kind do not offer the same guarantees:
+
+- SQS has a visibility timeout; RabbitMQ has ack/nack with requeue. Different redelivery
+  models, not different spellings of one model.
+- Kafka has partitions and replayable offsets. SQS has no ordering outside FIFO queues and
+  no replay at all. NATS JetStream has its own consumer semantics again.
+- Managed services impose quotas and message-size ceilings that a self-hosted broker
+  does not.
+
+An interface that exposes `offset` cannot be implemented on SQS. An interface that exposes
+only `ack` throws away the replay you chose Kafka for. So there are two honest designs and
+one dishonest one:
+
+1. **Intersection.** Define the interface on the guarantees every implementation can meet.
+   Portable, and you give up what you paid the vendor for.
+2. **Capability tiers.** The interface declares what it requires — ordered-per-key,
+   replayable, at-least-once — and an implementation declares what it provides. Binding
+   fails at startup when a project asks for a guarantee its chosen implementation cannot
+   give. More work, and it is the only design that stays honest as the catalogue grows.
+3. **Leak the strongest vendor's model and hope.** This is what most such layers do, and it
+   is why "cloud-agnostic" so often means "runs on the one we built it against".
+
+Recommend (2), and record the decision: **portability is a property of a declared guarantee
+set, not of an interface name.** A project that needs replay is not portable to SQS, and the
+system should say so at bind time rather than in production.
+
+## 4. Seed catalogue
 
 Offered as a starting point. Two or three concretes per kind, more added by priority.
 
-| Kind | Interface concern | Seed implementations |
-|---|---|---|
-| **Message queue** | publish, consume, ack/nack, dead-letter, retry budget | RabbitMQ · AmazonMQ |
-| **Streams** | append, consume from offset, consumer groups, partition key, ordering guarantee | Kafka · Redpanda · Valkey/Redis Streams · NATS + JetStream |
-| **Cache** | get/set/delete, TTL, bounded append, tenant-scoped key construction, degradation owner | Valkey · ElastiCache · Dragonfly |
-| **Secrets** | fetch by reference, rotate, envelope encrypt/decrypt | AWS Secrets Manager + KMS · HashiCorp Vault |
+| Kind | Interface concern | Self-hostable | Managed |
+|---|---|---|---|
+| **Message queue** | publish, consume, ack/nack, dead-letter, retry budget | RabbitMQ | AmazonMQ |
+| **Streams** | append, consume from offset, consumer groups, partition key, ordering | Kafka · Redpanda · Valkey/Redis Streams · NATS + JetStream | (managed equivalents per vendor) |
+| **Cache** | get/set/delete, TTL, bounded append, tenant-scoped keys, degradation owner | Valkey · Dragonfly | ElastiCache |
+| **Secrets** | fetch by reference, rotate, envelope encrypt/decrypt | HashiCorp Vault | Secrets Manager + KMS |
 
 Each entry needs, before any code:
 
-- the **interface**, in the language it is being built for, committed on its own
-- the **obligations** the interface imposes — this is where a pattern accelerator becomes
-  the specification rather than a checklist
-- a **conformance suite** every implementation must pass. For a plugin architecture this is
-  the highest-leverage asset there is: it makes "implements this interface" a checkable
-  claim instead of an aspiration, and it is what lets a fourth adapter be trusted without
-  being read. It is also the thing most likely to be skipped.
-- the **swap axis** stated explicitly: what actually differs between implementations, and
-  what a project gives up by choosing each one.
+- the **interface**, committed on its own, in the language it is built for
+- its **declared guarantees**, per section 3 — the part that makes portability checkable
+- the **obligations** it imposes, which is where a pattern accelerator becomes the
+  specification rather than a checklist
+- a **conformance suite** every implementation must pass — the highest-leverage asset in a
+  plugin architecture, because it makes "implements this interface" checkable instead of
+  claimed, and it is the thing most likely to be skipped
 
-## 4. Selection
+## 5. The invariant that makes portability real
 
-The architect's overlay may fix an implementation. Where it does not, the choice follows
-from the project's own facts:
+One rule, and it is mechanically checkable:
 
-- **required scalability** — Valkey Streams and Kafka are not interchangeable at volume
-- **mandate** — a client standardised on AWS is a constraint, not a preference
-- **implementation scope** — a POC for a demo and a system with a production timeline
-  justify different answers, and the difference should be recorded rather than assumed
+> **A vendor SDK may only be imported inside its own adapter.**
 
-Because the boundary is an interface, a fixed choice is not a trap. Changing it later is
-deploying different infrastructure and binding a different implementation. That is the
-property that makes recording the decision safe: it can be revisited without a rewrite.
+One `import boto3` in a service, one `AmazonSQSClient` in a handler, and the portability
+claim is false — not degraded, false, because that deployment target now requires a code
+change. This is the same shape as the tenant-key argument in section 7: a property enforced
+by structure rather than by review, verifiable by a grep or a lint rule rather than by
+someone remembering.
 
-## 5. Token savings — grounded, with its basis
+This is what the solution overlay and `constrained_by` edges are for. An architect declaring
+"no vendor SDK outside `adapters/`" is stating a checkable obligation, and a violation is a
+`compliance`-class finding that flows into the same table as every other.
 
-Classified against the real 29-task `rag-hu-js` backlog, by whether a catalogue entry
-could carry the task:
+**It is also the cheapest part of this entire proposal to build, and it works before a single
+catalogue library exists.** A project that has not adopted the catalogue at all still
+benefits from knowing where its vendor lock-in lives.
+
+## 6. Token savings — real, and not the reason
+
+Classified against the real 29-task `rag-hu-js` backlog, by whether a catalogue entry could
+carry the task:
 
 | | tasks | share |
 |---|---|---|
 | Catalogue eliminates or heavily shrinks | 11 | **38%** |
 | Catalogue cannot help | 18 | 62% |
 
-Eliminated or shrunk: cache port split, adapter conformance suite, cache invalidation
-epoch, semantic cache scan, nonce store, Redpanda partitioning and idempotency, DLQ retry
-and poison policy, config schema validation, liveness/readiness split, dev stack, interface
-definition.
-
-Untouched: tenant isolation policy, ADR consistency, scale-path decisions, audit trail
-design, prompt safety, per-tenant quotas, project schema versioning, the OpenAPI contract.
-
 At the measured ~220k per task, 11 tasks is ~2.4M written from scratch. If a catalogued task
 collapses to wiring plus configuration plus one integration test — call it ~30k — the same
-11 cost ~330k. That is roughly **30–35% off total programme spend**, concentrated entirely
-on commodity infrastructure.
+11 cost ~330k. Roughly **30–35% off total programme spend**, concentrated entirely on
+commodity infrastructure.
 
-**Three qualifications, all of which matter:**
+Three qualifications, all of which matter: `rag-hu-js` is a *platform* project and unusually
+infrastructure-heavy, so a business application would be nearer 15–20%; the saving is **moved
+rather than removed**, since someone builds and maintains the catalogue; and an empty
+catalogue is worse than none, costing the check without the benefit.
 
-1. `rag-hu-js` is a *platform* project and unusually infrastructure-heavy. A business
-   application would be nearer 15–20%, because business logic is not catalogueable.
-2. The saving is **moved, not removed.** Someone builds and maintains the catalogue. It
-   nets out only across enough projects — the same amortisation bet as the accelerators, at
-   larger scale and with a much larger commitment up front.
-3. An empty catalogue is worse than none: zero saving, plus the cost of checking whether an
-   entry exists.
+Under the portability framing these numbers are a bonus, not a justification. A catalogue
+that saved nothing would still be required if the same code must deploy to a cloud and to a
+customer's own data centre.
 
-## 6. Quality — the stronger claim is not uniformity
+## 7. Quality — structural impossibility beats uniformity
 
-Uniformity across languages is the stated benefit. The larger one is **structural
-impossibility**.
+Uniform method names across languages are the stated benefit. The larger one is that a
+well-shaped interface makes a defect class **unwritable**.
 
 Three tasks in that backlog — chunk cache key not tenant-scoped, semantic cache not scoped
 by classification set, `sessionId` used unvalidated as a key segment — are one defect class:
-*a key that could be constructed without its isolation dimension*. A catalogue cache library
-whose key-construction API **requires** a tenant and a resolved classification set makes all
-three impossible to write.
+*a key that could be constructed without its isolation dimension*. A cache library whose
+key-construction API **requires** a tenant and a resolved classification set makes all three
+impossible to write.
 
-Review catches instances. A type signature catches the class. That is worth more than method
-names looking alike, and it is not achievable by review at any budget.
+Review catches instances. A type signature catches the class.
 
-### Two risks to settle before building
+### Two risks to settle
 
-**Idiom and uniformity pull against each other.** "Methods look similar contextually" and
-"follows the best practices of the specific language" are in tension — Go returns errors,
-TypeScript throws, Python has context managers. Settle it explicitly:
-
-> The interface is uniform in **concepts and obligations**, not in signatures.
-
-Without that, the catalogue drifts toward lowest-common-denominator APIs that are idiomatic
-nowhere, and teams route around it.
+**Idiom and uniformity pull against each other.** Go returns errors, TypeScript throws,
+Python has context managers. Settle it explicitly: *the interface is uniform in concepts,
+guarantees and obligations — not in signatures.* Otherwise the catalogue drifts toward APIs
+that are idiomatic nowhere and teams route around it.
 
 **Defect concentration is uniformity's inverse.** One bug in a catalogue library reaches
 every project that pinned it. A catalogue entry is **T3 by construction**, and the number
-that matters is its own escape rate — which is the one thing this kit is already built to
-measure, provided the findings loop stays closed.
+that matters is its own escape rate — which this kit is already built to measure, provided
+the findings loop stays closed.
 
-## 7. What actually goes in the kit
+## 8. What actually goes in the kit
 
-Not the catalogue. Four small things, none of which require the catalogue to exist first:
+Not the catalogue. Five things, and the first works with no catalogue at all:
 
-1. **A profile key** declaring which catalogue and which version a project draws from —
-   pinned, for the same reason the plugin is pinned: otherwise nobody can tell which version
-   a piece of feedback is about.
-2. **Pattern entries point at implementations.** Extend the pattern axis so `cache-port`
-   names its catalogue libraries per language. That records knowledge graduating into code,
-   and makes the graduation visible rather than folkloric.
-3. **A review obligation:** *was there a catalogue entry for this, and if not, why was it
-   hand-rolled?* Plus a finding class for re-implementing a catalogued capability. This is
-   the enforcement, it costs nothing to run, and it is the only part that works on day one.
-4. **The overlay pins the choice**, and the interface boundary is what makes pinning safe.
+1. **The vendor-SDK boundary as a checkable invariant** — declared in the overlay, enforced
+   as a `compliance` finding. Useful on day one, on any project, adopted or not.
+2. **A profile key** naming the deployment targets a project must support. Portability is
+   only meaningful against a stated set, and "we might go on-prem one day" is not one.
+3. **A profile key** declaring which catalogue and version a project draws from, pinned —
+   for the same reason the plugin is pinned.
+4. **Pattern entries point at implementations**, so knowledge graduating into code is
+   visible rather than folkloric.
+5. **A review obligation** — *was there a catalogue entry for this, and if not, why was it
+   hand-rolled?* — plus a finding class for re-implementing a catalogued capability.
 
-## 8. The gate
+## 9. The acceptance test
+
+Portability makes this proposal falsifiable in a way the savings argument never was:
+
+> The application's integration suite passes against implementation A, then against
+> implementation B, with **only configuration changed** — no diff in application source.
+
+That is mechanically checkable, it is the level the failure actually lives at, and it is the
+only evidence that the interface did its job. An interface that has never been exercised
+against a second implementation has not been shown to abstract anything.
+
+Run it in CI for at least one kind, early, against one self-hosted and one managed
+implementation. If it cannot pass there, the catalogue is documentation.
+
+## 10. The gate on everything else
 
 This is the fourth large proposal recorded here — after the component model, the solution
 overlay and the versioned accelerator library — and none of the first three are built. The
-kit currently has ten open tasks, a findings loop that only began working on 2026-08-01, and
-its core amortisation bet still unproven at the *knowledge* scale.
+kit has ten open tasks, a findings loop that only began working on 2026-08-01, and its
+amortisation bet unproven at the *knowledge* scale.
 
-The catalogue is that same bet with roughly an order of magnitude more cost up front.
+Section 8 item 1 is the exception and should be built regardless: it is cheap, it works
+without a catalogue, and it tells a project where its lock-in already is.
 
-**So the cheap version has to pay first.** Import `accelerators/pattern/cache-port.md` into
-an independent project with a comparable design, run the review with and without it, and
-measure. The metric is not tokens — it is how many of the seven obligations the unaided run
-rediscovers. If seven obligations on one page do not move that number, seven libraries will
-not either. If they do, that is the evidence that justifies the far larger investment.
+The rest waits on evidence. Import `accelerators/pattern/cache-port.md` into an independent
+project with a comparable design, run the review with and without it, and count how many of
+the seven obligations the unaided run rediscovers. If seven obligations on one page do not
+move that number, seven libraries will not either.
 
-Note the honest constraint on running that test: whoever wrote the accelerator cannot also
-author the design it is tested against, and it cannot be tested against the design it was
-derived from. It needs an independent case.
+The constraint on running that test honestly: whoever wrote the accelerator cannot author
+the design it is tested against, and it cannot be tested against the design it came from.
