@@ -206,6 +206,14 @@ A `kit-accel.sh import <id>@<version>` fetches into the project. Whether the lib
 in its own repository or a folder of this one is then packaging, not versioning. Lean to its
 own repository so accelerator releases do not appear in the engine's release feed.
 
+### Where this ends up
+
+A pattern accelerator that recurs across enough projects stops being a checklist and
+becomes the specification for a library. `accelerators/pattern/cache-port.md` is already
+written as obligations a cache implementation must satisfy, which is a spec in all but
+name. [`CATALOGUE.md`](CATALOGUE.md) records what that would mean -- and why the code
+belongs outside this kit even when the knowledge belongs inside it.
+
 ### Two provenance states, not three
 
 Knowledge from projects delivered outside this kit enters as `[seeded]` — a hypothesis,
