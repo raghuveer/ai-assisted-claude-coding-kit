@@ -18,8 +18,12 @@ against an empty catalogue -- it just always answers "no entry".
 
 ## Acceptance criteria
 
-- [ ] a vendor SDK imported outside its own adapter is a compliance finding
-- [ ] a profile key names the deployment targets the project must support
+- [ ] deploy.target and adapter.path are declared in the profile (step 1, useful alone)
+- [ ] reviewers check the vendor boundary and record a compliance finding (step 2)
+- [ ] SDK patterns come from the technology accelerator, never hardcoded in the kit
+- [ ] a mechanical check exists where the stack allows, and where it does not the rung is
+      declared unavailable and the tier rises rather than the check being skipped
+- [ ] the report states its limits: transitive dependencies are not covered
 - [ ] a profile key declares which catalogue and which version a project draws from, pinned
 - [ ] a pattern accelerator entry can name its catalogue implementations per language
 - [ ] reviewers are obliged to ask whether a catalogue entry existed for the work
@@ -33,6 +37,13 @@ The driver is deployment portability, not savings: the same application source m
 a cloud or on-premises with only configuration and the bound implementation differing. That
 reordering matters -- a catalogue that saved zero tokens would still be required if the same
 system is sold to a client mandating AWS and another mandating their own data centre.
+
+docs/CATALOGUE.md section 5 is the buildable spec, including the four-step build order and
+the limits. Two things there are easy to get wrong and are called out: the SDK patterns are
+stack-specific and belong in the technology accelerator, not in a stack-agnostic kit; and a
+clean import graph proves containment, not portability -- an interface can hold no vendor
+types and still be shaped entirely around one vendor's semantics. Only the tier-2 conformance
+test proves abstraction.
 
 The first acceptance criterion is the one to build first. It is cheap, it needs NO catalogue
 to exist, and it works on any project: one `import boto3` in a service and the portability

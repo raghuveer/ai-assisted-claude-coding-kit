@@ -207,25 +207,106 @@ Each entry needs, before any code:
   plugin architecture, because it makes "implements this interface" checkable instead of
   claimed, and it is the thing most likely to be skipped
 
-## 5. The invariant that makes portability real
+## 5. The vendor-boundary check
 
-One rule, and it is mechanically checkable:
+One rule, mechanically checkable:
 
 > **A vendor SDK may only be imported inside its own adapter.**
 
 One `import boto3` in a service, one `AmazonSQSClient` in a handler, and the portability
-claim is false — not degraded, false, because that deployment target now requires a code
+claim is **false** — not degraded, false, because that deployment target now requires a code
 change. This is the same shape as the tenant-key argument in section 7: a property enforced
-by structure rather than by review, verifiable by a grep or a lint rule rather than by
-someone remembering.
+by structure rather than by review.
 
-This is what the solution overlay and `constrained_by` edges are for. An architect declaring
-"no vendor SDK outside `adapters/`" is stating a checkable obligation, and a violation is a
-`compliance`-class finding that flows into the same table as every other.
+**It is the cheapest item in this proposal and the only one that pays before the catalogue
+exists.** A project that never adopts a single catalogue library still benefits from knowing
+where its lock-in lives. On an inherited codebase it is a survey; on a new one it is a gate.
 
-**It is also the cheapest part of this entire proposal to build, and it works before a single
-catalogue library exists.** A project that has not adopted the catalogue at all still
-benefits from knowing where its vendor lock-in lives.
+### What gets declared
+
+In the project profile:
+
+```
+deploy.target: aws
+deploy.target: on-prem                  # repeatable — portability is meaningless
+                                        # against an unstated set, and "we might go
+                                        # on-prem one day" is not a target
+adapter.path: src/adapters/**           # repeatable — where vendor SDKs ARE allowed
+adapter.path: src/infrastructure/**
+```
+
+**The SDK patterns themselves do not belong in the kit.** `boto3`, `@aws-sdk/*`,
+`github.com/aws/aws-sdk-go`, `software.amazon.awssdk`, `Amazon.*` are stack-specific, and a
+stack-agnostic kit that hardcodes them stops being stack-agnostic. They belong in the
+**technology accelerator** for each language, which is exactly the axis that already exists
+for "what is true of this language":
+
+```
+# in accelerators/technology/typescript.md
+vendor.sdk: @aws-sdk/          -> aws
+vendor.sdk: @azure/            -> azure
+vendor.sdk: @google-cloud/     -> gcp
+```
+
+The kit supplies the mechanism; the accelerator supplies the patterns. That keeps the check
+extensible to a stack nobody anticipated without touching the plugin.
+
+### What counts as a violation
+
+Three, in descending order of detectability:
+
+1. **A vendor SDK imported outside `adapter.path`.** Grep-detectable, unambiguous, and the
+   overwhelming majority of real leaks.
+2. **A vendor type in an interface signature.** `Task<SendMessageResponse>` on a port means
+   every implementation must produce an SQS response object. Detectable by inspecting the
+   interface files only, which is a small and stable set.
+3. **Vendor-specific configuration read outside an adapter** — an environment variable named
+   for a service, a region string, an ARN parsed in business logic. Hardest to detect and
+   worth stating as a review obligation rather than pretending to automate.
+
+### Where it runs, and the ladder answer
+
+Both, and the split follows the kit's existing rule rather than inventing one:
+
+- **As a mechanical check** where the language's tooling supports it — a lint rule, a grep
+  over the import graph, a module-boundary plugin. This is a rung-3 style *wiring proof*.
+- **As a review obligation** where it does not. `verify-ladder` already handles this case:
+  a rung with no tooling is **declared unavailable and the tier rises**. An unautomatable
+  boundary check means more adversarial reading, not a skipped check.
+
+A violation is a `compliance` finding with `pattern: vendor-boundary`, which puts it in the
+same table as everything else and lets its recurrence be counted across projects.
+
+### The limits, stated
+
+**Transitive dependencies are the real gap.** Your code can be clean while a library you
+depend on imports the vendor SDK itself. The check sees your import graph, not your
+dependency tree, and closing that properly means walking the lockfile — which is worth
+doing later and worth *saying* now, because a green check that only covers first-party code
+is exactly the kind of assurance that gets over-read.
+
+**Dynamic imports, reflection and generated code defeat it.** Like the write guard, this is
+a net rather than a proof, and it should say so where it reports.
+
+**And the deeper limit:** a clean import graph does not mean a portable design. An interface
+can contain no vendor types and still be shaped entirely around one vendor's semantics —
+visibility timeouts, ARNs as identifiers, at-most-once assumptions. The check proves
+containment. **Only the tier-2 conformance test in section 9 proves abstraction.** The two
+are complementary and neither substitutes for the other.
+
+### Build order
+
+Even this small piece has a sequence, and the first step is useful alone:
+
+1. **Declaration only.** `deploy.target` and `adapter.path` in the profile, and nothing
+   reads them yet. This is already documentation with a purpose: it forces someone to state
+   which targets are actually supported, which is a question most projects have never
+   answered explicitly.
+2. **Review obligation.** Reviewers are told to check the boundary and record a
+   `compliance` finding. Works on every stack immediately, no tooling.
+3. **Mechanical check** where the stack allows, sourcing patterns from the technology
+   accelerator. This is where it becomes a deliverable a client can be shown.
+4. **Transitive walk**, last, and only if the first three prove worth keeping.
 
 ## 6. Token savings — real, and not the reason
 
