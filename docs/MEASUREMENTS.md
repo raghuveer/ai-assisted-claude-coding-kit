@@ -79,17 +79,38 @@ could not produce an ingestible finding.
 with opus-tier findings *only*, and looks like it is working. Accelerators would then be
 derived from design review exclusively, with implementation review silently absent.
 
-**Open question, and the sharpest one remaining.** This test ran against the *pre-inlining*
-agents — the evidence is that opus worked around the gap by reading the script, which it
-would not need to do if the list were in its instructions. Since `309aa63` the vocabulary is
-in the agent text. **Whether that fixes sonnet and haiku is untested**, and the two outcomes
-have opposite implications:
+**Retested 2026-08-01, post-inlining: closed.** The original test ran against the
+pre-inlining agents -- the tell was that opus worked around the gap by reading
+`kit-finding.sh` from source, which it would not need to do if the list were in its
+instructions.
 
-- if inlining fixes it, this was a reachability problem and is closed
-- if it does not, lower tiers do not attend to a list in front of them, and the fix has to
-  be validation-and-correction at the recording step rather than instruction
+Retest held the input constant and varied only the agent text, so inlining was the single
+variable. Same model (sonnet), same three input files, an isolated scratch directory with no
+git repository and no `events.ndjson`, so neither arm could find valid classes to copy.
+Scored by piping both blocks through the real recorder rather than by eye:
 
-Retesting this is cheap and it gates whether defect 2 can be closed honestly.
+| sonnet, identical input | recorded | rejected |
+|---|---|---|
+| pre-inlining (`309aa63^`) | 2 | **6** |
+| post-inlining | **7** | **0** |
+
+The pre-inlining arm diagnosed itself, in its own *What I did not check*: "`kit-finding.sh
+--vocab` -- not runnable from this restricted, read-only review scope; the class/domain
+values below are best-effort, not vocab-verified." It emitted `architecture` five times and
+`concurrency` once. The post-inlining arm used `unclassified` for the one finding that did
+not fit, as instructed, rather than inventing a sixth name.
+
+**So this was reachability, not attention.** Lower tiers do use a list placed in front of
+them; they were previously being asked to fetch one they could not reach. Defect 2 can
+therefore be closed on the plumbing alone without the table filling with opus-only findings.
+
+**The retest surfaced a new defect.** Both arms put a topic in the `domain` field --
+`caching` and `cache-adapter-design` -- because the format is given as
+`class|severity|lang|domain` and nothing says what `domain` is. It seeds the *industry*
+accelerator, so a topic there becomes a fake industry. Worse than the class problem in one
+way: an unknown class is rejected loudly, a wrong domain is accepted silently. Filed as
+`T-20260801-findings-emit-a-topic-where-domain-expec`, and it was only visible **because**
+the rows started being accepted -- the previous failure was masking it.
 
 Also: no class exists for test-coverage or verification defects, so reviewers invent one.
 Any fix must **reduce** the number of places the vocabulary lives — it already drifted
@@ -227,8 +248,9 @@ finding.
 
 `tester` (never run) · a real REVISE/REJECT second round (both short-circuited by hand) ·
 context economics (13 cluster packs generated, read by nothing) · brownfield, where the
-co-change graph is not inert · accelerators (commented out) · **whether inlining the
-vocabulary fixes sonnet and haiku compliance** (see defect 3).
+co-change graph is not inert · accelerators (commented out) · **haiku vocabulary compliance post-inlining** (sonnet is
+retested and fixed; haiku additionally broke the batch format itself by appending prose
+after the fourth field, which inlining would not address).
 
 **Cannot be tested in a session:** escape rate as a *hypothesis* — whether tier correlates
 with defects escaping. That needs escapes accumulated over time. What can be validated now is
