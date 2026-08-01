@@ -19,6 +19,20 @@ later without editing this skill.
 | 4 | An adversarial reader has looked for what the tests cannot express: fail-open guards, races behind a green suite, comments whose rationale is false | T2 |
 | 5 | A second reader, given no sight of the first's findings, has done the same | T3 |
 
+Rung 5 is a **completeness control, not a correctness control**, and the difference decides
+whether it is worth its cost. Measured on one T3 design: two reviewers, the second blind at
+a commit predating the first's findings, both returned REJECT and shared roughly 70% of
+findings. Same verdict either way — so as insurance against a wrong call it bought nothing.
+
+The 30% that differed is what it bought. Only the security reader found an unpinned hash
+whose ambiguous pre-image lets a same-tenant attacker poison a victim's cached answer. Only
+the design reader found that the proposed port set had no invalidation method at all.
+Neither list contained the other's.
+
+So do not run rung 5 expecting a second opinion on the verdict. Run it expecting a
+different half of the problem, and treat convergence on the verdict as normal rather than
+as evidence the rung is redundant.
+
 ## Satisfaction
 
 Read `.claude/project-profile.md` for `commands.*` and `ladder.*` keys. Never invoke a
