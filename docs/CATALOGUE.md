@@ -57,52 +57,98 @@ RabbitMQ and AmazonMQ. Valkey and ElastiCache. HashiCorp Vault and Secrets Manag
 A kind with only managed implementations cannot deploy on-premises; a kind with only
 self-hosted ones gives up the operational reason to be on a cloud at all.
 
-## 3. The hard problem: semantics, not signatures
+## 3. The consumption model is the kind boundary
 
-This is where vendor-agnostic abstraction layers usually fail, and it deserves to be
-decided before any code is written.
+Vendors market "messaging". That is not one kind, and treating it as one with capability
+tiers between the members is the first mistake available. There are two, divided by how a
+consumer gets a message and what happens to it afterwards:
 
-Implementations of the same kind do not offer the same guarantees:
+| | **Queue** | **Stream / log** |
+|---|---|---|
+| Consumption | destructive — acked and gone | non-destructive — a cursor moves |
+| Position | the broker owns it | the consumer owns it |
+| Replay | no | yes, within retention |
+| Retention | until consumed | time or size, independent of consumption |
+| Scale-out | competing consumers on one queue | partitions, one consumer per partition per group |
+| Members | RabbitMQ · AmazonMQ · SQS | Kafka · Redpanda · Valkey/Redis Streams · NATS JetStream |
 
-- SQS has a visibility timeout; RabbitMQ has ack/nack with requeue. Different redelivery
-  models, not different spellings of one model.
-- Kafka has partitions and replayable offsets. SQS has no ordering outside FIFO queues and
-  no replay at all. NATS JetStream has its own consumer semantics again.
-- Managed services impose quotas and message-size ceilings that a self-hosted broker
-  does not.
+**Portability exists within a consumption model and never across one.** This is the rule the
+whole catalogue design rests on.
 
-An interface that exposes `offset` cannot be implemented on SQS. An interface that exposes
-only `ack` throws away the replay you chose Kafka for. So there are two honest designs and
-one dishonest one:
+An application that acks and forgets is structurally different from one that replays from a
+stored offset on restart — different failure handling, different idempotency requirements,
+different recovery story. You cannot move between them by changing configuration, because
+the difference is in the application, not the binding. So they are two catalogue kinds with
+two interfaces, and an interface spanning both would be an interface for neither.
 
-1. **Intersection.** Define the interface on the guarantees every implementation can meet.
-   Portable, and you give up what you paid the vendor for.
-2. **Capability tiers.** The interface declares what it requires — ordered-per-key,
-   replayable, at-least-once — and an implementation declares what it provides. Binding
-   fails at startup when a project asks for a guarantee its chosen implementation cannot
-   give. More work, and it is the only design that stays honest as the catalogue grows.
-3. **Leak the strongest vendor's model and hope.** This is what most such layers do, and it
-   is why "cloud-agnostic" so often means "runs on the one we built it against".
+### Push and pull are transport, not semantics
 
-Recommend (2), and record the decision: **portability is a property of a declared guarantee
-set, not of an interface name.** A project that needs replay is not portable to SQS, and the
-system should say so at bind time rather than in production.
+Within the queue kind the delivery mechanism still differs, and this is the distinction that
+looks fundamental but is not:
+
+- **RabbitMQ and AmazonMQ push.** The broker drives delivery via a subscription, with
+  prefetch controlling flow. AmazonMQ runs the same engines, which is why it is a genuine
+  drop-in for RabbitMQ rather than a lookalike.
+- **SQS pulls.** The consumer polls, long-poll included, and unacked messages return after a
+  visibility timeout rather than being requeued on a channel close.
+
+Both are still *destructive consumption with per-message acknowledgement*. That is what an
+interface can span: a handler invoked per message, an ack, a nack. Whether the library runs
+a polling loop or holds a subscription is an implementation detail, and hiding it is
+legitimate.
+
+What cannot be hidden is redelivery: a visibility timeout and an ack/requeue are not two
+spellings of one behaviour. That belongs in the declared guarantees below, not papered over.
+
+### Swap cost is not uniform inside a kind
+
+The stream kind makes this obvious, and the catalogue should record it rather than implying
+that everything behind one interface is equally interchangeable:
+
+- **Kafka ↔ Redpanda** is close to free. Redpanda speaks the Kafka wire protocol, so the
+  same client library binds to either. This is the cheapest swap in the entire seed list and
+  the best first proof that an interface works.
+- **Kafka ↔ Valkey/Redis Streams** is a reimplementation. Consumer groups exist in both and
+  do not mean the same thing; partitioning, retention and ordering guarantees all differ.
+- **Kafka ↔ NATS JetStream** differs again, with its own consumer and acknowledgement model.
+
+So each implementation carries a **guarantee profile**, and the swap cost between any two is
+the delta between their profiles. An entry that does not record its profile is an entry
+nobody can safely swap.
+
+### Which leaves the design decision
+
+Given profiles, three ways to define an interface, one dishonest:
+
+1. **Intersection.** Define on what every member can meet. Portable, and you give up what
+   you paid the vendor for.
+2. **Declared guarantees.** The interface states what it *requires* — ordered-per-key,
+   replayable, at-least-once, exactly-once-effective — and each implementation states what it
+   *provides*. Binding **fails at startup** on a mismatch. More work, and the only design
+   that stays honest as the catalogue grows.
+3. **Leak the strongest member's model and hope.** What most such layers do, and why
+   "cloud-agnostic" so often means "runs on the one we built it against".
+
+Recommend (2). **Portability is a property of a declared guarantee set, not of an interface
+name.** A project needing replay is not portable to SQS, and the system should say so at bind
+time rather than in production.
 
 ## 4. Seed catalogue
 
 Offered as a starting point. Two or three concretes per kind, more added by priority.
 
-| Kind | Interface concern | Self-hostable | Managed |
-|---|---|---|---|
-| **Message queue** | publish, consume, ack/nack, dead-letter, retry budget | RabbitMQ | AmazonMQ |
-| **Streams** | append, consume from offset, consumer groups, partition key, ordering | Kafka · Redpanda · Valkey/Redis Streams · NATS + JetStream | (managed equivalents per vendor) |
-| **Cache** | get/set/delete, TTL, bounded append, tenant-scoped keys, degradation owner | Valkey · Dragonfly | ElastiCache |
-| **Secrets** | fetch by reference, rotate, envelope encrypt/decrypt | HashiCorp Vault | Secrets Manager + KMS |
+| Kind | Model | Interface concern | Self-hostable | Managed |
+|---|---|---|---|---|
+| **Message queue** | destructive, per-message ack | publish, consume, ack/nack, dead-letter, retry budget, redelivery semantics | RabbitMQ | AmazonMQ · SQS |
+| **Streams** | cursor, replayable | append, consume from offset, consumer groups, partition key, ordering, retention | Kafka · Redpanda · Valkey/Redis Streams · NATS JetStream | MSK · managed equivalents per vendor |
+| **Cache** | — | get/set/delete, TTL, bounded append, tenant-scoped keys, degradation owner | Valkey · Dragonfly | ElastiCache |
+| **Secrets** | — | fetch by reference, rotate, envelope encrypt/decrypt | HashiCorp Vault | Secrets Manager + KMS |
 
 Each entry needs, before any code:
 
 - the **interface**, committed on its own, in the language it is built for
-- its **declared guarantees**, per section 3 — the part that makes portability checkable
+- its **declared guarantees**, and a **guarantee profile per implementation** — the part that
+  makes portability checkable and swap cost visible
 - the **obligations** it imposes, which is where a pattern accelerator becomes the
   specification rather than a checklist
 - a **conformance suite** every implementation must pass — the highest-leverage asset in a
@@ -206,6 +252,16 @@ against a second implementation has not been shown to abstract anything.
 
 Run it in CI for at least one kind, early, against one self-hosted and one managed
 implementation. If it cannot pass there, the catalogue is documentation.
+
+**Start with Kafka and Redpanda.** They share a wire protocol, so the swap is close to free
+and the test isolates whether the *interface* is sound rather than whether two very different
+brokers can be reconciled. If the suite cannot pass across those two, nothing further down
+the list will pass either, and the failure is in the abstraction rather than in the distance
+between implementations.
+
+Then RabbitMQ against SQS as the second proof, because that pair genuinely differs — push
+subscription against poll with a visibility timeout — while remaining one consumption model.
+Passing both is evidence the interface spans real difference and not just a rebrand.
 
 ## 10. The gate on everything else
 
