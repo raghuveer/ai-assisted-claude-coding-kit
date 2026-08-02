@@ -56,12 +56,30 @@ task_known() {
 check_msg() {
   MSG=$1
   case "$MSG" in Merge*|Revert*|fixup!*|squash!*) return 0 ;; esac
-  printf '%s' "$MSG" | head -1 | grep -Eq "$EXEMPT" && return 0
 
-  printf '%s' "$MSG" | grep -Eq '^Task-Id:[[:space:]]*\S' ||
-    printf '  missing  Task-Id:      which task does this commit belong to?\n'
-  printf '%s' "$MSG" | grep -Eq '^Tier:[[:space:]]*T[0-3][[:space:]]*$' ||
-    printf '  missing/invalid  Tier:  one of T0 T1 T2 T3 — required for escape-rate measurement\n'
+  # git.trivial_pattern means trailers are not REQUIRED. It does not mean trailers are not
+  # CHECKED. Returning early here let a `docs:` commit carry `Task-Id: <typo>` and `Tier: T9`
+  # with no complaint -- and the typo still indexed, creating a titleless phantom task that
+  # no file backs and that every count then includes.
+  #
+  # That happened in this repository, and the trailer is now permanent: a commit message
+  # cannot be corrected after it is pushed without rewriting history. Which is the argument
+  # for checking at commit time rather than at index time.
+  exempt=0
+  printf '%s' "$MSG" | head -1 | grep -Eq "$EXEMPT" && exempt=1
+
+  if [ "$exempt" = 0 ]; then
+    printf '%s' "$MSG" | grep -Eq '^Task-Id:[[:space:]]*\S' ||
+      printf '  missing  Task-Id:      which task does this commit belong to?\n'
+    printf '%s' "$MSG" | grep -Eq '^Tier:[[:space:]]*T[0-3][[:space:]]*$' ||
+      printf '  missing/invalid  Tier:  one of T0 T1 T2 T3 — required for escape-rate measurement\n'
+  else
+    # Exempt: absence is fine, a wrong value is not.
+    if printf '%s' "$MSG" | grep -Eq '^Tier:[[:space:]]*\S' &&
+       ! printf '%s' "$MSG" | grep -Eq '^Tier:[[:space:]]*T[0-3][[:space:]]*$'; then
+      printf '  invalid  Tier:  one of T0 T1 T2 T3 (a trivial commit need not carry one at all)\n'
+    fi
+  fi
 
   # Git reads trailers only from the LAST paragraph. A message with trailers followed by
   # any further prose -- most often the Co-authored-by: that squash-merge appends -- passes

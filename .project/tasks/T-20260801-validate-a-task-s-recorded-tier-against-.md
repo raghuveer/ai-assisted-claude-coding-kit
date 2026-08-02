@@ -36,16 +36,29 @@ calibrated.
 
 ## Acceptance criteria
 
-- [ ] a task whose recorded tier is below a matching `tier.rule` floor is reported
-- [ ] the check runs where it will be seen -- indexing or status, not a script someone
+- [x] a task whose recorded tier is below a matching `tier.rule` floor is reported
+- [x] the check runs where it will be seen -- indexing or status, not a script someone
       remembers
-- [ ] floors raise and never lower, so a task tiered ABOVE its floor is not flagged
-- [ ] the report distinguishes "below floor" from "no tier recorded at all"
+- [x] floors raise and never lower, so a task tiered ABOVE its floor is not flagged
+- [x] the report distinguishes "below floor" from "no tier recorded at all"
 
 ## Notes
 
-Cheap to implement: the floors and the task tiers are both already in the index. This is a
-query, not a new mechanism.
+"Cheap: floors and task tiers are both already in the index, this is a query" was half right.
+Task tiers are in the index; the FLOOR is not, because a floor needs the paths a task will
+change and the index only knows the paths it has already changed. 7 of 8 open tasks in this
+repository had no touches edges, so an edge-only floor would have passed every one of them
+silently -- and an unstarted task is exactly when the tier still matters, since it gates the
+review that happens during the work.
+
+So floors come from two sources. An optional `paths:` frontmatter glob list, which works
+before any commit, and touches edges, which catch a task whose declared paths were wrong or
+absent once work begins. Both raise, neither lowers, and MAX takes the higher.
+
+Three states, not two: below floor, at-or-above, and no basis to judge. The third is
+reported as a count rather than passed over -- silence on an unjudgeable task is how
+under-tiering stays invisible, which is the same failure the escape rate had while the
+findings loop was open.
 
 Does not address tiering by severity at import time, which is the upstream cause. Worth a
 separate note wherever tasks are bulk-imported from a findings register.

@@ -64,6 +64,34 @@ ESC=$(q "SELECT COALESCE(NULLIF(t.tier,''),'untiered')||'  '||
          GROUP BY COALESCE(NULLIF(t.tier,''),'untiered') ORDER BY 1;")
 [ -n "$ESC" ] && printf '%s\n' "$ESC" | sed 's/^/- /' || printf '_no data yet_\n'
 
+# Under-tiering is silent and it is the dangerous direction: a task recorded T1 that should
+# be T2 gets one fewer reviewer and nothing says so. Measured on a real backlog, two of three
+# recorded tiers were below their floor -- both because the backlog was tiered from finding
+# SEVERITY rather than checked against the project's own tier.rule globs.
+#
+# Escape rate by tier is computed from these same values, so a wrong tier does not make that
+# metric noisy. It makes it wrong in a direction that still looks calibrated.
+BELOW=$(q "SELECT t.id||'  recorded '||COALESCE(NULLIF(t.tier,''),'(none)')||', floor '||t.tier_floor
+             FROM task t
+            WHERE t.tier_floor IS NOT NULL
+              AND (t.tier IS NULL OR t.tier='' OR t.tier < t.tier_floor)
+              AND t.state NOT IN ('done','abandoned')
+            ORDER BY t.tier_floor DESC, t.id;")
+if [ -n "$BELOW" ]; then
+  printf '\n## Below their tier floor\n\n'
+  printf '%s\n' "$BELOW" | sed 's/^/- /'
+  printf '\n_A floor raises and never lowers. Reviewed one rung shallow until corrected._\n'
+fi
+
+# Silence on an unjudgeable task is how under-tiering stays invisible, so say how much of the
+# backlog the check could not speak for rather than letting it read as a clean bill.
+NOBASIS=$(q "SELECT COUNT(*) FROM task WHERE tier_floor IS NULL AND state NOT IN ('done','abandoned');")
+OPENN=$(q "SELECT COUNT(*) FROM task WHERE state NOT IN ('done','abandoned');")
+if [ "${NOBASIS:-0}" -gt 0 ]; then
+  printf '\n> **Tier floors unverified for %s of %s open task(s).** No declared `paths:` and no\n' "$NOBASIS" "$OPENN"
+  printf '> files touched yet, so no floor could be computed — not that none applies.\n'
+fi
+
 if [ "$REQUIRED" -gt 0 ] && [ $(( UNTAG * 100 / REQUIRED )) -gt 20 ]; then
   printf '\n> **Trailer discipline degraded.** %s of %s non-trivial commits carry no `Task-Id`' "$UNTAG" "$REQUIRED"
   [ "$EXEMPTN" -gt 0 ] && printf ' (%s trivial commit(s) excluded per `git.trivial_pattern`)' "$EXEMPTN"

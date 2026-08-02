@@ -141,6 +141,20 @@ ADAPTER_FAILED=0
 # destroying the index first would turn a transient outage into an empty backlog.
 { echo "BEGIN;"
 
+# ---- tier floors -------------------------------------------------------------
+# tier.rule is `<path-glob> <tier>`, repeatable. A floor RAISES a tier and never lowers it,
+# so a task recorded above its floor is correct and is not flagged.
+#
+# Matched from two sources, and both are needed. Files a task has already touched come from
+# the edge table -- but 7 of 8 open tasks in a real backlog had no touches edges, because
+# nothing is committed against a task until work begins. A floor that only sees touched files
+# therefore passes silently on every task that has not started, which is exactly when the tier
+# still matters: it gates the review that happens DURING the work.
+#
+# So a task may also declare `paths:` in its frontmatter -- the globs it expects to change.
+# Optional, additive, ignored by older kits.
+TIER_RULES=$(kit_cfg_all "$PROFILE" tier.rule | sed 's/[[:space:]][[:space:]]*/\t/' | tr '\n' '\036')
+
 # ---- 1. tasks: frontmatter is authoritative for identity ----------------------
 # One awk over every task file, rather than one awk per key plus one sed per quoted value
 # -- roughly twenty processes per task before. A bare process spawn costs ~0.5s on Windows,
@@ -155,15 +169,45 @@ elif [ -d "$ROOT/$TASKS_DIR" ]; then
   done
 fi
 if [ "$HAVE_TASKS" = 1 ]; then
-  KIT_PREFIX="$ROOT/" awk '
+  KIT_PREFIX="$ROOT/" KIT_RULES="$TIER_RULES" awk '
     function q(s){ gsub(/\047/,"\047\047",s); return s }
-    function emit(   id, ti, st, bb, parts, nd, j) {
+    # glob -> regex. * and ** both cross directory separators, which matches SQLite GLOB, so
+    # the two floor sources agree with each other. That over-matches `a/*.ts` against
+    # `a/b/c.ts` -- a direction that only ever RAISES a tier, which is the safe way to be
+    # wrong about a floor.
+    function globre(g,   r) {
+      r = g
+      gsub(/[.^$+(){}|]/, "\\\\&", r)
+      gsub(/\052+/, ".*", r)
+      gsub(/\077/, ".", r)
+      return "^" r "$"
+    }
+    function floorof(paths,   n, i, parts2, j, m, rule, g, t, best, rules) {
+      best = ""
+      if (paths == "") return ""
+      n = split(paths, parts2, /[ ,\t]+/)
+      m = split(ENVIRON["KIT_RULES"], rules, "\036")
+      for (j = 1; j <= m; j++) {
+        if (rules[j] == "") continue
+        split(rules[j], rule, "\t")
+        g = rule[1]; t = rule[2]
+        gsub(/^[ \t]+|[ \t]+$/, "", g); gsub(/^[ \t]+|[ \t]+$/, "", t)
+        if (g == "" || t == "") continue
+        for (i = 1; i <= n; i++) {
+          if (parts2[i] == "") continue
+          if (parts2[i] ~ globre(g) && t > best) best = t
+        }
+      }
+      return best
+    }
+    function emit(   id, ti, st, bb, parts, nd, j, fl) {
       id = v["id"]
       if (id == "") { printf "kit: no id in frontmatter, skipped: %s\n", rel > "/dev/stderr"; return }
       ti = (v["title"] != "" ? v["title"] : id)
       st = (v["state"] != "" ? v["state"] : "open")
       printf "INSERT OR REPLACE INTO node VALUES(\047%s\047,\047task\047,\047%s\047,\047%s\047);\n", q(id), q(rel), q(ti)
-      printf "INSERT OR REPLACE INTO task(id,epic,state,tier,lang,blocked_by) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047);\n", q(id), q(v["epic"]), q(st), q(v["tier"]), q(v["lang"]), q(v["blocked_by"])
+      fl = floorof(v["paths"])
+      printf "INSERT OR REPLACE INTO task(id,epic,state,tier,lang,blocked_by,tier_floor) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,%s);\n", q(id), q(v["epic"]), q(st), q(v["tier"]), q(v["lang"]), q(v["blocked_by"]), (fl == "" ? "NULL" : "\047" fl "\047")
       # blocked_by is a comma/space separated list of task ids. Frontmatter is where a
       # human declares dependency; edges are how the planner consumes it.
       bb = v["blocked_by"]; gsub(/,/, " ", bb)
@@ -546,6 +590,21 @@ UPDATE task SET closed_at = (
   SELECT MAX(e.at) FROM event e WHERE e.task_id = task.id AND e.kind IN ('done','abandoned'))
   WHERE state IN ('done','abandoned');
 DERIVE
+
+# Raise the floor from files the task has actually touched. This is the second of the two
+# sources: it catches a task whose declared paths were wrong or absent, but only once work
+# has begun -- which is why the declared-paths floor above exists as well.
+#
+# GLOB, not LIKE: SQLite GLOB treats * as matching any character including /, so `src/**`
+# and `src/*` behave alike and agree with the awk conversion above. MAX() is scalar here and
+# COALESCE to '' makes it a floor, since '' sorts below 'T0'. Floors only ever raise.
+printf '%s' "$TIER_RULES" | tr '\036' '\n' | while IFS="$(printf '\t')" read -r _g _t; do
+  [ -n "$_g" ] && [ -n "$_t" ] || continue
+  _g=$(printf '%s' "$_g" | sed "s/'/''/g")
+  _t=$(printf '%s' "$_t" | sed "s/'/''/g")
+  printf "UPDATE task SET tier_floor = MAX(COALESCE(tier_floor,''),'%s') WHERE id IN (SELECT src FROM edge WHERE rel='touches' AND dst GLOB 'f:%s');\n" "$_t" "$_g"
+done
+
 echo "COMMIT;"
 } > "$SQL"
 

@@ -86,6 +86,88 @@ BATCH
 check $? "undeclared domain dropped, pattern retained"
 rm -rf "$step_dir"
 
+step "a trivial commit still has its trailers checked"
+# git.trivial_pattern means trailers are not REQUIRED, not that they are not CHECKED. The
+# early return let a `docs:` commit carry a typo'd Task-Id, which then indexed as a titleless
+# phantom task -- and a pushed commit message cannot be corrected.
+tx="$WORK.exempt"; rm -rf "$tx"; mkdir -p "$tx"
+( cd "$tx" && git init -q -b main 2>/dev/null
+  mkdir -p .claude .project/tasks
+  printf -- '---
+paths.tasks:  .project/tasks
+paths.state:  .project
+---
+' > .claude/project-profile.md
+  printf -- '---
+id: T-real
+title: r
+tier: T1
+---
+b
+' > .project/tasks/T-real.md
+  printf 'docs: x
+
+Task-Id: T-nope
+Tier: T9
+' > bad.txt
+  printf 'docs: x
+' > ok.txt
+  bash "$KIT/tooling/kit-trailers.sh" message bad.txt 2>&1 | grep -q "matches no task" || exit 1
+  bash "$KIT/tooling/kit-trailers.sh" message bad.txt 2>&1 | grep -q "invalid  Tier" || exit 1
+  [ -z "$(bash "$KIT/tooling/kit-trailers.sh" message ok.txt 2>&1)" ] || exit 1 )
+check $? "exempt commit: absence allowed, wrong values still reported"
+rm -rf "$tx"
+
+step "a tier below its floor is reported"
+# Under-tiering is silent and it is the dangerous direction. Two of three recorded tiers in a
+# real backlog were below their floor -- and a floor computed only from touched files would
+# have caught NONE of them, because 7 of 8 open tasks had no commits yet. Hence the declared
+# paths source, which is what this exercises.
+#
+# Its own directory: an earlier version of this check mutated the shared fixture and broke
+# the losslessness comparison three steps later.
+tf="$WORK.floor"; rm -rf "$tf"; mkdir -p "$tf"
+( cd "$tf" && git init -q -b main 2>/dev/null
+  mkdir -p .claude .project/tasks
+  { echo "---"
+    echo "paths.tasks:  .project/tasks"
+    echo "paths.state:  .project"
+    echo "tier.default: T1"
+    echo "tier.rule: src/adapters/** T3"
+    echo "tier.rule: src/core/** T2"
+    echo "---"; } > .claude/project-profile.md
+  printf -- '---
+id: T-under
+title: u
+tier: T1
+paths: src/adapters/Q.ts
+---
+b
+' > .project/tasks/T-under.md
+  printf -- '---
+id: T-above
+title: a
+tier: T3
+paths: src/core/X.ts
+---
+b
+' > .project/tasks/T-above.md
+  printf -- '---
+id: T-none
+title: n
+tier: T0
+---
+b
+' > .project/tasks/T-none.md
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  u=$(sqlite3 .project/index.db "SELECT tier_floor FROM task WHERE id='T-under';" | tr -d '\015')
+  a=$(sqlite3 .project/index.db "SELECT tier_floor FROM task WHERE id='T-above';" | tr -d '\015')
+  n=$(sqlite3 .project/index.db "SELECT COALESCE(tier_floor,'null') FROM task WHERE id='T-none';" | tr -d '\015')
+  b=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM task WHERE tier_floor IS NOT NULL AND tier < tier_floor;" | tr -d '\015')
+  [ "$u" = T3 ] && [ "$a" = T2 ] && [ "$n" = null ] && [ "$b" = 1 ] )
+check $? "floor from declared paths; below flagged, above not, no-basis distinguished"
+rm -rf "$tf"
+
 step "validate.py"
 (cd "$KIT" && { python3 validate.py >/dev/null 2>&1 || python validate.py >/dev/null 2>&1; })
 check $? "validate.py exits 0"

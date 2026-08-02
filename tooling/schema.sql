@@ -16,7 +16,12 @@ CREATE TABLE task (
   lang       TEXT,
   created_at TEXT,
   closed_at  TEXT,
-  blocked_by TEXT
+  blocked_by TEXT,
+  -- Derived, never authored. The highest tier.rule floor that matches this task, from the
+  -- paths it declares and from the files it has actually touched. NULL means no basis to
+  -- judge -- which must read differently from "meets its floor", because silence on an
+  -- unjudgeable task is how under-tiering stays invisible.
+  tier_floor TEXT
 );
 
 CREATE TABLE edge (
