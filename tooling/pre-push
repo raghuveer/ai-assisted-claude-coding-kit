@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# pre-push — validate trailers on the last commits where they can still be corrected.
+#
+# The kit already checks at two points and both leave a gap. commit-msg is per-clone, it is
+# skipped by --no-verify, and it does not exist at all for anyone who never ran kit-init.sh.
+# CI checks correctly but only after the push, and by then a wrong Task-Id is PERMANENT: a
+# commit message cannot be amended once it is shared.
+#
+# Push is the last moment a mistake is still one `git commit --amend` or one rebase away.
+# This repository has a titleless phantom task from exactly that -- a typo'd Task-Id in a
+# commit that was pushed before anything checked it.
+#
+# Do NOT symlink. kit-init.sh generates a copy with KIT_TOOLING resolved to this machine.
+set -uo pipefail
+
+: "${KIT_TOOLING:=$(dirname "$0")}"
+if [ ! -f "$KIT_TOOLING/kit-trailers.sh" ]; then
+  echo "pre-push: cannot load kit-trailers.sh from $KIT_TOOLING" >&2
+  echo "  re-run kit-init.sh in this repository to regenerate the hook." >&2
+  exit 1
+fi
+
+ZERO=0000000000000000000000000000000000000000
+RC=0
+
+# git feeds one line per ref: <local-ref> <local-sha> <remote-ref> <remote-sha>
+while read -r _lref lsha _rref rsha; do
+  [ -n "${lsha:-}" ] || continue
+
+  # A deletion pushes the zero sha as the local side. There is nothing to validate, and
+  # treating it as a range would ask git to resolve a commit that does not exist.
+  case "$lsha" in "$ZERO"|"") continue ;; esac
+
+  if [ "$rsha" = "$ZERO" ] || [ -z "${rsha:-}" ]; then
+    # A new branch. The remote has no counterpart, so "everything reachable from here" would
+    # mean the entire history -- every commit written before this convention existed. Bound
+    # it by what the remote already has instead.
+    RANGE=$(git rev-list "$lsha" --not --remotes 2>/dev/null | tail -1)
+    if [ -n "$RANGE" ]; then RANGE="$RANGE~1..$lsha"; else continue; fi
+    # A repository whose first commit is being pushed has no ~1 to anchor to.
+    git rev-parse -q --verify "${RANGE%%..*}" >/dev/null 2>&1 || RANGE="$lsha"
+  else
+    RANGE="$rsha..$lsha"
+  fi
+
+  bash "$KIT_TOOLING/kit-trailers.sh" range "$RANGE" || RC=1
+done
+
+[ "$RC" = 0 ] && exit 0
+# Say how to fix it here, because "correct it before pushing" is only actionable while the
+# commit is still local -- which is the entire reason this hook exists rather than leaving
+# the check to CI.
+echo "" >&2
+echo "Nothing has been pushed. These commits are still local, so:" >&2
+echo "  the most recent   ->  git commit --amend" >&2
+echo "  an earlier one    ->  git rebase -i <base>  and reword it" >&2
+echo "  push anyway       ->  git push --no-verify   (the trailer becomes permanent)" >&2
+exit 1

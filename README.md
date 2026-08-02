@@ -198,8 +198,14 @@ on squash-merge — strands them where `%(trailers:)` cannot see them. The `comm
 rejects that shape, and `kit-index.sh` recovers it with a full-message scan and says so,
 because a merge flow that mangles trailers will also defeat anything else that reads them.
 
-**Enforcement needs both sides.** `.git/hooks/` is per-clone and git cannot share it, so
-the hook only protects developers who ran `kit-init.sh`. Copy
+**Enforcement has three points, and they are not redundant.** `commit-msg` catches a
+trailer while you are still writing it. `pre-push` catches one that got past `--no-verify`
+or past a teammate who never ran `kit-init.sh` — and it is the last moment a commit message
+can be amended, because after a push a wrong `Task-Id` is permanent and indexes as a
+titleless phantom task. CI catches what reaches the remote regardless.
+
+`.git/hooks/` is per-clone and git cannot share it, so the first two protect only developers
+who ran `kit-init.sh`. Copy
 `templates/github-trailer-gate.yml` into `.github/workflows/` for the server-side check
 that survives a clone. Both call the same validator — `tooling/kit-trailers.sh` — because
 two copies of these rules would drift, which is the bug 0.2.1 existed to fix.

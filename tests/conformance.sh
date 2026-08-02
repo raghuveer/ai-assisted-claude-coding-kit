@@ -118,6 +118,42 @@ Tier: T9
 check $? "exempt commit: absence allowed, wrong values still reported"
 rm -rf "$tx"
 
+step "pre-push blocks a wrong trailer while it can still be amended"
+# commit-msg is skippable and absent for anyone who never ran kit-init; CI catches correctly
+# but only after the push, when a commit message can no longer be changed. This repository
+# carries a permanent phantom task from exactly that gap.
+pp="$WORK.push"; rm -rf "$pp"; mkdir -p "$pp/remote" "$pp/work"
+( cd "$pp/remote" && git init -q --bare -b main 2>/dev/null
+  cd "$pp/work" && git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  git remote add origin "$pp/remote"
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  [ -x .git/hooks/pre-push ] || exit 1
+  mkdir -p .project/tasks
+  printf -- '---
+id: T-real
+title: r
+tier: T2
+---
+b
+' > .project/tasks/T-real.md
+  sed -i.bak 's|^git.trailer_enforcement:.*|git.trailer_enforcement:  enforce|' .claude/project-profile.md
+  rm -f .claude/project-profile.md.bak
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  echo x > a.txt && git add -A
+  git commit -q --no-verify -m "feat: w
+
+Task-Id: T-typo
+Tier: T2"
+  git push origin main >/dev/null 2>&1 && exit 1          # must be REFUSED
+  git commit -q --amend --no-verify -m "feat: w
+
+Task-Id: T-real
+Tier: T2"
+  git push origin main >/dev/null 2>&1 || exit 1 )        # must now succeed
+check $? "refuses a typo'd Task-Id, accepts it once amended"
+rm -rf "$pp"
+
 step "spend is recorded, deduplicated and attributed"
 # Totals are cumulative per transcript, so recording twice must not double the cost -- which
 # is what happens if the harness passes the shared session transcript to every SubagentStop.

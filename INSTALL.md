@@ -55,7 +55,7 @@ of them until a project opts in — see below.
     cd your-repo
     $CLAUDE_PLUGIN_ROOT/tooling/kit-init.sh
 
-Creates `.claude/project-profile.md`, generates `.git/hooks/commit-msg`, and writes
+Creates `.claude/project-profile.md`, generates the `commit-msg` and `pre-push` hooks, and writes
 `.gitignore` / `.gitattributes` entries.
 
 Then, in order:
@@ -112,7 +112,19 @@ clone; the index is rebuilt locally and never shared.
 
 **Why running `kit-init.sh` is not optional.** Git does not share hooks. `.git/hooks/`
 is per-clone, so trailer validation does not exist for you until you generate it. The
-hook is generated rather than symlinked because the plugin's path differs per machine.
+hooks are generated rather than symlinked because the plugin's path differs per machine.
+
+Two are generated, and they guard different moments:
+
+| | when | why both |
+|---|---|---|
+| `commit-msg` | as you commit | cheapest place to fix a trailer — you are still writing it |
+| `pre-push` | before anything is shared | `--no-verify` skips the first, and a teammate who never ran `kit-init.sh` never had it |
+
+`pre-push` is the last point a wrong trailer can still be corrected. After a push, a commit
+message can only be changed by rewriting shared history, so a typo'd `Task-Id` becomes
+permanent — and it indexes as a titleless phantom task that every count then includes. This
+kit carries one from before the hook existed.
 
 ---
 

@@ -68,31 +68,47 @@ check_msg() {
   exempt=0
   printf '%s' "$MSG" | head -1 | grep -Eq "$EXEMPT" && exempt=1
 
-  if [ "$exempt" = 0 ]; then
-    printf '%s' "$MSG" | grep -Eq '^Task-Id:[[:space:]]*\S' ||
-      printf '  missing  Task-Id:      which task does this commit belong to?\n'
-    printf '%s' "$MSG" | grep -Eq '^Tier:[[:space:]]*T[0-3][[:space:]]*$' ||
-      printf '  missing/invalid  Tier:  one of T0 T1 T2 T3 — required for escape-rate measurement\n'
-  else
-    # Exempt: absence is fine, a wrong value is not.
-    if printf '%s' "$MSG" | grep -Eq '^Tier:[[:space:]]*\S' &&
-       ! printf '%s' "$MSG" | grep -Eq '^Tier:[[:space:]]*T[0-3][[:space:]]*$'; then
-      printf '  invalid  Tier:  one of T0 T1 T2 T3 (a trivial commit need not carry one at all)\n'
-    fi
-  fi
-
-  # Git reads trailers only from the LAST paragraph. A message with trailers followed by
-  # any further prose -- most often the Co-authored-by: that squash-merge appends -- passes
-  # a whole-message grep and is invisible to %(trailers:...), which is what the indexer
-  # reads. Catch the divergence where moving three lines is free.
+  # git is the authority on what IS a trailer, and the whole message is only used to find
+  # what git will not see. Getting this backwards produces one of two mirror-image bugs:
+  #
+  #   grep only  -> prose at column 0 reads as a trailer. A commit message explaining a
+  #                 typo'd `Task-Id:` was rejected for containing the typo it described.
+  #   parse only -> a trailer stranded before a later paragraph is silently absent, which
+  #                 is the 0.2.1 defect where squash-merged commits vanished from the index.
+  #
+  # So: validate what git parses, and separately report anything present that git will not.
   PARSED=$(printf '%s\n' "$MSG" | git interpret-trailers --parse 2>/dev/null)
+  tv() { printf '%s' "$PARSED" | sed -n "s/^$1:[[:space:]]*//p" | head -1; }
+
+  stranded=""
   for k in Task-Id Tier Task-Status Fixes-Escape-Of; do
     printf '%s' "$MSG" | grep -Eq "^$k:[[:space:]]*\S" || continue
     printf '%s' "$PARSED" | grep -Eq "^$k:[[:space:]]*\S" && continue
+    stranded="$stranded $k"
     printf '  stranded  %s:  present, but not in the final paragraph — git will not index it\n' "$k"
   done
+  is_stranded() { case " $stranded " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
-  v=$(printf '%s' "$MSG" | sed -n 's/^Task-Status:[[:space:]]*//p' | head -1)
+  TID=$(tv Task-Id); TIER=$(tv Tier)
+
+  if [ "$exempt" = 0 ]; then
+    # Do not also say "missing" for a key already reported as stranded: it is present, and
+    # the stranded line already says why it will not count.
+    [ -n "$TID" ] || is_stranded Task-Id ||
+      printf '  missing  Task-Id:      which task does this commit belong to?\n'
+    if [ -z "$TIER" ]; then
+      is_stranded Tier ||
+        printf '  missing  Tier:  one of T0 T1 T2 T3 — required for escape-rate measurement\n'
+    fi
+  fi
+
+  # A value that IS parsed must be valid, exempt or not. Absence is what the exemption
+  # forgives; a wrong value is never forgiven.
+  case "${TIER:-}" in ''|T0|T1|T2|T3) ;;
+    *) printf '  invalid  Tier: %s  — one of T0 T1 T2 T3\n' "$TIER" ;;
+  esac
+
+  v=$(tv Task-Status)
   if [ -n "$v" ]; then
     case "$v" in started|progress|blocked|unblocked|done|abandoned) ;;
       *) printf '  invalid  Task-Status: %s\n' "$v" ;;
@@ -100,7 +116,7 @@ check_msg() {
   fi
 
   for k in Task-Id Fixes-Escape-Of; do
-    v=$(printf '%s' "$MSG" | sed -n "s/^$k:[[:space:]]*//p" | head -1)
+    v=$(tv "$k")
     [ -n "$v" ] || continue
     task_known "$v" || printf '  unknown  %s: %s — matches no task in %s\n' "$k" "$v" "$TASKS_DIR"
   done
