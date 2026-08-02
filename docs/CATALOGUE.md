@@ -357,20 +357,68 @@ every project that pinned it. A catalogue entry is **T3 by construction**, and t
 that matters is its own escape rate — which this kit is already built to measure, provided
 the findings loop stays closed.
 
-## 8. What actually goes in the kit
+## 8. What actually goes in the kit — nothing new
 
-Not the catalogue. Five things, and the first works with no catalogue at all:
+The libraries are their own projects. The interface for a kind is committed on its own, in
+its own repository, and each implementation is a separate repository behind it. They version
+independently, they release on their own cadence, and none of it belongs to this plugin.
 
-1. **The vendor-SDK boundary as a checkable invariant** — declared in the overlay, enforced
-   as a `compliance` finding. Useful on day one, on any project, adopted or not.
-2. **A profile key** naming the deployment targets a project must support. Portability is
-   only meaningful against a stated set, and "we might go on-prem one day" is not one.
-3. **A profile key** declaring which catalogue and version a project draws from, pinned —
-   for the same reason the plugin is pinned.
-4. **Pattern entries point at implementations**, so knowledge graduating into code is
-   visible rather than folkloric.
-5. **A review obligation** — *was there a catalogue entry for this, and if not, why was it
+**The technology accelerator is the index.** No new kit mechanism is needed, because the
+accelerator is already the per-language axis, already resolved per agent and per component,
+and already the place SDK patterns were going to live:
+
+```
+# accelerators/technology/typescript.md
+
+## Portable libraries
+queue     interface: github.com/<org>/queue-ts@2.1        impls: rabbitmq@2.1 · amazonmq@2.0 · sqs@1.4
+streams   interface: github.com/<org>/streams-ts@1.3      impls: kafka@1.3 · redpanda@1.3 · jetstream@0.9
+cache     interface: github.com/<org>/cache-ts@3.0        impls: valkey@3.0 · elasticache@3.0
+secrets   interface: github.com/<org>/secrets-ts@1.1      impls: vault@1.1 · secretsmanager@1.0
+
+## Vendor SDK patterns
+vendor.sdk: @aws-sdk/      -> aws
+vendor.sdk: @azure/        -> azure
+```
+
+Selection then falls out of machinery that already exists, with nothing added:
+
+1. The **overlay** states the stack and may pin an implementation — a client mandating AWS
+   is a constraint, and pinning is safe because the interface makes it reversible.
+2. The **technology accelerator** for that stack names the interface and the implementations
+   available for it.
+3. Where the overlay has not pinned, the choice follows the project's own facts — required
+   scalability, deployment targets, whether this is a demo or has a production timeline — and
+   is recorded rather than assumed.
+
+**This removes the profile key an earlier draft proposed.** "Which catalogue, which version"
+becomes "which technology accelerator, which version", which is already declared, already
+pinned, and already resolved. One fewer mechanism, and language-specific facts stay on the
+language axis where the rest of them are.
+
+So the kit's entire share of this proposal reduces to:
+
+1. **The vendor-boundary check** (section 5) — the only genuinely new thing, and it works
+   with no libraries at all.
+2. **A review obligation** — *was there a catalogue entry for this, and if not, why was it
    hand-rolled?* — plus a finding class for re-implementing a catalogued capability.
+3. **Accelerator content**, which is authoring, not engineering.
+
+### One caution on repository granularity
+
+Interface-in-its-own-repo is right: it lets a consumer depend on the contract without
+pulling every adapter, which is what makes testing against a fake cheap.
+
+Separate repositories *per implementation* is a governance choice rather than a technical
+one, and it has a cost worth counting before committing: four kinds × four languages × three
+implementations is upwards of sixty repositories, each with its own CI, release process and
+permissions.
+
+What actually matters is **independently publishable artifacts** — a project should pull the
+interface plus only the adapters it deploys. A monorepo per language with separate published
+packages achieves exactly that with one CI pipeline and one release process. Choose separate
+repositories if you need separate ownership or separate access control; do not choose them
+by default, and do not confuse them with dependency granularity.
 
 ## 9. The acceptance test
 
