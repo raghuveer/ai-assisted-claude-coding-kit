@@ -506,6 +506,11 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
       if (match(s, "\"" k "\"[ ]*:[ ]*\"[^\"]*\"")) {
         r=substr(s,RSTART,RLENGTH); sub(/^[^:]*:[ ]*"/,"",r); sub(/"$/,"",r) }
       return r }
+    # jf reads a quoted string; token counts are bare numbers and need their own reader.
+    function jn(s,k,  r){ r=0
+      if (match(s, "\"" k "\"[ ]*:[ ]*-?[0-9]+")) {
+        r=substr(s,RSTART,RLENGTH); sub(/^[^:]*:[ ]*/,"",r) }
+      return r+0 }
     function q(s){ gsub(/\047/,"\047\047",s); return s }
     NF {
       t=jf($0,"task"); k=jf($0,"kind"); a=jf($0,"at")
@@ -521,6 +526,14 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
           n++
           printf "INSERT OR REPLACE INTO finding(id,task_id,agent,model,tier,lang,domain,pattern,class,severity,at) VALUES(\047%s:%d\047,\047%s\047,\047%s\047,\047%s\047,NULL,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047);\n", q(a), n, q(t), q(jf($0,"agent")), q(jf($0,"model")), q(jf($0,"lang")), q(jf($0,"domain")), q(jf($0,"pattern")), q(cls), q(jf($0,"severity")), q(a)
         }
+      }
+      # Spend totals are CUMULATIVE for a transcript, so OR REPLACE keeps the last -- and
+      # events arrive sorted by timestamp, so the last is the highest. Summing would count
+      # the same tokens once per hook firing.
+      if (k=="spend") {
+        tr = jf($0,"transcript")
+        if (tr != "")
+          printf "INSERT OR REPLACE INTO spend(transcript,agent,session,at,tok_in,tok_out,cache_read,cache_write) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,%d,%d,%d,%d);\n", q(tr), q(jf($0,"agent")), q(jf($0,"session")), q(a), jn($0,"tok_in"), jn($0,"tok_out"), jn($0,"cache_read"), jn($0,"cache_write")
       }
       if (k=="vindication") {
         # Held back to END. A vindication can precede its finding in the file, and after a
@@ -589,6 +602,23 @@ UPDATE task SET owner = (
 UPDATE task SET closed_at = (
   SELECT MAX(e.at) FROM event e WHERE e.task_id = task.id AND e.kind IN ('done','abandoned'))
   WHERE state IN ('done','abandoned');
+
+-- Attribute spend to a task. The hook that fires when an agent finishes does not know which
+-- task it was serving, so the link is inferred: the next task-status transition at or after
+-- the spend. Work is committed with a trailer when it completes, so the transition that
+-- follows a burn of tokens is normally the task those tokens were spent on.
+--
+-- It is a heuristic and it fails in the obvious ways -- two tasks in flight at once, a
+-- session that ends without a commit. That is why unattributed spend is REPORTED rather than
+-- dropped: a cost table missing its expensive rows reads as cheap work, not as measurement
+-- that did not happen.
+UPDATE spend SET task_id = (
+  SELECT e.task_id FROM event e
+   WHERE e.task_id IS NOT NULL AND e.task_id <> ''
+     AND e.kind IN ('started','progress','blocked','unblocked','done','abandoned')
+     AND e.at >= spend.at
+   ORDER BY e.at, e.seq LIMIT 1)
+ WHERE task_id IS NULL OR task_id = '';
 DERIVE
 
 # Raise the floor from files the task has actually touched. This is the second of the two

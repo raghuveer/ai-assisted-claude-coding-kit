@@ -118,6 +118,39 @@ Tier: T9
 check $? "exempt commit: absence allowed, wrong values still reported"
 rm -rf "$tx"
 
+step "spend is recorded, deduplicated and attributed"
+# Totals are cumulative per transcript, so recording twice must not double the cost -- which
+# is what happens if the harness passes the shared session transcript to every SubagentStop.
+sx="$WORK.spend"; rm -rf "$sx"; mkdir -p "$sx/src"
+( cd "$sx" && git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  printf -- '---
+id: T-s
+title: s
+tier: T2
+---
+b
+' > .project/tasks/T-s.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  printf '{"type":"assistant","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":1000,"output_tokens":500}}}
+' > tr.jsonl
+  bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/tr.jsonl" --agent coder
+  bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/tr.jsonl" --agent reviewer
+  echo x > src/a; git add -A
+  git commit -q --no-verify -m "feat: w
+
+Task-Id: T-s
+Tier: T2
+Task-Status: done"
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  rows=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM spend;" | tr -d '\015')
+  out=$(sqlite3 .project/index.db "SELECT tok_out FROM spend;" | tr -d '\015')
+  att=$(sqlite3 .project/index.db "SELECT task_id FROM spend;" | tr -d '\015')
+  [ "$rows" = 1 ] && [ "$out" = 500 ] && [ "$att" = T-s ] )
+check $? "one row per transcript, not summed, and attributed to the task"
+rm -rf "$sx"
+
 step "a tier below its floor is reported"
 # Under-tiering is silent and it is the dangerous direction. Two of three recorded tiers in a
 # real backlog were below their floor -- and a floor computed only from touched files would

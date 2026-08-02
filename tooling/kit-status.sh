@@ -64,6 +64,47 @@ ESC=$(q "SELECT COALESCE(NULLIF(t.tier,''),'untiered')||'  '||
          GROUP BY COALESCE(NULLIF(t.tier,''),'untiered') ORDER BY 1;")
 [ -n "$ESC" ] && printf '%s\n' "$ESC" | sed 's/^/- /' || printf '_no data yet_\n'
 
+# Cost is a function of tier, and tier is assigned before anything spawns -- so a tiered
+# backlog is already a forecast. This is the other half: what it actually cost.
+#
+# The rate is derived from THIS project's own closed tasks, not from a table shipped with the
+# kit. A rate card from someone else's codebase forecasts someone else's codebase.
+SPENT=$(q "SELECT COUNT(*) FROM spend;")
+if [ "${SPENT:-0}" -gt 0 ]; then
+  printf '\n## Spend\n\n'
+  ACT=$(q "SELECT COALESCE(NULLIF(t.tier,''),'untiered')||'  '||COUNT(DISTINCT s.task_id)||
+                  ' task(s), '||(SUM(s.tok_out+s.tok_in)/1000)||'k out+in, '||
+                  (SUM(s.tok_out+s.tok_in)/COUNT(DISTINCT s.task_id)/1000)||'k mean'
+             FROM spend s JOIN task t ON t.id=s.task_id
+            WHERE s.task_id IS NOT NULL AND s.task_id<>''
+            GROUP BY COALESCE(NULLIF(t.tier,''),'untiered') ORDER BY 1;")
+  [ -n "$ACT" ] && printf '%s\n' "$ACT" | sed 's/^/- /'
+
+  # Forecast the open backlog at this project's own measured mean per tier. Tiers with no
+  # closed measurement are named rather than assumed -- an estimate that silently treats an
+  # unmeasured tier as free is the failure this exists to avoid.
+  EST=$(q "WITH rate AS (
+             SELECT t.tier AS tier, SUM(s.tok_out+s.tok_in)/COUNT(DISTINCT s.task_id) AS per
+               FROM spend s JOIN task t ON t.id=s.task_id
+              WHERE s.task_id IS NOT NULL AND s.task_id<>'' AND t.tier IS NOT NULL AND t.tier<>''
+              GROUP BY t.tier)
+           SELECT COALESCE(NULLIF(t.tier,''),'untiered')||'  '||COUNT(*)||' open x '||
+                  COALESCE((SELECT (per/1000)||'k' FROM rate WHERE rate.tier=t.tier),'no rate yet')
+             FROM task t WHERE t.state NOT IN ('done','abandoned')
+            GROUP BY COALESCE(NULLIF(t.tier,''),'untiered') ORDER BY 1;")
+  if [ -n "$EST" ]; then
+    printf '\n**Open backlog at this project'"'"'s measured rate**\n\n'
+    printf '%s\n' "$EST" | sed 's/^/- /'
+  fi
+
+  UNATT=$(q "SELECT COUNT(*) FROM spend WHERE task_id IS NULL OR task_id='';")
+  if [ "${UNATT:-0}" -gt 0 ]; then
+    printf '\n> **%s spend record(s) unattributed.** No task-status transition followed them,\n' "$UNATT"
+    printf '> so they belong to no task here — the work happened, the cost is real, and it is\n'
+    printf '> excluded from every figure above.\n'
+  fi
+fi
+
 # Under-tiering is silent and it is the dangerous direction: a task recorded T1 that should
 # be T2 gets one fewer reviewer and nothing says so. Measured on a real backlog, two of three
 # recorded tiers were below their floor -- both because the backlog was tiered from finding

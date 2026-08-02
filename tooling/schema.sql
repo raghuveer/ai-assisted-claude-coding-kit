@@ -77,6 +77,28 @@ CREATE TABLE finding (
   vindicated INTEGER                -- NULL unknown | 1 real | 0 false positive
 );
 
+-- What a unit of work actually cost. Keyed on the transcript, not the agent: totals are
+-- cumulative for that transcript, so the LAST record wins rather than the sum. Summing
+-- distinct transcripts is then correct whether the harness gives each subagent its own or
+-- shares the session's.
+--
+-- task_id is derived, not recorded. The hook that fires when an agent finishes has no idea
+-- which task it was serving, so spend is attributed afterwards to the next task-status
+-- transition -- which is a heuristic, and is why unattributed spend is reported rather than
+-- dropped.
+CREATE TABLE spend (
+  transcript  TEXT PRIMARY KEY,
+  task_id     TEXT,
+  agent       TEXT,
+  session     TEXT,
+  at          TEXT,
+  tok_in      INTEGER,
+  tok_out     INTEGER,
+  cache_read  INTEGER,
+  cache_write INTEGER
+);
+CREATE INDEX idx_spend_task ON spend(task_id);
+
 CREATE INDEX idx_edge_src ON edge(src, rel);
 CREATE INDEX idx_edge_dst ON edge(dst, rel);
 CREATE INDEX idx_event_task ON event(task_id, at);
