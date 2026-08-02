@@ -72,6 +72,31 @@ because nothing was accumulating. The test that settles it is to earn an acceler
 project, import it into a second, and measure whether the equivalent stage costs 196k or
 30k.
 
+### Predictability, which may matter more than the total
+
+Cost here is a function of **tier**, and tier is assigned *before* anything spawns. A T2 task
+is a coder and a reviewer; a T3 design stage is a researcher and two. So a tiered backlog is
+already a forecast — `N × T2 + M × T3` against measured per-tier figures — and the tiering
+step the kit performs for risk reasons happens to be the same step that makes spend
+estimable.
+
+Two things stand between that and a usable number, and both are open:
+
+**The kit records defects, not spend.** Event kinds are `checkpoint`, `finding` and
+`vindication`. Nothing captures what a task actually cost, so estimate-versus-actual cannot
+be computed at all. Recording spend per task would make the variance a derived metric exactly
+like escape rate — and the same machinery would carry it.
+
+**Tier accuracy becomes load-bearing.** Measured on three tasks with two independent
+classifiers each, two of three recorded tiers were too low — and both errors were in the
+direction that under-predicts. A forecast built on tiers assigned from finding *severity*
+rather than checked against the project's own `tier.rule` floors will read low and then
+overrun. That makes tier-floor validation a budgeting control, not only a review control.
+
+For work where the estimate is committed to a client before the work starts, this is arguably
+the more useful property than the absolute figure. A predictable 220k beats an unpredictable
+120k.
+
 ### Resident cost, for completeness
 
 ~1,259 tok: five skills at ~440, eight subagent descriptions at ~840, hooks and MCP at zero.

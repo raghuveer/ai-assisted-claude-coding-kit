@@ -404,21 +404,33 @@ So the kit's entire share of this proposal reduces to:
    hand-rolled?* — plus a finding class for re-implementing a catalogued capability.
 3. **Accelerator content**, which is authoring, not engineering.
 
-### One caution on repository granularity
+### Why separate repositories, and it is not governance
 
-Interface-in-its-own-repo is right: it lets a consumer depend on the contract without
-pulling every adapter, which is what makes testing against a fake cheap.
+An earlier draft of this note called repository-per-implementation a governance choice with a
+cost, and suggested a monorepo per language by default. That was wrong for a delivery context,
+and three reasons override the CI overhead:
 
-Separate repositories *per implementation* is a governance choice rather than a technical
-one, and it has a cost worth counting before committing: four kinds × four languages × three
-implementations is upwards of sixty repositories, each with its own CI, release process and
-permissions.
+**Licence isolation.** Underlying clients differ — AGPL, GPL, MIT, Apache-2.0 — and the
+licence of an adapter is the licence of what it wraps. A client who cannot accept copyleft
+must be able to *prove* it never entered the build, not argue that the package they consumed
+happened not to include it. When the boundary is the repository, the proof is the dependency
+graph of one artifact rather than an argument about which subset of a monorepo shipped.
 
-What actually matters is **independently publishable artifacts** — a project should pull the
-interface plus only the adapters it deploys. A monorepo per language with separate published
-packages achieves exactly that with one CI pipeline and one release process. Choose separate
-repositories if you need separate ownership or separate access control; do not choose them
-by default, and do not confuse them with dependency granularity.
+**Attack surface and SBOM.** A project pulls the interface plus only the adapters it deploys.
+Its SBOM then contains exactly what it runs, and a vulnerability in the AmazonMQ adapter's
+transitive dependencies never appears in an on-premises deployment's report. In a monorepo
+the published packages can achieve this, but the audit trail is weaker and the burden of proof
+sits with the consumer.
+
+**Approval granularity.** An implementation wrapper can be reviewed, approved and pinned on
+its own. A client security team approving "the queue interface plus the RabbitMQ adapter" is
+approving two artifacts with two dependency sets, not a subset of a larger repository they
+must then verify was not otherwise used.
+
+The CI and release overhead is real — four kinds × four languages × three implementations is
+upwards of sixty repositories — and it should be automated from a template rather than
+absorbed by hand. But it buys provable licence and dependency isolation, which is not
+something a monorepo can offer at the same strength.
 
 ## 9. The acceptance test
 
