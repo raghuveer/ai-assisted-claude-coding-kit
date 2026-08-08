@@ -339,7 +339,12 @@ printf '  awk keeps CR: %s\n' "$awkmode"
 #   sed     msys2 GNU sed strips CR in text mode, and TIER_RULES is piped through one. So the
 #           \r in floorof's trim classes is unreachable from a fixture on this platform: it is
 #           defence behind kit_cfg_all's strip, not a separately covered path. Do not assert it.
-subst_cr=$(v=$(printf 'x\r\n'); printf '%s' "$v" | wc -c)
+# `tr -d ' '` on every wc capture. BSD wc pads its count to a column width and GNU wc does
+# not, so a bare comparison against a number is true on Linux and false on macOS. Two of
+# these shipped today and took the macOS conformance run red while Linux stayed green — the
+# first platform-specific defect this suite has caught in its own test code rather than in
+# the kit.
+subst_cr=$(v=$(printf 'x\r\n'); printf '%s' "$v" | wc -c | tr -d ' ')
 [ "$subst_cr" = 2 ] && substleg="exercised" || substleg="masked by \$(...) on this shell"
 printf '  kit_cfg leg:  %s\n' "$substleg"
 if [ "$awkmode" = "NOT EXERCISED" ]; then
@@ -358,7 +363,7 @@ else
     # rest on the last line, which a caller's $(...) would clean anyway.
     . "$KIT/tooling/kit-lib.sh"
     kit_cfg_all .claude/project-profile.md tier.rule > rules.out
-    [ "$(tr -cd '\r' < rules.out | wc -c)" = 0 ] || exit 1
+    [ "$(tr -cd '\r' < rules.out | wc -c | tr -d ' ')" = 0 ] || exit 1
 
     # LEG 2 -- the indexer's frontmatter parser, end to end. stderr is captured rather than
     # discarded: an awk fatal in this pass leaves kit-index.sh exiting 0 with tasks missing,
@@ -366,12 +371,13 @@ else
     bash "$KIT/tooling/kit-index.sh" >/dev/null 2>index.err
     [ -s index.err ] && exit 1
 
-    # `sed 's/\r$//'`, NOT `tr -d '\015'`. sqlite3 terminates lines with CRLF here, which is
+    # `sed $'s/\r$//'`, NOT `tr -d '\015'`. The $'...' form is not cosmetic:
+    # BSD sed reads a bare \r as a literal `r`, so the shell must expand the byte first. sqlite3 terminates lines with CRLF here, which is
     # why the rest of this file strips CR -- but the artifact under test IS a CR, and deleting
     # every one of them makes `T1<CR>/e1<CR>/T3` compare equal to `T1/e1/T3`. Strip the line
     # terminator only. This was the defect that left four of five one-part reverts green.
-    n=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM task;" | sed 's/\r$//')
-    r=$(sqlite3 .project/index.db "SELECT tier||'/'||epic||'/'||COALESCE(tier_floor,'-') FROM task WHERE id='T-crlf';" | sed 's/\r$//')
+    n=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM task;" | sed $'s/\r$//')
+    r=$(sqlite3 .project/index.db "SELECT tier||'/'||epic||'/'||COALESCE(tier_floor,'-') FROM task WHERE id='T-crlf';" | sed $'s/\r$//')
     [ "$n" = 1 ] && [ "$r" = "T1/e1/T3" ] )
   check $? "CRLF input yields the same values as LF (kit_cfg_all + frontmatter)"
 fi
@@ -559,16 +565,16 @@ Tier: T1"
     # The co-change pass, asserted on the real name. Reverting core.quotepath on that
     # invocation alone leaves the touches assertions below green, which is how it shipped
     # untested the first time.
-    [ "$(sqlite3 .project/index.db "SELECT COUNT(*) FROM cochange WHERE src='f:src/ß.go' OR dst='f:src/ß.go';" | sed 's/\r$//')" -ge 1 ] || exit 1
+    [ "$(sqlite3 .project/index.db "SELECT COUNT(*) FROM cochange WHERE src='f:src/ß.go' OR dst='f:src/ß.go';" | sed $'s/\r$//')" -ge 1 ] || exit 1
 
     # The assertion with teeth: the SAME file, reached by the two different sources, must
     # produce the same floor. Before core.quotepath=false the declared side said T3 and the
     # touched side said nothing at all.
-    d=$(sqlite3 .project/index.db "SELECT COALESCE(tier_floor,'-') FROM task WHERE id='T-decl';" | sed 's/\r$//')
-    t=$(sqlite3 .project/index.db "SELECT COALESCE(tier_floor,'-') FROM task WHERE id='T-touch';" | sed 's/\r$//')
+    d=$(sqlite3 .project/index.db "SELECT COALESCE(tier_floor,'-') FROM task WHERE id='T-decl';" | sed $'s/\r$//')
+    t=$(sqlite3 .project/index.db "SELECT COALESCE(tier_floor,'-') FROM task WHERE id='T-touch';" | sed $'s/\r$//')
     [ "$d" = T3 ] && [ "$t" = T3 ] || exit 1
     # And the file is recorded under its own name, not an octal-escaped one.
-    sqlite3 .project/index.db "SELECT id FROM node WHERE type='file';" | sed 's/\r$//' | grep -qxF 'f:src/ß.go' || exit 1
+    sqlite3 .project/index.db "SELECT id FROM node WHERE type='file';" | sed $'s/\r$//' | grep -qxF 'f:src/ß.go' || exit 1
 
     # A path git will ONLY report escaped -- one containing a backslash, a quote or a control
     # byte -- is not healed by core.quotepath=false, which covers bytes above 0x7F and nothing
@@ -588,8 +594,8 @@ Task-Id: T-touch
 Tier: T1")
     git update-ref refs/heads/main "$cq"
     bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
-    [ "$(sqlite3 .project/index.db "SELECT COUNT(*) FROM node WHERE id LIKE '%j.go%';" | sed 's/\r$//')" = 0 ] || exit 1
-    [ "$(sqlite3 .project/index.db "SELECT value FROM meta WHERE key='paths_unusable';" | sed 's/\r$//')" = 1 ] || exit 1
+    [ "$(sqlite3 .project/index.db "SELECT COUNT(*) FROM node WHERE id LIKE '%j.go%';" | sed $'s/\r$//')" = 0 ] || exit 1
+    [ "$(sqlite3 .project/index.db "SELECT value FROM meta WHERE key='paths_unusable';" | sed $'s/\r$//')" = 1 ] || exit 1
     bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
     grep -q 'could not be indexed' STATUS.generated.md || exit 1
 
@@ -635,7 +641,7 @@ Via: agent"
   # frontmatter honoured; a value outside the vocabulary becomes unknown rather than stored;
   # absence becomes unknown; and the TRAILER beats the frontmatter, as tier does -- T-man
   # declares `manual` in its file and the commit says `agent`.
-  got=$(sqlite3 .project/index.db "SELECT group_concat(id||'='||via,' ') FROM (SELECT id,via FROM task ORDER BY id);" | sed 's/\r$//')
+  got=$(sqlite3 .project/index.db "SELECT group_concat(id||'='||via,' ') FROM (SELECT id,via FROM task ORDER BY id);" | sed $'s/\r$//')
   [ "$got" = "T-bad=unknown T-kit=kit T-man=agent T-none=unknown" ] || exit 1
 
   # The rate covers kit-run work only, and says what it left out, by value. `unknown` must
