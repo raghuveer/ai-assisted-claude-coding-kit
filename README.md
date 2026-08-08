@@ -30,8 +30,15 @@ pipeline is older and better exercised than the state layer wrapped around it.
   from other developers interpretable.
 - **Status is derived, not maintained.** Task files and git trailers are the truth.
   SQLite is a rebuildable index. `STATUS.generated.md` is output.
-- **Zero MCP servers.** `git` and `sqlite3` are Bash calls at no resident cost. An MCP
-  server for either would charge tool definitions on every request, forever.
+- **Zero MCP servers.** `git` and `sqlite3` are Bash calls at no resident cost. The original
+  reason given here — that an MCP server charges its tool definitions on every request,
+  forever — **is no longer true and has been corrected**: Claude Code defers MCP tool schemas
+  by default, so only names and server instructions stay resident. The decision stands on a
+  different and better reason. Deferral reverts to full upfront loading behind a
+  non-first-party proxy, on some cloud deployments, and when experimental betas are disabled,
+  and a plugin cannot control any of those — so a component that costs a few hundred tokens
+  here and tens of thousands there is one this kit cannot honestly put a resident number on.
+  See `T-20260808-the-readme-argues-zero-mcp-from-a-cost-m`.
 - **Commands became skills — except the checkpoint, which became a hook.** A checkpoint
   that depends on someone typing `/checkpoint` is skipped exactly when sessions run long.
 - **Findings are recorded with language and defect class**, which is the mechanism by
@@ -51,25 +58,32 @@ pipeline is older and better exercised than the state layer wrapped around it.
 
 ## What it costs
 
-Measured on a real greenfield project, not estimated. Full figures and method in
+From a real greenfield run, n=1, with the caveats stated below each row — two of these are
+context size rather than billed cost and the third is an estimate. Full figures and method in
 [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md).
 
 | | tokens |
 |---|---|
 | One T2 task — coder + implementation review | **220,336** |
 | One T3 design stage — researcher + two reviewers | **196,060** |
-| Resident always-on cost | **1,259** — *0.57% of one task* |
+| Resident always-on cost | **~1,259** — *estimated, not measured* |
 
 The first two rows are the harness's per-agent figure, which a later spike identified as
 **context size rather than billed cost** — see the provenance note in `docs/MEASUREMENTS.md`.
 They are the right order of magnitude and the right ordering; they are not a price, and the
-kit now records what is needed to restate them properly. The third row is a prompt
-measurement and is unaffected.
+kit now records what is needed to restate them properly.
 
-**This kit does not save tokens. It spends them deliberately.** Read the third row against
-the first: everything the plugin costs by merely being installed is half a percent of a
-single task. Optimising it is not where the money is, and a document that leads with it is
-pointing at the wrong number.
+The third row is an **estimate**, not a measurement: it is a hand-built table in
+`docs/HANDOFF.md`, and the only tooling behind it is a flat `~100 tokens` per skill heuristic
+in `validate.py`. It previously appeared here as "0.57% of one task", which divided that
+estimate by 220,336 — a context-size figure. Two different units, so the ratio meant nothing.
+Both numbers need re-deriving before either is quoted as cost again.
+
+**This kit does not save tokens. It spends them deliberately.** The resident cost of having
+the plugin installed is a rounding error next to a single task, by roughly two orders of
+magnitude — that much survives even though the precise ratio does not, because the two
+figures are in different units. Optimising the resident cost is not where the money is, and a
+document that leads with it is pointing at the wrong number.
 
 The cost lever is **how many agents you spawn and on which model**, which is what
 `tier-classify` exists to decide. And the models cannot simply be downgraded: measured on
