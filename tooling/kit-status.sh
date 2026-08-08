@@ -185,6 +185,19 @@ if [ "${NOBASIS:-0}" -gt 0 ]; then
   printf '> files touched yet, so no floor could be computed — not that none applies.\n'
 fi
 
+# A rule the indexer refused is the OTHER reason a floor can be missing, and without this the
+# message above claims the benign one — "nothing to go on" — about a task that declared its
+# paths and had them judged by a rule that was thrown away. The indexer says this on stderr
+# too, but kit-status.sh runs it with stderr discarded, so the terminal warning reaches nobody
+# and the file is what gets read.
+REFUSED=$(q "SELECT value FROM meta WHERE key='tier_rules_refused';")
+case "${REFUSED:-0}" in ''|0) ;; *)
+  printf '\n> **%s `tier.rule` line(s) refused as unusable, so their floor never applied:**\n' "$REFUSED"
+  printf '> `%s`\n' "$(q "SELECT value FROM meta WHERE key='tier_rules_refused_text';")"
+  printf '> A refused rule is not an absent one — any "unverified" above may be this, not a\n'
+  printf '> task with nothing to go on. Fix the glob in `.claude/project-profile.md`.\n' ;;
+esac
+
 if [ "$REQUIRED" -gt 0 ] && [ $(( UNTAG * 100 / REQUIRED )) -gt 20 ]; then
   printf '\n> **Trailer discipline degraded.** %s of %s non-trivial commits carry no `Task-Id`' "$UNTAG" "$REQUIRED"
   [ "$EXEMPTN" -gt 0 ] && printf ' (%s trivial commit(s) excluded per `git.trivial_pattern`)' "$EXEMPTN"

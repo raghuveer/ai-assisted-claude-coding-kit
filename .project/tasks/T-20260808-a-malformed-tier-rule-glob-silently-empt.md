@@ -5,7 +5,7 @@ epic: validation
 tier: T3
 lang: bash
 paths: tooling/kit-index.sh
-state: open
+state: done
 ---
 
 ## Intent
@@ -109,6 +109,53 @@ The second control, which the first would not have caught:
              exit=1   kit: task ingest read 4 of 5 task file(s); the existing index
                       was left unchanged.
              index preserved: 4 tasks, intact
+
+## The T3 review, run 2026-08-08
+
+Run BEFORE closing this task, which is the change from last time: `implementation-reviewer`
+(sonnet) **REVISE**, `security-reviewer` (opus) **REJECT**, 10 findings recorded. Both rungs
+in parallel, so the second reader was blind to the first.
+
+**Both independently found the same major regression, and it was mine.** `seen++` sat in the
+`FNR==1` rule, and awk fires no rule at all for a zero-byte file — so `: > T-draft.md`, the
+ordinary create-the-file-then-fill-it-in state, made the count short and failed the build.
+Not once: `kit-index.sh --if-stale` runs at the start of every session, so a committed empty
+stub would have disabled the entire derived-state layer permanently, for everyone who pulled.
+A guard against a truncated backlog that itself denies the whole index is a worse defect than
+the one it was written for.
+
+Reworked in response, and the rework is what the current code does:
+
+- Zero-byte REGULAR files are excluded and NAMED, not counted as losses. Anything that exists
+  and is not a regular file is still handed to awk on purpose, to be missed and reported —
+  `-s` alone reports a directory as empty here, which would have quietly disabled the guard.
+- The read-list is names, not a count, so the warning says WHICH file was not read. "read 39
+  of 40" is not actionable on a real backlog.
+- The list goes to a channel of its own. It had been a `-- kit:tasks_seen` comment in the SQL
+  stream, which every ingest adapter also writes to — one emitting a line of that shape would
+  have overwritten the measurement of the thing being measured.
+- The glob is expanded ONCE into the positional parameters. Expanding twice put the whole
+  ingest between the two, so a concurrent `kit-task.sh` failed the build for an unrelated
+  reason.
+- `exit 1` always prints a reason. It had been tied to the count being empty, which coupled
+  the diagnostic to whether your awk treats an unreadable argument as fatal.
+
+**The second reader found two more the first did not**, both by testing the safety arguments
+in my comments rather than reading them:
+
+1. The refusal path left no durable trace. `kit-status.sh` runs the indexer with stderr
+   discarded, so the warning reached nobody and `STATUS.generated.md` then blamed "No declared
+   `paths:`" for a floor that was missing because a rule had been thrown away — a false cause,
+   and the benign one. Refused rules are now recorded in `meta` and named in the status file.
+2. The claim that escaping `\` makes the two floor paths agree is true for `\` and NOT in
+   general. Differential fuzzing of `globre` against SQLite `GLOB` — 401,265 pairs — found zero
+   disagreements on ASCII and 96 on the first multi-byte subject, all from `?` mapping to a
+   regex `.` that matches a byte where `GLOB`'s `?` matches a character. Filed as
+   T-20260808-a-glob-with-a-question-mark-resolves-dif; the comment at `globre` now carries an
+   explicit ASCII-only caveat instead of an unqualified claim.
+
+Every part of the fix is mutation-verified: reverting the bracket refusal, the read-count
+guard, or the status trace each turns the conformance step red on its own.
 
 ## Notes
 

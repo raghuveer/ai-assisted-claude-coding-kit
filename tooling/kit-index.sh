@@ -132,10 +132,11 @@ if [ "${1:-}" = "--if-stale" ] && [ -f "$DB" ]; then
     exit 0
   fi
 fi
-SQL=$(mktemp); trap 'rm -f "$SQL"' EXIT
+SQL=$(mktemp); KIT_REFUSED=$(mktemp); export KIT_REFUSED
+trap 'rm -f "$SQL" "$KIT_REFUSED" "$KIT_SEEN"' EXIT
 mkdir -p "$ROOT/$STATE_DIR"
 ADAPTER_FAILED=0
-INGEST_FAILED=0; TASKS_EXPECTED=0
+INGEST_FAILED=0; TASKS_EXPECTED=0; TASKS_EMPTY=""; KIT_SEEN=""
 
 # The whole build is assembled before the existing index is touched. An ingest source can
 # now fail -- an adapter for a remote backend fails whenever the network does -- and
@@ -164,12 +165,26 @@ INGEST_FAILED=0; TASKS_EXPECTED=0
 # So the rule is refused and SAID, rather than half-applied. A floor that means two things is
 # worse than a floor that is missing and announced -- this is the control that decides how
 # many reviewers a change gets.
+#
+# The refusal is RECORDED, not just printed. kit-status.sh runs the indexer with stderr
+# discarded and its output is a file read later, so a warning that exists only on a terminal
+# nobody was watching is not a refusal anyone hears -- and the artifact then says "no declared
+# paths:" about a task that declares them, which is a false cause dressed as a benign one.
 TIER_RULES=$(kit_cfg_all "$PROFILE" tier.rule | awk '
     index($0, "[") || index($0, "]") {
       printf "kit: tier.rule ignored — [ and ] are not supported in a glob: %s\n", $0 > "/dev/stderr"
+      print $0 > ENVIRON["KIT_REFUSED"]
       next
     }
     { print }' | sed 's/[[:space:]][[:space:]]*/\t/' | tr '\n' '\036')
+# Plain assignment, not `grep ... || echo 0`: grep exits 1 on zero matches, so the `||` ran
+# too and the variable held two lines. Every numeric test against it then errored.
+REFUSED_N=0; [ -s "$KIT_REFUSED" ] && REFUSED_N=$(grep -c . "$KIT_REFUSED")
+if [ "${REFUSED_N:-0}" -gt 0 ]; then
+  REFUSED_T=$(tr '\n' ';' < "$KIT_REFUSED" | sed "s/;$//; s/'/''/g")
+  printf "INSERT OR REPLACE INTO meta VALUES('tier_rules_refused','%s');\n" "$REFUSED_N"
+  printf "INSERT OR REPLACE INTO meta VALUES('tier_rules_refused_text','%s');\n" "$REFUSED_T"
+fi
 
 # ---- 1. tasks: frontmatter is authoritative for identity ----------------------
 # One awk over every task file, rather than one awk per key plus one sed per quoted value
@@ -185,7 +200,35 @@ elif [ -d "$ROOT/$TASKS_DIR" ]; then
   done
 fi
 if [ "$HAVE_TASKS" = 1 ]; then
-  KIT_PREFIX="$ROOT/" KIT_RULES="$TIER_RULES" awk '
+  # Expanded ONCE, into the positional parameters, and used for both the awk arguments and the
+  # expected list. Globbing twice put the whole ingest between the two expansions, so a task
+  # file written or removed by a concurrent kit-task.sh -- or by an editor's atomic replace --
+  # failed the build for a reason that had nothing to do with the build.
+  #
+  # A zero-byte REGULAR file is EXPECTED to be missing from the read list and is excluded here
+  # rather than treated as a loss: awk fires no rule for a file with no records, so
+  # `: > T-draft.md` -- create the file now, fill in the frontmatter next -- is
+  # indistinguishable downstream from a file that could not be opened. Failing the build on it
+  # denied the entire derived state layer, permanently, from an empty stub someone committed.
+  # It is named below instead.
+  #
+  # `-f` as well as `-s`, and in that order. `-s` alone reports a DIRECTORY as empty on this
+  # platform, which would have quietly excluded exactly the case the guard exists for -- so
+  # anything that exists and is not a regular file is handed to awk on purpose, to be missed
+  # and reported.
+  set --
+  for f in "$ROOT/$TASKS_DIR"/*.md; do
+    if   [ -f "$f" ] && [ -s "$f" ]; then set -- "$@" "$f"          # a task file with content
+    elif [ -f "$f" ];                then TASKS_EMPTY="$TASKS_EMPTY ${f#$ROOT/}"
+    elif [ -e "$f" ];                then set -- "$@" "$f"          # exists, not a regular file
+    fi
+  done
+  KIT_SEEN=$(mktemp); : > "$KIT_SEEN"
+  # `if`, not `&&`: with every task file empty there is nothing to hand awk, and awk with no
+  # file operands reads stdin and hangs -- a worse failure than the empty backlog it would be
+  # reporting. Nor is that an ingest failure; expected and read are both zero, consistently.
+  if [ "$#" -gt 0 ]; then
+  KIT_PREFIX="$ROOT/" KIT_RULES="$TIER_RULES" KIT_SEEN="$KIT_SEEN" awk '
     function q(s){ gsub(/\047/,"\047\047",s); return s }
     # glob -> regex. * and ** both cross directory separators, which matches SQLite GLOB, so
     # the two floor sources agree with each other. That over-matches `a/*.ts` against
@@ -196,6 +239,14 @@ if [ "$HAVE_TASKS" = 1 ]; then
     # as an ordinary character (measured), so leaving it unescaped here both disagreed with
     # the SQL floor and let `\(` compile to an uncompilable regex. `[` and `]` cannot reach
     # this function -- rules carrying them are refused where TIER_RULES is built.
+    #
+    # NOT full agreement, and do not read it as such. `?` maps to `.`, which this awk matches
+    # as a BYTE where the `?` in SQLite GLOB matches a character -- so `src/?.go` still
+    # resolves differently on the two paths for a non-ASCII name. Differentially fuzzed at 401,265
+    # glob/subject pairs with zero disagreements on ASCII, and 96 on the first multi-byte
+    # subject, every one of that shape. Filed as
+    # T-20260808-a-glob-with-a-question-mark-resolves-dif; until it is closed, agreement here is
+    # a claim about ASCII paths only.
     function globre(g,   r) {
       r = g
       gsub(/[\\.^$+(){}|]/, "\\\\&", r)
@@ -246,9 +297,15 @@ if [ "$HAVE_TASKS" = 1 ]; then
     BEGIN { prefix = ENVIRON["KIT_PREFIX"] }
     FNR==1 {
       if (pending) emit()             # flush the previous file; rel is still its path
-      # Counted HERE and not in a rule of its own: line 1 of a task file is its `---`, whose
-      # rule ends in `next`, so a later FNR==1 rule never runs for the only line that matters.
-      seen++
+      # Which files this pass actually READ, recorded HERE and not in a rule of its own: line
+      # one of a task file is its `---`, whose rule ends in `next`, so a later FNR==1 rule
+      # never runs for the only line that matters.
+      #
+      # Names, not a count, and to a channel of their own rather than into the SQL stream. A
+      # count says a file went missing without saying which, and a marker written into the SQL
+      # shares that stream with every ingest adapter -- one of which emitting a line of the
+      # same shape would overwrite the measurement of the thing being measured.
+      print FILENAME > ENVIRON["KIT_SEEN"]
       delete v; fm = 0; pending = 1
       rel = FILENAME
       if (index(rel, prefix) == 1) rel = substr(rel, length(prefix) + 1)
@@ -268,14 +325,10 @@ if [ "$HAVE_TASKS" = 1 ]; then
         if (!(key in v)) v[key] = val
       }
     }
-    # `seen` is how many files this pass actually READ, not whether it exited 0. awk exits 0
-    # after skipping an unreadable argument with only a warning, and it exits non-zero on a
-    # fatal having already emitted part of the backlog -- so neither the status nor the output
-    # size tells you a task went missing. The count does. Emitted as a SQL comment because
-    # sqlite3 ignores those and stdout here IS the SQL stream.
-    END { if (pending) emit(); printf "-- kit:tasks_seen %d\n", seen + 0 }
-  ' "$ROOT/$TASKS_DIR"/*.md || INGEST_FAILED=1
-  for f in "$ROOT/$TASKS_DIR"/*.md; do [ -e "$f" ] && TASKS_EXPECTED=$((TASKS_EXPECTED+1)); done
+    END { if (pending) emit() }
+  ' "$@" || INGEST_FAILED=1
+  fi
+  TASKS_EXPECTED=$#
 fi
 
 # ---- 2. git: trailers are the state transitions, diffs are the touches edges --
@@ -702,20 +755,34 @@ if [ "$ADAPTER_FAILED" != 0 ]; then
   exit 1
 fi
 
-# Did the task pass read every task file? Checked here, on the assembled SQL and before the
-# existing index is touched, for the same reason the adapter check is: a truncated backlog
-# reads as a shorter backlog, never as an error. awk is no help on its own -- it exits 0 after
-# skipping an argument it could not read, and non-zero on a fatal only AFTER emitting the
-# tasks it had already parsed. Counting what it read catches both, and catches whatever the
-# next edit to that pipeline breaks.
-TASKS_SEEN=$(sed -n 's/^-- kit:tasks_seen //p' "$SQL" | tail -1)
-if [ "$HAVE_TASKS" = 1 ] && [ "${TASKS_SEEN:-0}" != "$TASKS_EXPECTED" ]; then
-  kit_warn "task ingest read ${TASKS_SEEN:-0} of $TASKS_EXPECTED task file(s); the existing index"
-  kit_warn "was left unchanged. A partial backlog looks like a short one — fix the cause and rerun."
-  INGEST_FAILED=1
+# An empty task file is a draft, not a defect: `kit-task.sh` writes a skeleton and a human
+# fills it in, and a file caught between those two is legitimate. Named rather than counted,
+# because a file that will never index while it stays empty is worth knowing about.
+if [ -n "$TASKS_EMPTY" ]; then
+  kit_warn "task file(s) with no content, not indexed:$TASKS_EMPTY"
+fi
+
+# Did the task pass read every task file it was given? Checked here, before the existing index
+# is touched, for the same reason the adapter check is: a truncated backlog reads as a shorter
+# backlog, never as an error. awk is no help on its own -- it exits 0 after skipping an
+# argument it could not read, and non-zero on a fatal only AFTER emitting the tasks it had
+# already parsed. Comparing the files it READ against the files it was HANDED catches both,
+# and catches whatever the next edit to that pipeline breaks.
+if [ "$HAVE_TASKS" = 1 ]; then
+  TASKS_SEEN=0; [ -s "$KIT_SEEN" ] && TASKS_SEEN=$(grep -c . "$KIT_SEEN")
+  if [ "${TASKS_SEEN:-0}" != "$TASKS_EXPECTED" ]; then
+    # Named, not counted. "read 39 of 40" on a real backlog is not actionable.
+    MISSING=$(for f in "$@"; do grep -qxF "$f" "$KIT_SEEN" 2>/dev/null || printf ' %s' "${f#$ROOT/}"; done)
+    kit_warn "task ingest read $TASKS_SEEN of $TASKS_EXPECTED task file(s); not read:$MISSING"
+    INGEST_FAILED=1
+  fi
 fi
 if [ "$INGEST_FAILED" != 0 ]; then
-  [ -n "${TASKS_SEEN:-}" ] || kit_warn "the task ingest failed; the existing index was left unchanged."
+  # Unconditional. Tying the message to the count made it depend on which awk you have: one
+  # that treats an unreadable argument as fatal skips END and leaves the count empty, one that
+  # warns and continues does not -- and on the second, this exited 1 saying nothing at all.
+  kit_warn "the task ingest did not complete; the index at ${DB#$ROOT/} was NOT rebuilt."
+  kit_warn "Derived status is stale, not wrong. Fix the cause above and rerun."
   exit 1
 fi
 

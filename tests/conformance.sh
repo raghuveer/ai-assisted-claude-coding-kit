@@ -349,21 +349,39 @@ gx="$WORK.glob"; rm -rf "$gx"; mkdir -p "$gx/.claude" "$gx/.project/tasks"
   [ "$(sqlite3 .project/index.db 'SELECT COUNT(*) FROM task;' | tr -d '\015')" = 4 ] || exit 1
   [ "$(sqlite3 .project/index.db "SELECT COUNT(*) FROM task WHERE tier_floor='T2';" | tr -d '\015')" = 4 ] || exit 1
 
+  # HALF 1b -- the refusal must survive to the artifact. kit-status.sh runs the indexer with
+  # stderr discarded, so a warning that lives only on a terminal reaches nobody, and the file
+  # then blames "no declared paths:" for a floor that is missing because a rule was thrown
+  # away. Those are different causes and the benign one must not stand in for the other.
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -q 'refused as unusable' STATUS.generated.md || exit 1
+
   # HALF 2 -- a task file the reader cannot read. A directory named *.md is the portable way
   # to make awk skip an argument while still exiting 0, which is precisely the case a status
-  # check misses. The run must fail, say how many it read, and leave the GOOD index alone --
+  # check misses. The run must fail, NAME the file, and leave the GOOD index alone --
   # yesterday's correct backlog beats today's truncated one.
   mkdir -p .project/tasks/T-lost.md
   bash "$KIT/tooling/kit-index.sh" >/dev/null 2>b.err && exit 1
-  grep -q 'read 4 of 5 task file' b.err || exit 1
+  grep -q 'not read: .*T-lost.md' b.err || exit 1
   [ "$(sqlite3 .project/index.db 'SELECT COUNT(*) FROM task;' | tr -d '\015')" = 4 ] || exit 1
+  rm -rf .project/tasks/T-lost.md
+
+  # HALF 2b -- and an EMPTY task file is not that. `kit-task.sh` writes a skeleton for a human
+  # to fill in, so a zero-byte task file is an ordinary intermediate state; awk fires no rule
+  # for it, which is indistinguishable from unreadable to anything counting records. Failing
+  # the build on it took the whole derived-state layer down, permanently, from a committed
+  # stub. It must be named and skipped, and the build must still succeed.
+  : > .project/tasks/T-draft.md
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>c.err || exit 1
+  grep -q 'no content' c.err || exit 1
+  [ "$(sqlite3 .project/index.db 'SELECT COUNT(*) FROM task;' | tr -d '\015')" = 4 ] || exit 1
+  rm -f .project/tasks/T-draft.md
 
   # HALF 3 -- and it recovers. A guard that stays latched after the cause is gone is a guard
   # people work around.
-  rmdir .project/tasks/T-lost.md
   bash "$KIT/tooling/kit-index.sh" >/dev/null 2>/dev/null || exit 1
   [ "$(sqlite3 .project/index.db 'SELECT COUNT(*) FROM task;' | tr -d '\015')" = 4 ] )
-check $? "bad rule refused by name, lost task file fails closed, index preserved"
+check $? "bad rule refused and recorded, lost file fails closed, empty file does not"
 rm -rf "$gx"
 
 step "a tier below its floor is reported"
