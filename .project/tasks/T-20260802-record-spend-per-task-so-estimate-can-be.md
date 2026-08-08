@@ -62,3 +62,13 @@ not happen.
 
 The forecast uses THIS project's own closed tasks as the rate. A tier with no closed
 measurement is printed as "no rate yet" rather than treated as free.
+
+**Superseded in part, 2026-08-08.** Two claims above are wrong and are left standing because
+they are what the evidence supported at the time. The session transcript is NOT the only
+source -- each subagent has its own, and the session's contains none of their records, so
+"keyed on the transcript, not the agent" produced rows holding main-loop cost under an
+agent's name. And summing the four counters is not cost: they are billed at ratios of 1,
+1.25, 0.1 and 5. See T-20260802-spend-reads-the-session-transcript-so-su for what replaced
+both. The shape here -- recorded from hooks so nobody types it, attribution derived from the
+next task-status transition, unattributed spend reported rather than dropped -- survived
+unchanged.

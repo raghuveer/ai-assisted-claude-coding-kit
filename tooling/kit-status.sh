@@ -69,27 +69,58 @@ ESC=$(q "SELECT COALESCE(NULLIF(t.tier,''),'untiered')||'  '||
 #
 # The rate is derived from THIS project's own closed tasks, not from a table shipped with the
 # kit. A rate card from someone else's codebase forecasts someone else's codebase.
+#
+# THE UNIT. Every figure below is in billable input-token-equivalents -- the four counters
+# weighted by what each is actually charged: fresh input 1x, cache write 1.25x, cache read
+# 0.1x, output 5x. Those ratios hold across the Claude family, so one unit needs no rate card
+# and no per-model configuration to go stale. Adding the counters raw instead prices a cache
+# read like fresh input and reports seven times the truth; the harness's own subagent_tokens
+# is a third thing again -- final context size, blind to work done. This is the only one of
+# the three that is cost.
+#
+# It is deliberately not dollars. A single model's price list would date, and the ratios
+# would not; where a project mixes model tiers the mix is printed rather than averaged away,
+# because an opus token and a haiku token are the same size and not the same money.
+# Scaled by 100 so the weights stay integers and the division happens once, on the total:
+# dividing per row first and summing after loses a token per row to truncation.
+BTE="(s.tok_in*100 + s.cache_write*125 + s.cache_read*10 + s.tok_out*500)"
 SPENT=$(q "SELECT COUNT(*) FROM spend;")
 if [ "${SPENT:-0}" -gt 0 ]; then
   printf '\n## Spend\n\n'
+  printf '_Billable input-token-equivalents: input x1, cache-write x1.25, cache-read x0.1, output x5._\n\n'
   ACT=$(q "SELECT COALESCE(NULLIF(t.tier,''),'untiered')||'  '||COUNT(DISTINCT s.task_id)||
-                  ' task(s), '||(SUM(s.tok_out+s.tok_in)/1000)||'k out+in, '||
-                  (SUM(s.tok_out+s.tok_in)/COUNT(DISTINCT s.task_id)/1000)||'k mean'
+                  ' task(s), '||(SUM($BTE)/100000)||'k, '||
+                  (SUM($BTE)/COUNT(DISTINCT s.task_id)/100000)||'k mean'
              FROM spend s JOIN task t ON t.id=s.task_id
             WHERE s.task_id IS NOT NULL AND s.task_id<>''
             GROUP BY COALESCE(NULLIF(t.tier,''),'untiered') ORDER BY 1;")
   [ -n "$ACT" ] && printf '%s\n' "$ACT" | sed 's/^/- /'
 
+  # Where the money went. The whole argument for a risk-tiered review pipeline is that the
+  # reviewers are worth their tokens, and that is unarguable only while the two halves are
+  # reported apart -- a single total lets an expensive review hide inside the work it checked.
+  SCOPE=$(q "SELECT scope||'  '||COUNT(*)||' transcript(s), '||(SUM($BTE)/100000)||'k'
+               FROM spend s GROUP BY scope ORDER BY 1;")
+  [ -n "$SCOPE" ] && { printf '\n**By scope**\n\n'; printf '%s\n' "$SCOPE" | sed 's/^/- /'; }
+
+  MIX=$(q "SELECT COUNT(DISTINCT COALESCE(NULLIF(model,''),'?')) FROM spend;")
+  if [ "${MIX:-0}" -gt 1 ]; then
+    printf '\n> **%s models in this measurement.** The unit above counts tokens, not money,\n' "$MIX"
+    printf '> so a total mixing model tiers understates the expensive ones. Per model:\n>\n'
+    q "SELECT '> - '||COALESCE(NULLIF(s.model,''),'unknown')||'  '||(SUM($BTE)/100000)||'k'
+         FROM spend s GROUP BY COALESCE(NULLIF(s.model,''),'unknown') ORDER BY SUM($BTE) DESC;"
+  fi
+
   # Forecast the open backlog at this project's own measured mean per tier. Tiers with no
   # closed measurement are named rather than assumed -- an estimate that silently treats an
   # unmeasured tier as free is the failure this exists to avoid.
   EST=$(q "WITH rate AS (
-             SELECT t.tier AS tier, SUM(s.tok_out+s.tok_in)/COUNT(DISTINCT s.task_id) AS per
+             SELECT t.tier AS tier, SUM($BTE)/COUNT(DISTINCT s.task_id) AS per   -- x100
                FROM spend s JOIN task t ON t.id=s.task_id
               WHERE s.task_id IS NOT NULL AND s.task_id<>'' AND t.tier IS NOT NULL AND t.tier<>''
               GROUP BY t.tier)
            SELECT COALESCE(NULLIF(t.tier,''),'untiered')||'  '||COUNT(*)||' open x '||
-                  COALESCE((SELECT (per/1000)||'k' FROM rate WHERE rate.tier=t.tier),'no rate yet')
+                  COALESCE((SELECT (per/100000)||'k' FROM rate WHERE rate.tier=t.tier),'no rate yet')
              FROM task t WHERE t.state NOT IN ('done','abandoned')
             GROUP BY COALESCE(NULLIF(t.tier,''),'untiered') ORDER BY 1;")
   if [ -n "$EST" ]; then
@@ -103,6 +134,27 @@ if [ "${SPENT:-0}" -gt 0 ]; then
     printf '> so they belong to no task here — the work happened, the cost is real, and it is\n'
     printf '> excluded from every figure above.\n'
   fi
+
+  # Rows from before 0.8.0. Their numbers came from the session transcript while their label
+  # named a subagent, so the cost is real and the attribution was not. Kept, stripped of the
+  # label, and said out loud -- the same reason unattributed spend is reported rather than
+  # dropped.
+  LEG=$(q "SELECT COUNT(*) FROM spend WHERE scope='legacy';")
+  if [ "${LEG:-0}" -gt 0 ]; then
+    printf '\n> **%s spend record(s) predate per-agent measurement.** They were read from the\n' "$LEG"
+    printf '> session transcript and cannot be attributed to any agent; their agent labels were\n'
+    printf '> dropped at index time rather than believed.\n'
+  fi
+fi
+
+# A subagent stopped and its transcript could not be found, so its cost was not recorded at
+# all. Counted here because the alternative -- staying quiet -- is what makes a partial cost
+# table read as cheap work rather than as measurement that did not happen.
+GAP=$(q "SELECT COUNT(*) FROM event WHERE kind='spend-gap';")
+if [ "${GAP:-0}" -gt 0 ]; then
+  printf '\n> **%s subagent run(s) unmeasured.** No per-agent transcript was found when they\n' "$GAP"
+  printf '> stopped, so nothing was recorded for them — not even a zero, which would have read\n'
+  printf '> as free work.\n'
 fi
 
 # Under-tiering is silent and it is the dangerous direction: a task recorded T1 that should

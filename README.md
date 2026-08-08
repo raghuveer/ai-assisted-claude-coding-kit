@@ -39,6 +39,12 @@ Measured on a real greenfield project, not estimated. Full figures and method in
 | One T3 design stage — researcher + two reviewers | **196,060** |
 | Resident always-on cost | **1,259** — *0.57% of one task* |
 
+The first two rows are the harness's per-agent figure, which a later spike identified as
+**context size rather than billed cost** — see the provenance note in `docs/MEASUREMENTS.md`.
+They are the right order of magnitude and the right ordering; they are not a price, and the
+kit now records what is needed to restate them properly. The third row is a prompt
+measurement and is unaffected.
+
 **This kit does not save tokens. It spends them deliberately.** Read the third row against
 the first: everything the plugin costs by merely being installed is half a percent of a
 single task. Optimising it is not where the money is, and a document that leads with it is
@@ -70,7 +76,9 @@ compete with not re-deriving the same design in the next project.
 That bet is currently **unproven**. It was unprovable until the findings loop was repaired,
 because nothing was accumulating. The test that settles it is to earn an accelerator on one
 project, import it into a second, and measure whether the equivalent stage costs 196k or
-30k.
+30k. The first attempt at that test had to be scored on verdicts and finding content
+instead, because the cost side was measuring the wrong entity; per-agent spend recording is
+what makes the token half of it runnable.
 
 ### Predictability, which may matter more than the total
 
@@ -80,12 +88,16 @@ already a forecast — `N × T2 + M × T3` against measured per-tier figures —
 step the kit performs for risk reasons happens to be the same step that makes spend
 estimable.
 
-Two things stand between that and a usable number, and both are open:
+Two things stood between that and a usable number. One is closed, one is open:
 
-**The kit records defects, not spend.** Event kinds are `checkpoint`, `finding` and
-`vindication`. Nothing captures what a task actually cost, so estimate-versus-actual cannot
-be computed at all. Recording spend per task would make the variance a derived metric exactly
-like escape rate — and the same machinery would carry it.
+**Spend is recorded, per agent, and weighted.** A `spend` event is written from the
+`SubagentStop` and `Stop` hooks, so nobody has to remember it, and it is read from each
+agent's own transcript rather than the session's — the first version read the session's and
+therefore reported the operator's tokens under a subagent's name. The four counters are
+stored raw and priced at report time, because they are not interchangeable: adding them up
+prices a cache read like fresh input and reports roughly seven times the truth, and the
+harness's own per-agent figure is a third thing again — final context size, blind to work
+done. Estimate-versus-actual is now a derived metric exactly like escape rate.
 
 **Tier accuracy becomes load-bearing.** Measured on three tasks with two independent
 classifiers each, two of three recorded tiers were too low — and both errors were in the

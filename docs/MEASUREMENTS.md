@@ -18,7 +18,25 @@ backlog, **zero lines of code at start**.
 
 ## A. What was measured
 
-| agent | model | tokens | tools | verdict | findings | vocab valid |
+**Where the token column came from, and what it is not.** These figures were read off the
+harness's own per-agent completion summary — the same line the tool count comes from, which
+is why both columns are present and why `kit-spend.sh` could not have produced them: it did
+not record per-agent anything until 0.8.0, and what it did record was the main loop's.
+
+That surface has since been identified. The 2026-08-08 telemetry spike
+(`T-20260808-verify-the-plugin-surface-exposes-trustw`) reconciled it against per-agent
+transcripts across a 105-subagent run and found it reports each agent's **final context
+size**, matching summed last-context to 0.012% while the actual output work differed from it
+by 5–215×. **So this column is context size, not billed cost.** It is a fair measure of how
+much context each agent ended up carrying, and it is not what the work cost.
+
+The correct unit is billing-weighted — input ×1, cache-write ×1.25, cache-read ×0.1,
+output ×5 — and `kit-spend.sh` now records the four raw counters per agent so it can be
+computed. **These numbers were not re-derived on that basis**, because the transcripts behind
+this run are from another project and no longer available. Treat the column as an ordering,
+not as a price, and rerun before quoting it as one.
+
+| agent | model | context (not cost) | tools | verdict | findings | vocab valid |
 |---|---|---|---|---|---|---|
 | coder (scaffold, T2) | sonnet | 115,567 | 75 | — | — | — |
 | implementation-reviewer | sonnet | 104,769 | 45 | REVISE | 4 | 1/4 |

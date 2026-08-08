@@ -161,6 +161,15 @@ For a solo dev who values simplicity and low token cost over feature breadth:
    ~7×). Fallback: session-level cost + coarse budget alerting, with `subagent_tokens` used
    only as a context-pressure signal. This does not undermine §3 — but it means the economics
    layer must own its own cost computation from transcripts, not trust a harness figure.
+   **Acted on 2026-08-08:** `kit-spend.sh` now reads each agent's own transcript, stores the
+   four counters raw with `scope`, `model` and final context size, and `kit-status.sh` prices
+   them (input ×1, cache-write ×1.25, cache-read ×0.1, output ×5). The reader was checked
+   against an independent JSON implementation over the same 105 agents — 0 mismatches — and
+   its context column reproduces the harness aggregate to 0.012%, which is what makes "we are
+   reading the records the harness reads, and pricing them differently on purpose" a checkable
+   claim rather than an assertion. The risk is now **owned, not eliminated**: nothing here
+   converts tokens to money, so a project mixing model tiers gets a mix printed rather than a
+   dollar figure.
 2. **Native encroachment** (§2): "state + tasks" is increasingly built-in. Mitigation: lead
    with the economics layer, not the store.
 3. **Forecast over-promising** (§4): mitigated by re-framing to alerting.

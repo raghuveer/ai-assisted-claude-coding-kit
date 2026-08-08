@@ -154,10 +154,16 @@ Tier: T2"
 check $? "refuses a typo'd Task-Id, accepts it once amended"
 rm -rf "$pp"
 
-step "spend is recorded, deduplicated and attributed"
-# Totals are cumulative per transcript, so recording twice must not double the cost -- which
-# is what happens if the harness passes the shared session transcript to every SubagentStop.
-sx="$WORK.spend"; rm -rf "$sx"; mkdir -p "$sx/src"
+step "spend is measured per agent, from that agent's own transcript"
+# The defect this replaced: every SubagentStop received the SESSION transcript, which holds
+# no subagent records at all, so each row was main-loop cost wearing an agent's name. The
+# fixture therefore puts DIFFERENT numbers in the two transcripts -- a reader that fell back
+# to the session file would produce the main loop's figures under the agent's label, and pass
+# a test that only counted rows.
+#
+# Totals are cumulative per transcript, so recording twice must not double the cost, and
+# Stop's sweep must not re-record what SubagentStop already wrote.
+sx="$WORK.spend"; rm -rf "$sx"; mkdir -p "$sx/src" "$sx/sess/subagents"
 ( cd "$sx" && git init -q -b main 2>/dev/null
   git config user.email a@b.c; git config user.name T
   bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
@@ -169,10 +175,16 @@ tier: T2
 b
 ' > .project/tasks/T-s.md
   git add -A && git commit -q --no-verify -m "chore: seed"
-  printf '{"type":"assistant","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":1000,"output_tokens":500}}}
-' > tr.jsonl
-  bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/tr.jsonl" --agent coder
-  bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/tr.jsonl" --agent reviewer
+  printf '{"type":"assistant","message":{"model":"m-main","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":1000,"output_tokens":500}}}
+' > sess.jsonl
+  printf '{"type":"assistant","message":{"model":"m-sub","usage":{"input_tokens":5,"cache_creation_input_tokens":400,"cache_read_input_tokens":0,"output_tokens":200}}}
+' > sess/subagents/agent-A1.jsonl
+  printf '{"agentType":"implementation-reviewer","spawnDepth":1}' > sess/subagents/agent-A1.meta.json
+  # SubagentStop, then Stop, then both again: four firings, and only two things happened.
+  bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/sess.jsonl" --agent-id A1 --agent security-reviewer
+  bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/sess.jsonl"
+  bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/sess.jsonl" --agent-id A1 --agent security-reviewer
+  bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/sess.jsonl"
   echo x > src/a; git add -A
   git commit -q --no-verify -m "feat: w
 
@@ -180,11 +192,30 @@ Task-Id: T-s
 Tier: T2
 Task-Status: done"
   bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+  rows=$(Q "SELECT COUNT(*) FROM spend;")
+  sub=$(Q "SELECT agent||'/'||agent_id||'/'||model||'/'||tok_out||'/'||context FROM spend WHERE scope='subagent';")
+  main=$(Q "SELECT '['||agent||']/'||model||'/'||tok_out FROM spend WHERE scope='main';")
+  att=$(Q "SELECT COUNT(*) FROM spend WHERE task_id='T-s';")
+  # 10 + 0x1.25 + 1000x0.1 + 500x5 = 2610, and 5 + 400x1.25 + 0 + 200x5 = 1505. The raw sum
+  # of the same counters is 2115 -- pricing a cache read like fresh input and output like
+  # neither. If this ever equals 2115 the weighting has been dropped.
+  w=$(Q "SELECT SUM(tok_in*100 + cache_write*125 + cache_read*10 + tok_out*500)/100 FROM spend;")
+  [ "$rows" = 2 ] && [ "$att" = 2 ] && [ "$w" = 4115 ] &&
+  [ "$sub" = "security-reviewer/A1/m-sub/200/405" ] && [ "$main" = "[]/m-main/500" ] )
+check $? "one row per transcript, agent rows from agent files, main loop unlabelled"
+
+step "a subagent whose transcript cannot be found is reported, not costed"
+# The alternative -- writing the row anyway from whatever transcript is at hand -- is the
+# defect. Nothing is recorded, and the fact that nothing was recorded is.
+( cd "$sx"
+  bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/sess.jsonl" --agent-id GHOST --agent coder
+  bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/sess.jsonl" --agent-id GHOST --agent coder
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
   rows=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM spend;" | tr -d '\015')
-  out=$(sqlite3 .project/index.db "SELECT tok_out FROM spend;" | tr -d '\015')
-  att=$(sqlite3 .project/index.db "SELECT task_id FROM spend;" | tr -d '\015')
-  [ "$rows" = 1 ] && [ "$out" = 500 ] && [ "$att" = T-s ] )
-check $? "one row per transcript, not summed, and attributed to the task"
+  gaps=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM event WHERE kind='spend-gap';" | tr -d '\015')
+  [ "$rows" = 2 ] && [ "$gaps" = 1 ] )
+check $? "no spend row, one spend-gap, and not one gap per firing"
 rm -rf "$sx"
 
 step "a tier below its floor is reported"

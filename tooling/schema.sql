@@ -77,25 +77,46 @@ CREATE TABLE finding (
   vindicated INTEGER                -- NULL unknown | 1 real | 0 false positive
 );
 
--- What a unit of work actually cost. Keyed on the transcript, not the agent: totals are
--- cumulative for that transcript, so the LAST record wins rather than the sum. Summing
--- distinct transcripts is then correct whether the harness gives each subagent its own or
--- shares the session's.
+-- What a unit of work actually cost. One row per transcript -- the session's for the main
+-- loop, one per subagent for everything spawned. Totals are cumulative for a transcript, so
+-- the LAST record wins rather than the sum; summing distinct transcripts is then correct.
+--
+-- The four counters are stored RAW and unweighted, because they are not interchangeable: a
+-- cache read is billed at a tenth of fresh input and output at five times it. Adding them
+-- up produces a number seven times the truth. kit-status.sh holds the multipliers, in one
+-- place, so a committed log never freezes a price list.
+--
+-- `scope` says which entity the row measures and is the guard against the defect this table
+-- was rebuilt for -- `subagent` rows come from that agent's own transcript, `main` rows from
+-- the session's, and `legacy` marks rows written before 0.8.0, whose agent label named an
+-- agent while the numbers came from the main loop. Never join agent identity to a row that
+-- is not `subagent`.
+--
+-- `context` is the final context-window size, which is what the harness reports as
+-- subagent_tokens. It is NOT cost and must never be summed as one -- it matched the harness
+-- figure to 0.012% across 105 agents while the actual output work differed by up to 215x. It
+-- is kept as a context-pressure signal, and because reproducing the harness number is how a
+-- future reader checks the transcripts are still being read correctly.
 --
 -- task_id is derived, not recorded. The hook that fires when an agent finishes has no idea
 -- which task it was serving, so spend is attributed afterwards to the next task-status
 -- transition -- which is a heuristic, and is why unattributed spend is reported rather than
 -- dropped.
 CREATE TABLE spend (
-  transcript  TEXT PRIMARY KEY,
+  transcript  TEXT PRIMARY KEY,     -- agent id, or a hash of the session transcript path
   task_id     TEXT,
-  agent       TEXT,
+  scope       TEXT,                 -- main | subagent | legacy
+  agent       TEXT,                 -- role, and only when the row came from that agent's file
+  agent_id    TEXT,
   session     TEXT,
+  model       TEXT,
   at          TEXT,
+  turns       INTEGER,
   tok_in      INTEGER,
   tok_out     INTEGER,
   cache_read  INTEGER,
-  cache_write INTEGER
+  cache_write INTEGER,
+  context     INTEGER
 );
 CREATE INDEX idx_spend_task ON spend(task_id);
 

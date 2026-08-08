@@ -495,12 +495,24 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
   # merge=union, so two developers' appends interleave arbitrarily on merge; without this
   # their rebuilds disagree and "delete index.db, rebuild, byte-identical" is false across
   # a team. (sort joins tr/cut/sed/wc, already relied on elsewhere in tooling/.)
-  awk 'NF {
+  #
+  # The second sort key is the spend total. Spend rows are cumulative and REPLACE each
+  # other, so the highest must land last; two recordings of one transcript inside the same
+  # second would otherwise be ordered by string, where "tok_in":9 sorts after "tok_in":10
+  # and the smaller total wins. Zero for every other kind, so their ordering is unchanged.
+  awk 'function jn(s,k,  r){ r=0
+         if (match(s, "\"" k "\"[ ]*:[ ]*-?[0-9]+")) {
+           r=substr(s,RSTART,RLENGTH); sub(/^[^:]*:[ ]*/,"",r) }
+         return r+0 }
+       NF {
          a=""
          if (match($0, /"at"[ ]*:[ ]*"[^"]*"/)) {
            a=substr($0,RSTART,RLENGTH); sub(/^[^:]*:[ ]*"/,"",a); sub(/"$/,"",a) }
-         printf "%s\t%s\n", a, $0
-       }' "$EV" | LC_ALL=C sort | cut -f2- |
+         t = 0
+         if (index($0, "\"spend\"") > 0)
+           t = jn($0,"tok_in") + jn($0,"tok_out") + jn($0,"cache_read") + jn($0,"cache_write")
+         printf "%s\t%020d\t%s\n", a, t, $0
+       }' "$EV" | LC_ALL=C sort | cut -f3- |
   awk '
     function jf(s,k,  r){ r=""
       if (match(s, "\"" k "\"[ ]*:[ ]*\"[^\"]*\"")) {
@@ -528,12 +540,19 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
         }
       }
       # Spend totals are CUMULATIVE for a transcript, so OR REPLACE keeps the last -- and
-      # events arrive sorted by timestamp, so the last is the highest. Summing would count
-      # the same tokens once per hook firing.
+      # events arrive sorted by timestamp then by total, so the last is the highest. Summing
+      # would count the same tokens once per hook firing.
       if (k=="spend") {
         tr = jf($0,"transcript")
-        if (tr != "")
-          printf "INSERT OR REPLACE INTO spend(transcript,agent,session,at,tok_in,tok_out,cache_read,cache_write) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,%d,%d,%d,%d);\n", q(tr), q(jf($0,"agent")), q(jf($0,"session")), q(a), jn($0,"tok_in"), jn($0,"tok_out"), jn($0,"cache_read"), jn($0,"cache_write")
+        if (tr != "") {
+          sc = jf($0,"scope"); ag = jf($0,"agent")
+          # A row written before 0.8.0 carries no scope, and its agent label is the one the
+          # defect was about: it names whichever subagent last stopped while the numbers came
+          # from the session transcript. The cost is real and is kept; the label is dropped,
+          # because a wrong label is believed and an absent one is not.
+          if (sc == "") { sc = "legacy"; ag = "" }
+          printf "INSERT OR REPLACE INTO spend(transcript,scope,agent,agent_id,session,model,at,turns,tok_in,tok_out,cache_read,cache_write,context) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,%d,%d,%d,%d,%d,%d);\n", q(tr), q(sc), q(ag), q(jf($0,"agent_id")), q(jf($0,"session")), q(jf($0,"model")), q(a), jn($0,"turns"), jn($0,"tok_in"), jn($0,"tok_out"), jn($0,"cache_read"), jn($0,"cache_write"), jn($0,"context")
+        }
       }
       if (k=="vindication") {
         # Held back to END. A vindication can precede its finding in the file, and after a
