@@ -332,7 +332,7 @@ if [ "$HAVE_TASKS" = 1 ]; then
       # than being stored. Unknown is the honest default: on a brownfield back-fill nobody
       # remembers how each item was done, and a wrong label is worse than an absent one
       # because only the wrong one gets counted into a comparison.
-      vv = (index(VIAOK, " " v["via"] " ") > 0 ? v["via"] : "unknown")
+      vv = viaok(v["via"])
       printf "INSERT OR REPLACE INTO task(id,epic,state,tier,lang,blocked_by,tier_floor,via) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,%s,\047%s\047);\n", q(id), q(v["epic"]), q(st), q(v["tier"]), q(v["lang"]), q(v["blocked_by"]), (fl == "" ? "NULL" : "\047" q(fl) "\047"), q(vv)
       # blocked_by is a comma/space separated list of task ids. Frontmatter is where a
       # human declares dependency; edges are how the planner consumes it.
@@ -345,7 +345,15 @@ if [ "$HAVE_TASKS" = 1 ]; then
       }
     }
     # ENVIRON, not -v: awk applies escape processing to -v assignments.
-    BEGIN { prefix = ENVIRON["KIT_PREFIX"]; VIAOK = " " ENVIRON["KIT_VIA"] " " }
+    # EXACT membership, not a substring of the padded list. `index(VIAOK, " " x " ")` matched
+    # any contiguous RUN of vocabulary words -- `kit agent`, `manual unknown` -- and stored
+    # them verbatim, inventing populations the closed vocabulary exists to prevent.
+    function viaok(x,   i, n, w) {
+      n = split(ENVIRON["KIT_VIA"], w, /[ 	]+/)
+      for (i = 1; i <= n; i++) if (x == w[i]) return x
+      return "unknown"
+    }
+    BEGIN { prefix = ENVIRON["KIT_PREFIX"] }
     FNR==1 {
       if (pending) emit()             # flush the previous file; rel is still its path
       # Which files this pass actually READ, recorded HERE and not in a rule of its own: line
@@ -439,10 +447,16 @@ awk -F$'\037' '
   BEGIN {
     sdir = ENVIRON["KIT_SDIR"]; tdir = ENVIRON["KIT_TDIR"]
     exempt_re = ENVIRON["KIT_EXEMPT"]
-    # Space-padded so membership is one index() and needs no split. Read from kit-lib.sh
-    # rather than restated here: one vocabulary, one definition.
-    VIAOK = " " ENVIRON["KIT_VIA"] " "
   }
+  # EXACT membership, not a substring of the padded list. `index(VIAOK, " " x " ")` matched
+  # any contiguous RUN of vocabulary words -- `kit agent`, `manual unknown` -- and stored
+  # them verbatim, inventing populations the closed vocabulary exists to prevent.
+  function viaok(x,   i, n, w) {
+    n = split(ENVIRON["KIT_VIA"], w, /[ 	]+/)
+    for (i = 1; i <= n; i++) if (x == w[i]) return x
+    return "unknown"
+  }
+
   function q(s){ gsub(/\047/,"\047\047",s); return s }
   function trim(s){ gsub(/^[ \t\r]+|[ \t\r]+$/,"",s); return s }
 
@@ -488,6 +502,7 @@ awk -F$'\037' '
         recovered++
         if (st   == "") st   = scan("Task-Status")
         if (tier == "") tier = scan("Tier")
+        if (via  == "") via  = scan("Via")
         if (esc  == "") esc  = scan("Fixes-Escape-Of")
       }
     }
@@ -500,7 +515,7 @@ awk -F$'\037' '
     # outside the vocabulary is DROPPED rather than stored -- the commit-msg hook already
     # rejected it, so one arriving here came from a commit that skipped the hook, which is the
     # last input that should be believed.
-    if (via != "" && index(VIAOK, " " via " ") > 0)
+    if (via != "" && viaok(via) != "unknown")
       printf "INSERT INTO event(task_id,kind,at,commit_sha,payload) VALUES(\047%s\047,\047via\047,\047%s\047,\047%s\047,\047%s\047);\n", q(tid), q(at), q(sha), q(via)
     if (esc!="") {
       printf "INSERT INTO event(task_id,kind,at,commit_sha) VALUES(\047%s\047,\047escaped\047,\047%s\047,\047%s\047);\n", q(esc), q(at), q(sha)
@@ -779,13 +794,6 @@ UPDATE task SET tier = COALESCE((
    WHERE e.task_id = task.id AND e.kind = 'tiered'
    ORDER BY e.at DESC, e.seq DESC LIMIT 1), tier);
 
--- Same precedence as tier, for the same reason: git records how the work was ACTUALLY done,
--- frontmatter only declares an intent. A task that never reaches a commit keeps its
--- frontmatter value, and one that reaches none of either stays `unknown`.
-UPDATE task SET via = COALESCE((
-  SELECT e.payload FROM event e
-   WHERE e.task_id = task.id AND e.kind = 'via'
-   ORDER BY e.at DESC, e.seq DESC LIMIT 1), via);
 
 UPDATE task SET state = COALESCE((
   SELECT e.kind FROM event e
@@ -826,6 +834,19 @@ UPDATE spend SET task_id = (
    ORDER BY e.at, e.seq LIMIT 1)
  WHERE task_id IS NULL OR task_id = '';
 DERIVE
+
+# Emitted here rather than inside the quoted heredoc, because the vocabulary has to be
+# expanded from its ONE definition rather than retyped as a SQL literal.
+#
+# The filter is on the DERIVATION, which is the only place every route converges: a `via`
+# event can arrive from a trailer, from events.ndjson -- where the generic reader stores the
+# WHOLE JSON LINE as payload -- or from an ingest adapter emitting SQL by design. Guarding
+# only the writers left `kit-event.sh <task> via` able to write a JSON blob into the column
+# and silently drop a task carrying a recorded escape out of the headline metric. Measured,
+# not theorised. Fail closed at the join, and every writer is covered at once.
+VIA_SQL=$(for _w in $(kit_via_vocab); do printf "'%s'," "$_w"; done | sed 's/,$//')
+printf "UPDATE task SET via = COALESCE((SELECT e.payload FROM event e WHERE e.task_id = task.id AND e.kind = 'via' AND e.payload IN (%s) ORDER BY e.at DESC, e.seq DESC LIMIT 1), via);
+" "$VIA_SQL"
 
 # Raise the floor from files the task has actually touched. This is the second of the two
 # sources: it catches a task whose declared paths were wrong or absent, but only once work
