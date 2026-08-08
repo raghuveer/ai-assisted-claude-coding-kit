@@ -322,6 +322,50 @@ else
 fi
 rm -rf "$cx"
 
+step "a broken tier.rule cannot empty the index, and a lost task file fails closed"
+# `globre` left `[`, `]` and `\` unescaped, so `tier.rule: src/[ab T3` compiled to an invalid
+# regex and awk took a FATAL mid-pass: three of four tasks vanished, the survivor lost its
+# tier and its floor, and kit-index.sh exited 0 having printed the DB path. A typo in a
+# documented config field, silently shortening the backlog, in the control that decides how
+# many reviewers a change gets.
+#
+# Two halves, because the fix has two: the rule is refused where TIER_RULES is built (one
+# place, so the SQL floor path cannot receive it either), and the task pass now counts the
+# files it READ. The count is what catches the general case -- awk exits 0 after skipping an
+# argument it could not read, so status alone never notices a task going missing.
+gx="$WORK.glob"; rm -rf "$gx"; mkdir -p "$gx/.claude" "$gx/.project/tasks"
+( cd "$gx" && git init -q -b main 2>/dev/null
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "tier.default: T1"; echo "tier.rule: src/[ab T3"; echo "tier.rule: src/** T2"
+    echo "---"; } > .claude/project-profile.md
+  for i in 1 2 3 4; do
+    printf -- '---\nid: T-%s\ntitle: t%s\ntier: T3\npaths: src/a.go\n---\nb\n' "$i" "$i" > ".project/tasks/T-$i.md"
+  done
+
+  # HALF 1 -- the uncompilable rule is refused by name and the build still completes. The
+  # surviving rule must still apply: refusing one rule is not licence to drop the floor.
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>a.err || exit 1
+  grep -q 'tier.rule ignored' a.err || exit 1
+  [ "$(sqlite3 .project/index.db 'SELECT COUNT(*) FROM task;' | tr -d '\015')" = 4 ] || exit 1
+  [ "$(sqlite3 .project/index.db "SELECT COUNT(*) FROM task WHERE tier_floor='T2';" | tr -d '\015')" = 4 ] || exit 1
+
+  # HALF 2 -- a task file the reader cannot read. A directory named *.md is the portable way
+  # to make awk skip an argument while still exiting 0, which is precisely the case a status
+  # check misses. The run must fail, say how many it read, and leave the GOOD index alone --
+  # yesterday's correct backlog beats today's truncated one.
+  mkdir -p .project/tasks/T-lost.md
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>b.err && exit 1
+  grep -q 'read 4 of 5 task file' b.err || exit 1
+  [ "$(sqlite3 .project/index.db 'SELECT COUNT(*) FROM task;' | tr -d '\015')" = 4 ] || exit 1
+
+  # HALF 3 -- and it recovers. A guard that stays latched after the cause is gone is a guard
+  # people work around.
+  rmdir .project/tasks/T-lost.md
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>/dev/null || exit 1
+  [ "$(sqlite3 .project/index.db 'SELECT COUNT(*) FROM task;' | tr -d '\015')" = 4 ] )
+check $? "bad rule refused by name, lost task file fails closed, index preserved"
+rm -rf "$gx"
+
 step "a tier below its floor is reported"
 # Under-tiering is silent and it is the dangerous direction. Two of three recorded tiers in a
 # real backlog were below their floor -- and a floor computed only from touched files would

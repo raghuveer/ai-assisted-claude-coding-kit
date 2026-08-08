@@ -135,6 +135,7 @@ fi
 SQL=$(mktemp); trap 'rm -f "$SQL"' EXIT
 mkdir -p "$ROOT/$STATE_DIR"
 ADAPTER_FAILED=0
+INGEST_FAILED=0; TASKS_EXPECTED=0
 
 # The whole build is assembled before the existing index is touched. An ingest source can
 # now fail -- an adapter for a remote backend fails whenever the network does -- and
@@ -153,7 +154,22 @@ ADAPTER_FAILED=0
 #
 # So a task may also declare `paths:` in its frontmatter -- the globs it expects to change.
 # Optional, additive, ignored by older kits.
-TIER_RULES=$(kit_cfg_all "$PROFILE" tier.rule | sed 's/[[:space:]][[:space:]]*/\t/' | tr '\n' '\036')
+# Rejected here, at the single point both floor paths read from, rather than in either of
+# them. A glob containing `[` or `]` cannot mean the same thing on both sides: SQLite GLOB
+# honours `[ab]` as a character class (measured), while the awk path would have to translate
+# it into an exactly equivalent regex class -- and until it does, one of the two floors would
+# quietly differ from the other. An unbalanced `[` is worse than that: SQLite GLOB silently
+# never matches, and the regex is uncompilable, which took the whole task pass down.
+#
+# So the rule is refused and SAID, rather than half-applied. A floor that means two things is
+# worse than a floor that is missing and announced -- this is the control that decides how
+# many reviewers a change gets.
+TIER_RULES=$(kit_cfg_all "$PROFILE" tier.rule | awk '
+    index($0, "[") || index($0, "]") {
+      printf "kit: tier.rule ignored — [ and ] are not supported in a glob: %s\n", $0 > "/dev/stderr"
+      next
+    }
+    { print }' | sed 's/[[:space:]][[:space:]]*/\t/' | tr '\n' '\036')
 
 # ---- 1. tasks: frontmatter is authoritative for identity ----------------------
 # One awk over every task file, rather than one awk per key plus one sed per quoted value
@@ -175,9 +191,14 @@ if [ "$HAVE_TASKS" = 1 ]; then
     # the two floor sources agree with each other. That over-matches `a/*.ts` against
     # `a/b/c.ts` -- a direction that only ever RAISES a tier, which is the safe way to be
     # wrong about a floor.
+    #
+    # The backslash is escaped FIRST and is in the class for a reason: SQLite GLOB treats `\`
+    # as an ordinary character (measured), so leaving it unescaped here both disagreed with
+    # the SQL floor and let `\(` compile to an uncompilable regex. `[` and `]` cannot reach
+    # this function -- rules carrying them are refused where TIER_RULES is built.
     function globre(g,   r) {
       r = g
-      gsub(/[.^$+(){}|]/, "\\\\&", r)
+      gsub(/[\\.^$+(){}|]/, "\\\\&", r)
       gsub(/\052+/, ".*", r)
       gsub(/\077/, ".", r)
       return "^" r "$"
@@ -225,6 +246,9 @@ if [ "$HAVE_TASKS" = 1 ]; then
     BEGIN { prefix = ENVIRON["KIT_PREFIX"] }
     FNR==1 {
       if (pending) emit()             # flush the previous file; rel is still its path
+      # Counted HERE and not in a rule of its own: line 1 of a task file is its `---`, whose
+      # rule ends in `next`, so a later FNR==1 rule never runs for the only line that matters.
+      seen++
       delete v; fm = 0; pending = 1
       rel = FILENAME
       if (index(rel, prefix) == 1) rel = substr(rel, length(prefix) + 1)
@@ -244,8 +268,14 @@ if [ "$HAVE_TASKS" = 1 ]; then
         if (!(key in v)) v[key] = val
       }
     }
-    END { if (pending) emit() }
-  ' "$ROOT/$TASKS_DIR"/*.md
+    # `seen` is how many files this pass actually READ, not whether it exited 0. awk exits 0
+    # after skipping an unreadable argument with only a warning, and it exits non-zero on a
+    # fatal having already emitted part of the backlog -- so neither the status nor the output
+    # size tells you a task went missing. The count does. Emitted as a SQL comment because
+    # sqlite3 ignores those and stdout here IS the SQL stream.
+    END { if (pending) emit(); printf "-- kit:tasks_seen %d\n", seen + 0 }
+  ' "$ROOT/$TASKS_DIR"/*.md || INGEST_FAILED=1
+  for f in "$ROOT/$TASKS_DIR"/*.md; do [ -e "$f" ] && TASKS_EXPECTED=$((TASKS_EXPECTED+1)); done
 fi
 
 # ---- 2. git: trailers are the state transitions, diffs are the touches edges --
@@ -669,6 +699,23 @@ echo "COMMIT;"
 if [ "$ADAPTER_FAILED" != 0 ]; then
   kit_warn "an ingest adapter failed; the existing index was left unchanged."
   kit_warn "Derived status is therefore stale, not wrong — rerun once the source is reachable."
+  exit 1
+fi
+
+# Did the task pass read every task file? Checked here, on the assembled SQL and before the
+# existing index is touched, for the same reason the adapter check is: a truncated backlog
+# reads as a shorter backlog, never as an error. awk is no help on its own -- it exits 0 after
+# skipping an argument it could not read, and non-zero on a fatal only AFTER emitting the
+# tasks it had already parsed. Counting what it read catches both, and catches whatever the
+# next edit to that pipeline breaks.
+TASKS_SEEN=$(sed -n 's/^-- kit:tasks_seen //p' "$SQL" | tail -1)
+if [ "$HAVE_TASKS" = 1 ] && [ "${TASKS_SEEN:-0}" != "$TASKS_EXPECTED" ]; then
+  kit_warn "task ingest read ${TASKS_SEEN:-0} of $TASKS_EXPECTED task file(s); the existing index"
+  kit_warn "was left unchanged. A partial backlog looks like a short one — fix the cause and rerun."
+  INGEST_FAILED=1
+fi
+if [ "$INGEST_FAILED" != 0 ]; then
+  [ -n "${TASKS_SEEN:-}" ] || kit_warn "the task ingest failed; the existing index was left unchanged."
   exit 1
 fi
 

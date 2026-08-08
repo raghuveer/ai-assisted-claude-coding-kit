@@ -44,18 +44,71 @@ this makes the mechanism that was built to catch it fail open, without saying so
 
 ## Acceptance criteria
 
-- [ ] A malformed glob cannot empty or truncate the index. Either escape the remaining regex
+- [x] A malformed glob cannot empty or truncate the index. Either escape the remaining regex
       metacharacters in `globre`, or validate the rule and skip it with a `kit_warn` naming
       the rule — but a rule the kit cannot compile must not take the ingest down with it.
-- [ ] The task pass fails CLOSED. A non-zero awk exit in that pipeline must reach `kit_warn`
+      BOTH, split by what each metacharacter can mean. `\` is escaped in `globre`, because
+      SQLite GLOB treats it as an ordinary character (measured) and escaping makes the two
+      floor paths agree. `[` and `]` are REFUSED, by name, where `TIER_RULES` is built — not
+      escaped, because they cannot be made to agree: SQLite GLOB honours `[ab]` as a
+      character class (measured), so escaping them in the regex would leave one floor
+      quietly meaning something different from the other. Refusing at the single point both
+      paths read from means the SQL path cannot receive the rule either.
+- [x] The task pass fails CLOSED. A non-zero awk exit in that pipeline must reach `kit_warn`
       and a non-zero script exit, the way `run_adapter` already does at `kit-index.sh:84-101`.
       Today the pipeline's exit status is discarded and the build reports success.
-- [ ] A conformance step covers both: a profile with an uncompilable glob, asserting the
+      Done, and NOT by checking the exit status alone, which is not sufficient: awk exits **0**
+      after skipping an argument it could not read, having emitted a short backlog (measured —
+      a directory named `*.md` reproduces it). So the pass now reports how many files it READ,
+      as a SQL comment, and the shell compares that against the same glob it expanded. The
+      status check is kept as well; it costs nothing and catches a death before any output.
+      Both fire before the existing index is touched, so a bad run leaves yesterday's correct
+      index in place rather than today's truncated one.
+- [x] A conformance step covers both: a profile with an uncompilable glob, asserting the
       index still contains every task and that the run says something. Assert on stderr, not
       only on the DB — the whole defect is that the DB looks fine.
-- [ ] Check whether the same shape exists for the OTHER glob source: the shell-side floor loop
+      Three halves, asserting on stderr and on the DB: the bad rule is named and the build
+      still completes with the surviving rule's floor applied; a lost task file fails the run,
+      says `read 4 of 5`, and leaves the good index intact; and it recovers once the cause is
+      removed, because a guard that stays latched is one people work around. Mutation-verified
+      — removing the validation alone turns it red, removing the read-count guard alone turns
+      it red.
+- [x] Check whether the same shape exists for the OTHER glob source: the shell-side floor loop
       at `kit-index.sh:661-677` feeds the same globs to SQLite's `GLOB`, which has different
       metacharacters and different failure behaviour. Report the answer either way.
+      **It exists, and it is the quiet version.** Measured against SQLite directly:
+
+          'f:src/ab' GLOB 'f:src/[ab'   ->  no match, NO error
+          'f:src/a'  GLOB 'f:src/[ab]'  ->  match: the class is honoured
+          'f:src\a'  GLOB 'f:src\a'     ->  match: backslash is literal
+
+      So an unbalanced `[` never errors on the SQL side — it simply never matches, and the
+      floor silently does not apply. Same defect, no fatal, no message: worse to find and
+      less damaging to suffer. It is closed by the same fix, because the refusal happens
+      before either consumer sees the rule. The bracket and backslash results are also what
+      decided the escape-versus-refuse split above.
+
+## Outcome
+
+Three changes in `tooling/kit-index.sh`:
+
+1. `TIER_RULES` refuses any rule whose glob contains `[` or `]`, naming it on stderr.
+2. `globre` escapes `\` along with the metacharacters it already escaped.
+3. The task pass emits how many files it read, and the shell fails the build when that does
+   not match how many it handed over — before the existing index is replaced.
+
+The original reproduction, before and after:
+
+    before:  exit=0   tasks indexed: 1 of 4   survivor untiered and unfloored
+    after:   exit=0   tasks indexed: 4 of 4   floors applied from the surviving rule
+                      kit: tier.rule ignored — [ and ] are not supported in a glob: src/[ab T3
+
+The second control, which the first would not have caught:
+
+    a task file the reader cannot read:
+             exit=1   kit: task ingest read 4 of 5 task file(s); the existing index
+                      was left unchanged.
+             index preserved: 4 tasks, intact
 
 ## Notes
 
