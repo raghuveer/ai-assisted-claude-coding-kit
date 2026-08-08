@@ -95,6 +95,61 @@ for a in "$KIT"/agents/*.md; do
 done
 check $ungranted "no Bash-less agent is instructed to execute a script"
 
+step "a script broken by an apostrophe names the apostrophe"
+# Every awk program here is a multi-line single-quoted shell string, so an apostrophe typed
+# inside one -- almost always an English possessive in a comment -- closes it and everything
+# after is reinterpreted as shell. It happened twice on 2026-08-08 in the same file.
+#
+# `bash -n` DETECTS it and is already commands.lint. What it does not do is locate it: both
+# times it reported the line where parsing finally broke, tens of lines below the cause,
+# naming an unrelated token. So this step does not re-detect; it DIAGNOSES, by reporting the
+# nearest comment-with-an-apostrophe at or above the line bash names.
+#
+# A standalone scanner was tried first and rejected on measurement, not taste: tracking
+# single-quote parity to decide whether a line sits inside a program flags 21 lines of this
+# tree, because an apostrophe inside a DOUBLE-quoted string -- `sed "s/'/''/g"` -- flips the
+# same counter. Separating those needs a shell tokeniser, which is more machinery than the
+# defect is worth. Anchoring to the line bash already found needs none.
+#
+# NOT COVERED, and worth saying: two stray apostrophes re-balance the quoting, so the script
+# parses, runs, and hands awk a silently altered program. `bash -n` cannot see that and
+# neither can this. Nothing has hit it yet.
+apos_suspect() {   # <file> <line bash blamed> -- nearest comment carrying a bare apostrophe
+  awk -v lim="$2" '
+    FNR > lim { exit }
+    /^[ \t]*#/ {
+      line = $0; gsub(/\047"\047"\047/, "@", line)     # the escaped idiom is the correct form
+      if (index(line, "\047")) { n = FNR; t = substr(line, 1, 70) }
+    }
+    END { if (n) printf "    likely cause %s:%d: %s\n", FILENAME, n, t }' "$1"
+}
+brk=0
+for f in "$KIT"/tooling/*.sh "$KIT"/tooling/commit-msg "$KIT"/tests/conformance.sh; do
+  [ -f "$f" ] || continue
+  err=$(bash -n "$f" 2>&1) && continue
+  brk=1
+  printf '  %s\n' "$err"
+  apos_suspect "$f" "$(printf '%s' "$err" | sed -n 's/.*line \([0-9]*\).*/\1/p' | head -1)"
+done
+check $brk "every script parses"
+
+# And the diagnosis itself is exercised on a fixture that carries the defect, so the guard is
+# not merely green because the tree is clean today.
+ap="$WORK.apos"; rm -rf "$ap"; mkdir -p "$ap"
+{ printf '#!/usr/bin/env bash\n'
+  printf 'echo start\n'
+  printf "awk '\n"
+  printf '  BEGIN { x = 1 }\n'
+  printf "  # the operator's own note -- this apostrophe closes the program\n"
+  printf '  { print x }\n'
+  printf "' /dev/null\n"
+  printf 'echo end\n'; } > "$ap/broken.sh"
+( err=$(bash -n "$ap/broken.sh" 2>&1) && exit 1          # must NOT parse
+  ln=$(printf '%s' "$err" | sed -n 's/.*line \([0-9]*\).*/\1/p' | head -1)
+  apos_suspect "$ap/broken.sh" "$ln" | grep -q ':5:' )   # and line 5 is the apostrophe
+check $? "the diagnosis points at the apostrophe, not at where parsing broke"
+rm -rf "$ap"
+
 step "a domain outside the declared industries is dropped, not stored"
 # An unknown class is rejected loudly. A wrong domain was accepted SILENTLY and polluted the
 # industry accelerator it feeds -- reviewers put the finding's subject there (`caching`,
