@@ -15,10 +15,15 @@ set -uo pipefail
 
 KIT=${KIT:?set KIT to the kit checkout}
 WORK=${WORK:?set WORK to an empty scratch dir}
-ok=0; bad=0
+ok=0; bad=0; skipped=0
 step() { printf '\n=== %s\n' "$*"; }
 check() { if [ "$1" = 0 ]; then ok=$((ok+1)); printf '  PASS  %s\n' "$2"
           else bad=$((bad+1)); printf '  FAIL  %s\n' "$2"; fi; }
+# A control that could not run is not a control that passed. It does not fail the suite --
+# an unrunnable check is not a defect -- but it is counted and named in the tally, because
+# the tally and the exit code are what CI reads and "N passed, 0 failed" over a check that
+# never executed is the same green-that-means-nothing this suite exists to refuse.
+skip()  { skipped=$((skipped+1)); printf '  SKIP  %s — %s\n' "$2" "$1"; }
 
 step "environment"
 uname -srm 2>/dev/null || echo "(no uname)"
@@ -267,25 +272,53 @@ if [ "$cr_len" = 1 ]; then
   fi
 fi
 printf '  awk keeps CR: %s\n' "$awkmode"
+# Which legs this platform can actually discriminate on, probed rather than assumed. The
+# first version of this step asserted three readers and could only detect one; the other two
+# were being cleaned upstream by the platform before the reader under test ever ran, so
+# reverting either fix left the step green. Naming what is masked is the difference between a
+# test and a claim.
+#
+#   $(...)  msys2 bash drops a trailing CR in command substitution, and kit_cfg returns its
+#           single value through one -- so kit_cfg's own strip is unobservable there. kit_cfg_all
+#           writes straight to stdout and is testable everywhere the awk keeps CR.
+#   sed     msys2 GNU sed strips CR in text mode, and TIER_RULES is piped through one. So the
+#           \r in floorof's trim classes is unreachable from a fixture on this platform: it is
+#           defence behind kit_cfg_all's strip, not a separately covered path. Do not assert it.
+subst_cr=$(v=$(printf 'x\r\n'); printf '%s' "$v" | wc -c)
+[ "$subst_cr" = 2 ] && substleg="exercised" || substleg="masked by \$(...) on this shell"
+printf '  kit_cfg leg:  %s\n' "$substleg"
 if [ "$awkmode" = "NOT EXERCISED" ]; then
-  echo "  SKIP  this awk strips CR on input and cannot be made to keep it"
+  skip "this awk strips CR on input and cannot be made to keep it" \
+       "CRLF input yields the same values as LF"
 else
   ( cd "$cx"
     [ -x shim/awk ] && PATH="$PWD/shim:$PATH" && export PATH
     git init -q -b main 2>/dev/null
-    # TWO tier.rules on purpose. kit_cfg_all returns them as lines of one command
-    # substitution, and `$(...)` drops only the LAST trailing CR -- so a single rule is
-    # accidentally clean and the first of two is not. A fixture that cannot reach the
-    # interior line tests the accident rather than the reader.
     printf -- '---\r\npaths.tasks:  .project/tasks\r\npaths.state:  .project\r\ntier.default: T1\r\ntier.rule: src/** T3\r\ntier.rule: lib/** T2\r\n---\r\n' > .claude/project-profile.md
     printf -- '---\r\nid: T-crlf\r\ntitle: c\r\ntier: T1\r\nepic: e1\r\npaths: src/a.go\r\n---\r\n\r\nbody\r\n' > .project/tasks/T-crlf.md
-    bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
-    # Every value below rides on a different reader: the profile through kit_cfg, the task
-    # frontmatter through the indexer's own parser, and the floor through the tier.rule trim.
-    n=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM task;" | tr -d '\015')
-    r=$(sqlite3 .project/index.db "SELECT tier||'/'||epic||'/'||COALESCE(tier_floor,'-') FROM task WHERE id='T-crlf';" | tr -d '\015')
+
+    # LEG 1 -- kit_cfg_all, asserted on its own bytes. It writes to stdout with no command
+    # substitution anywhere in the path, so this is the one reader in kit-lib.sh whose strip
+    # can be proven on any platform whose awk keeps CR. Two rules so the assertion does not
+    # rest on the last line, which a caller's $(...) would clean anyway.
+    . "$KIT/tooling/kit-lib.sh"
+    kit_cfg_all .claude/project-profile.md tier.rule > rules.out
+    [ "$(tr -cd '\r' < rules.out | wc -c)" = 0 ] || exit 1
+
+    # LEG 2 -- the indexer's frontmatter parser, end to end. stderr is captured rather than
+    # discarded: an awk fatal in this pass leaves kit-index.sh exiting 0 with tasks missing,
+    # so a step that throws the diagnostics away cannot see its own fixture half-indexed.
+    bash "$KIT/tooling/kit-index.sh" >/dev/null 2>index.err
+    [ -s index.err ] && exit 1
+
+    # `sed 's/\r$//'`, NOT `tr -d '\015'`. sqlite3 terminates lines with CRLF here, which is
+    # why the rest of this file strips CR -- but the artifact under test IS a CR, and deleting
+    # every one of them makes `T1<CR>/e1<CR>/T3` compare equal to `T1/e1/T3`. Strip the line
+    # terminator only. This was the defect that left four of five one-part reverts green.
+    n=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM task;" | sed 's/\r$//')
+    r=$(sqlite3 .project/index.db "SELECT tier||'/'||epic||'/'||COALESCE(tier_floor,'-') FROM task WHERE id='T-crlf';" | sed 's/\r$//')
     [ "$n" = 1 ] && [ "$r" = "T1/e1/T3" ] )
-  check $? "CRLF input yields the same tier, epic and floor as LF"
+  check $? "CRLF input yields the same values as LF (kit_cfg_all + frontmatter)"
 fi
 rm -rf "$cx"
 
@@ -477,5 +510,7 @@ fi
 [ "$H" = "$EXPECT_HEAD" ]
 check $? "fixture is reproducible (HEAD == $EXPECT_HEAD)"
 
-printf '\n=== %d passed, %d failed\n' "$ok" "$bad"
+printf '\n=== %d passed, %d failed' "$ok" "$bad"
+[ "$skipped" -gt 0 ] && printf ', %d NOT EXERCISED on this platform' "$skipped"
+printf '\n'
 exit $bad

@@ -14,5 +14,7 @@ commit-msg  text eol=lf
 # reported drift that did not exist. Being read by a tool is its own reason to pin.
 *.md        text eol=lf
 
-# append-only shared log: take both sides rather than conflicting
-.project/events.ndjson merge=union
+# append-only shared log: take both sides rather than conflicting. Pinned to LF for the same
+# reason as *.md above -- it is READ as data, and the indexer stores whole lines of it as
+# event.payload, so a CRLF checkout would carry the CR into the row.
+.project/events.ndjson merge=union text eol=lf
