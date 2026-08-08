@@ -83,9 +83,18 @@ printf '\n## Escape rate by tier\n\n'
 printf '_Two populations, both reported. `via:kit` is work this pipeline actually ran; `all` is\n'
 printf 'every task. Neither alone is the escape rate — the first omits work the kit never saw,\n'
 printf 'the second is the un-filtered denominator._\n\n'
+# Which vocabulary value means "this pipeline ran it", named once. The literal was already in
+# two places here and splitting the rate into two columns would have made it four; an open
+# finding on the provenance task calls out this file for hardcoding it, and while that finding
+# is about deriving the value rather than repeating it -- which is that task's to decide -- one
+# definition is strictly closer to it than four. The column label and the `Other provenance`
+# heading are built from it, so neither can drift from what is actually being counted; the
+# explanatory sentence above still says `via:kit` in prose, which is deliberate -- prose reads
+# worse interpolated, and it is the one place a stale name is obvious rather than silent.
+KITVIA=kit
 ESC=$(q "SELECT printf('%-11s', COALESCE(NULLIF(t.tier,''),'untiered'))||
-                printf('%-18s', SUM(CASE WHEN e.kind='escaped' AND t.via='kit' THEN 1 ELSE 0 END)||
-                                ' / '||COUNT(DISTINCT CASE WHEN t.via='kit' THEN t.id END)||' via:kit')||
+                printf('%-18s', SUM(CASE WHEN e.kind='escaped' AND t.via='$KITVIA' THEN 1 ELSE 0 END)||
+                                ' / '||COUNT(DISTINCT CASE WHEN t.via='$KITVIA' THEN t.id END)||' via:$KITVIA')||
                 SUM(CASE WHEN e.kind='escaped' THEN 1 ELSE 0 END)||' / '||COUNT(DISTINCT t.id)||' all'
          FROM task t LEFT JOIN event e ON e.task_id=t.id
          GROUP BY COALESCE(NULLIF(t.tier,''),'untiered') ORDER BY 1;")
@@ -98,10 +107,10 @@ ESC=$(q "SELECT printf('%-11s', COALESCE(NULLIF(t.tier,''),'untiered'))||
 OTHER=$(q "SELECT printf('%-9s', t.via)||COUNT(DISTINCT t.id)||' task(s), '||
                   SUM(CASE WHEN e.kind='escaped' THEN 1 ELSE 0 END)||' escape(s)'
              FROM task t LEFT JOIN event e ON e.task_id=t.id
-            WHERE t.via<>'kit'
+            WHERE t.via<>'$KITVIA'
             GROUP BY t.via ORDER BY 1;")
 if [ -n "$OTHER" ]; then
-  printf '\n**Other provenance** — in the `all` column above, not in `via:kit`\n\n'
+  printf '\n**Other provenance** — in the `all` column above, not in `via:%s`\n\n' "$KITVIA"
   printf '%s\n' "$OTHER" | sed 's/^/- /'
   printf '\n> Provenance comes from a `Via:` trailer or a `via:` frontmatter key, and nothing in\n'
   printf '> the kit writes it for you — a model may propose it, a human confirms it.\n'

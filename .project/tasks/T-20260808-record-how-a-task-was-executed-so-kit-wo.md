@@ -44,15 +44,25 @@ nothing escaped" from "never reviewed" is the same open-circuit failure the find
       pattern by calling `kit_via_vocab` rather than spelling the list out, because spelling it
       out made the test file the second copy. It caught itself on the first run.
 - [x] Every derived metric that mixes the populations either filters by it or prints the mix.
-      Escape rate by tier now reads `WHERE t.via='kit'` and says so in the report, with the
-      excluded population listed BY VALUE beneath it. Spend gained a **By provenance** split,
-      because "did the kit pay for itself" is a comparison and a comparison needs both
-      populations labelled. The tier-floor report was checked and deliberately left alone:
-      under-tiering is a property of the task, not of who did the work.
+      Escape rate by tier read `WHERE t.via='kit'` and said so in the report, with the excluded
+      population listed BY VALUE beneath it. Spend gained a **By provenance** split, because
+      "did the kit pay for itself" is a comparison and a comparison needs both populations
+      labelled. The tier-floor report was checked and deliberately left alone: under-tiering is
+      a property of the task, not of who did the work.
+      **Superseded 2026-08-09 by T-20260808-report-escape-rate-over-both-populations.** The
+      filter was the wrong half of "filters by it or prints the mix": it could make a recorded
+      escape disappear. Escape rate now PARTITIONS — `via:kit` and `all` side by side — and only
+      spend still filters, which is safe there because spend cannot go missing by being
+      relabelled. The criterion held; the option it chose did not.
 - [x] A task with no value recorded is visibly absent from a comparison rather than counted
       into one -- the same rule spend already follows for unattributed rows.
       `unknown` is excluded from the rate and printed as itself. It is never folded into
       `manual`: one says nobody recorded it, the other is a claim about what happened.
+      **Amended 2026-08-09, same supersession.** `unknown` is no longer absent from the rate;
+      it is absent from ONE COLUMN of it and present in the other, still printed as itself and
+      still never folded into `manual`. "Visibly absent from a comparison" was satisfied by
+      exclusion and is now satisfied by labelling, which is strictly stronger: exclusion also
+      hid whatever the excluded population had escaped.
 - [x] The human gate is preserved. A model may propose the value; a human confirms it, exactly
       as `kit-task.sh` requires for a task itself. A self-reported `via: kit` from the agent
       that did the work is the one value nobody should take on trust.
@@ -84,6 +94,15 @@ and the report:
     **Excluded from the rate above**
     - agent  1
     - unknown  2
+
+The report shape above is what this task shipped and is kept as the record of it. It was
+replaced on 2026-08-09 — see the supersession note on the third criterion — by two labelled
+columns plus per-value escape counts, on the same fixture:
+
+    - T2         0 / 1 via:kit     0 / 4 all
+    **Other provenance** — in the `all` column above, not in `via:kit`
+    - agent    1 task(s), 0 escape(s)
+    - unknown  2 task(s), 0 escape(s)
 
 Mutation-verified three ways: removing the `via='kit'` filter, removing the vocabulary guard,
 and removing the trailer precedence each turn the conformance step red on their own.
