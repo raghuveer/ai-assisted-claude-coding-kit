@@ -148,10 +148,19 @@ For a solo dev who values simplicity and low token cost over feature breadth:
    appears; single-writer-per-repo is fine for the current scope.
 
 ### Top risks, ranked
-1. **Per-subagent token telemetry may not be reliably exposed** by the plugin surface — and
-   the whole economics layer depends on it. The kit already carries evidence of this (the
-   spend defect: the harness reports two identical subagents at ~43k while their transcripts
-   differ 20×). If the number can't be trusted, §3 is undermined. Filed as a spike task.
+1. **Per-subagent token telemetry is exposed but not trustworthy as cost** — and the whole
+   economics layer depends on it. **Spike resolved 2026-08-08**
+   (`T-20260808-verify-the-plugin-surface-exposes-trustw`): per-agent transcripts DO exist
+   (`subagents/.../agent-<id>.jsonl`), but the available surfaces disagree by **5–215×** on
+   the same 105-subagent run. The harness `subagent_tokens` (2,463,029) turns out to be each
+   subagent's **final context size** summed — matching the summed last-context to 0.012% —
+   not the actual output work (169,383). It is blind to work done, which is why two identical
+   agents reported ~43k despite 20× different output. **Verdict:** real cost is computable
+   only from the per-agent transcripts, billing-weighted per field — never from
+   `subagent_tokens` and never from a raw field-sum (kit-spend's current method overcounts
+   ~7×). Fallback: session-level cost + coarse budget alerting, with `subagent_tokens` used
+   only as a context-pressure signal. This does not undermine §3 — but it means the economics
+   layer must own its own cost computation from transcripts, not trust a harness figure.
 2. **Native encroachment** (§2): "state + tasks" is increasingly built-in. Mitigation: lead
    with the economics layer, not the store.
 3. **Forecast over-promising** (§4): mitigated by re-framing to alerting.
