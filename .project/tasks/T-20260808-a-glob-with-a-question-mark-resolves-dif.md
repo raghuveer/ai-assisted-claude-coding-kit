@@ -2,7 +2,7 @@
 id: T-20260808-a-glob-with-a-question-mark-resolves-dif
 title: A glob with a question mark resolves differently on the two floor paths
 epic: portability
-tier: T2
+tier: T3
 lang: bash
 paths: tooling/kit-index.sh
 state: open
@@ -65,3 +65,7 @@ true in general. Recorded as `fail-open|major`.
 
 Pre-existing: `globre` has mapped `?` to `.` since it was written. What the review changed is
 that the divergence is now known and stated rather than assumed away.
+
+Recorded T3, not the T2 it was filed at. `tier.rule` puts a T3 floor on
+`tooling/kit-index.sh` and the kit reported `recorded T2, floor T3` on the next reindex --
+the under-tiering control catching the task that was filed to fix an under-tiering control.
