@@ -42,14 +42,48 @@ forecasting — reads that as a backlog with no tiers rather than as a build tha
 
 ## Acceptance criteria
 
-- [ ] `fl` goes through `q()` like every other value on that statement.
-- [ ] Audit the rest of the generated SQL for the same omission rather than fixing the one
+- [x] `fl` goes through `q()` like every other value on that statement.
+      Done — and it is now DEFENCE, not the live control, which is worth saying rather than
+      letting a future reader assume otherwise. `fl` is a rule tier, and rules whose tier is
+      not `T0`-`T3` are refused before they reach the SQL (see below), so no profile can put
+      an apostrophe there any more. The escaping stays because "never interpolate an
+      unescaped value" should not depend on a validator upstream continuing to exist.
+- [x] Audit the rest of the generated SQL for the same omission rather than fixing the one
       instance. Every interpolated value that originates in user-authored text is in scope.
-- [ ] A failed build cannot be reported as fresh by the next run. Record the failure in `meta`
+      29 SQL-emitting `printf`s audited. `fl` was the only omission. Everything else is either
+      `q()`-wrapped inside awk, escaped shell-side with `sed "s/'/''/g"` (the floor loop and
+      the adapter fingerprints), or a number under `%d`. The parallel floor path had been
+      escaping correctly all along, which is what made this an omission rather than a design.
+- [x] A failed build cannot be reported as fresh by the next run. Record the failure in `meta`
       or leave the DB older than its sources — a warning that fires once and then goes quiet
       is worse than one that persists, because the quiet run is the one an agent reads.
-- [ ] A conformance step covers both halves: a profile value containing an apostrophe, and a
+      Neither: the corpse is no longer created. The index is built into `index.db.new` and
+      renamed into place only on success, so a mid-execution failure leaves the previous index
+      byte-for-byte and mtime-for-mtime as it was. The next `--if-stale` then sees sources
+      newer than the DB, rebuilds, and fails again just as loudly. A `meta` marker would have
+      recorded the failure in the very file the failure had corrupted.
+      This also makes the script honour a claim it was already making: the comment above the
+      assembly says the whole build happens before the existing index is touched, which was
+      true of the assembly and not of the execution.
+- [x] A conformance step covers both halves: a profile value containing an apostrophe, and a
       second `--if-stale` run after a failed build asserting that it still says so.
+      Both, plus a recovery leg. Mutation-verified: removing the tier-value refusal turns it
+      red, and restoring the destructive in-place build turns it red.
+
+## Outcome
+
+    before:  exit=1  Parse error: 8 values for 7 columns
+                     index.db PERSISTS, every task tier=NULL
+             run 2 --if-stale: exit=0, prints the path, SILENT, tiers still NULL
+
+    after:   exit=0  kit: tier.rule ignored — T3',x is not a tier (T0-T3): src/** T3',x
+                     tasks intact, tier column populated, refusal named in STATUS.generated.md
+             failed build: index preserved intact, no index.db.new left behind
+             run 2 --if-stale: exit=1, same warning, every run until it is fixed
+
+Three changes in `tooling/kit-index.sh`: `q(fl)`; a tier that is not `T0`-`T3` is refused
+where the glob refusal already lives, and recorded, so a garbage floor never reaches the
+comparison that reports under-tiering; and the build is atomic.
 
 ## Notes
 

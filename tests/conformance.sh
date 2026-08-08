@@ -384,6 +384,51 @@ gx="$WORK.glob"; rm -rf "$gx"; mkdir -p "$gx/.claude" "$gx/.project/tasks"
 check $? "bad rule refused and recorded, lost file fails closed, empty file does not"
 rm -rf "$gx"
 
+step "a failed build leaves the previous index alone and keeps saying so"
+# Two halves of one defect. `fl` was the only value on the task INSERT not passed through
+# q(), so `tier.rule: src/** T3','x` ended the SQL literal early: the statement failed, the
+# surrounding transaction still committed, and every task landed with tier NULL. Then the
+# half-written DB was newer than every source, so the next --if-stale run -- the one that
+# fires at session start -- declared it fresh and said nothing. One announcement, then silence,
+# over a backlog with no tiers.
+ax="$WORK.apos"; rm -rf "$ax"; mkdir -p "$ax/.claude" "$ax/.project/tasks"
+( cd "$ax" && git init -q -b main 2>/dev/null
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"
+    echo "tier.rule: src/** T3','x"; echo "---"; } > .claude/project-profile.md
+  printf -- '---\nid: T-1\ntitle: t\ntier: T1\npaths: src/a.go\n---\nb\n' > .project/tasks/T-1.md
+
+  # HALF 1 -- an apostrophe in a profile value cannot reach the SQL. It is refused as a
+  # non-tier before it gets there, and the build completes with the tier column intact. The
+  # escaping added to `fl` sits behind that refusal and is not separately reachable from a
+  # profile; it is defence, and this step does not pretend to cover it.
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>a.err || exit 1
+  grep -q 'is not a tier' a.err || exit 1
+  [ "$(sqlite3 .project/index.db "SELECT tier FROM task WHERE id='T-1';" | tr -d '\015')" = T1 ] || exit 1
+
+  # HALF 2 -- a statement that fails MID-EXECUTION must not leave a corpse. An extra ingest
+  # adapter emitting invalid SQL is the reachable way to produce one. The good index must
+  # survive untouched, and -- the part that made this dangerous -- the NEXT run must still
+  # fail rather than mistaking a newer mtime for a fresh index.
+  printf '#!/usr/bin/env bash\n[ "$1" = emit ] && echo "INSERT INTO nosuchtable VALUES(1);"\nexit 0\n' > .claude/bad.sh
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "tier.default: T1"; echo "ingest.extra: .claude/bad.sh"; echo "---"; } > .claude/project-profile.md
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>b.err && exit 1
+  grep -q 'left unchanged' b.err || exit 1
+  [ "$(sqlite3 .project/index.db "SELECT tier FROM task WHERE id='T-1';" | tr -d '\015')" = T1 ] || exit 1
+  [ -e .project/index.db.new ] && exit 1                      # no half-built file left behind
+  bash "$KIT/tooling/kit-index.sh" --if-stale >/dev/null 2>c.err && exit 1
+  grep -q 'index build failed' c.err || exit 1
+
+  # HALF 3 -- and it recovers, with the index rebuilt rather than merely left alone.
+  rm -f .claude/bad.sh
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "tier.default: T1"; echo "---"; } > .claude/project-profile.md
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>/dev/null || exit 1
+  [ "$(sqlite3 .project/index.db "SELECT tier FROM task WHERE id='T-1';" | tr -d '\015')" = T1 ] )
+check $? "apostrophe refused before the SQL, failed build preserves the index and stays loud"
+rm -rf "$ax"
+
 step "a tier below its floor is reported"
 # Under-tiering is silent and it is the dangerous direction. Two of three recorded tiers in a
 # real backlog were below their floor -- and a floor computed only from touched files would

@@ -136,7 +136,7 @@ SQL=$(mktemp); KIT_REFUSED=$(mktemp); export KIT_REFUSED
 trap 'rm -f "$SQL" "$KIT_REFUSED" "$KIT_SEEN"' EXIT
 mkdir -p "$ROOT/$STATE_DIR"
 ADAPTER_FAILED=0
-INGEST_FAILED=0; TASKS_EXPECTED=0; TASKS_EMPTY=""; KIT_SEEN=""
+INGEST_FAILED=0; TASKS_EXPECTED=0; TASKS_EMPTY=""; KIT_SEEN=""; NEW=""
 
 # The whole build is assembled before the existing index is touched. An ingest source can
 # now fail -- an adapter for a remote backend fails whenever the network does -- and
@@ -176,7 +176,19 @@ TIER_RULES=$(kit_cfg_all "$PROFILE" tier.rule | awk '
       print $0 > ENVIRON["KIT_REFUSED"]
       next
     }
-    { print }' | sed 's/[[:space:]][[:space:]]*/\t/' | tr '\n' '\036')
+    # And the tier must BE a tier. The floor is compared against the recorded tier to report
+    # under-tiering, so a rule ending `T3(typo` yields a floor that sorts unpredictably against
+    # T0..T3 -- reporting a task as below a floor that does not exist, or hiding one that is.
+    # Same argument as the glob above: refuse it and say so, rather than derive from it.
+    {
+      t = $0; sub(/^.*[ \t]/, "", t)
+      if (t !~ /^T[0-3]$/) {
+        printf "kit: tier.rule ignored — %s is not a tier (T0-T3): %s\n", t, $0 > "/dev/stderr"
+        print $0 > ENVIRON["KIT_REFUSED"]
+        next
+      }
+      print
+    }' | sed 's/[[:space:]][[:space:]]*/\t/' | tr '\n' '\036')
 # Plain assignment, not `grep ... || echo 0`: grep exits 1 on zero matches, so the `||` ran
 # too and the variable held two lines. Every numeric test against it then errored.
 REFUSED_N=0; [ -s "$KIT_REFUSED" ] && REFUSED_N=$(grep -c . "$KIT_REFUSED")
@@ -282,7 +294,7 @@ if [ "$HAVE_TASKS" = 1 ]; then
       st = (v["state"] != "" ? v["state"] : "open")
       printf "INSERT OR REPLACE INTO node VALUES(\047%s\047,\047task\047,\047%s\047,\047%s\047);\n", q(id), q(rel), q(ti)
       fl = floorof(v["paths"])
-      printf "INSERT OR REPLACE INTO task(id,epic,state,tier,lang,blocked_by,tier_floor) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,%s);\n", q(id), q(v["epic"]), q(st), q(v["tier"]), q(v["lang"]), q(v["blocked_by"]), (fl == "" ? "NULL" : "\047" fl "\047")
+      printf "INSERT OR REPLACE INTO task(id,epic,state,tier,lang,blocked_by,tier_floor) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,%s);\n", q(id), q(v["epic"]), q(st), q(v["tier"]), q(v["lang"]), q(v["blocked_by"]), (fl == "" ? "NULL" : "\047" q(fl) "\047")
       # blocked_by is a comma/space separated list of task ids. Frontmatter is where a
       # human declares dependency; edges are how the planner consumes it.
       bb = v["blocked_by"]; gsub(/,/, " ", bb)
@@ -786,9 +798,26 @@ if [ "$INGEST_FAILED" != 0 ]; then
   exit 1
 fi
 
-rm -f "$DB"
-sqlite3 "$DB" < "$(dirname "$0")/schema.sql"
-sqlite3 "$DB" < "$SQL" || { kit_warn "index build failed; index.db may be incomplete"; exit 1; }
+# Built beside the index and moved into place, never written over it. The comment at the top
+# of the assembly says the whole build is prepared before the existing index is touched --
+# which was true of the ASSEMBLY and not of the execution: `rm -f "$DB"` first, then a
+# statement fails mid-stream, and what is left is a plausible index with an empty tier column.
+# Its mtime is then newer than every source, so the next --if-stale run declares it fresh and
+# says nothing. One announcement, then silence, over a backlog with no tiers.
+#
+# A rename is atomic on both filesystems this runs on, so a failed build now leaves the
+# previous index exactly as it was, with its previous mtime -- which is what makes the next
+# run notice the sources are newer and try again, loudly, instead of trusting a corpse.
+NEW="$DB.new"
+trap 'rm -f "$SQL" "$KIT_REFUSED" "$KIT_SEEN" "$NEW"' EXIT
+rm -f "$NEW"
+sqlite3 "$NEW" < "$(dirname "$0")/schema.sql" ||
+  { kit_warn "could not create the index schema; ${DB#$ROOT/} was left unchanged."; exit 1; }
+sqlite3 "$NEW" < "$SQL" ||
+  { kit_warn "index build failed; ${DB#$ROOT/} was left unchanged and is now stale."
+    kit_warn "Nothing was half-written — fix the cause above and rerun."; exit 1; }
+mv -f "$NEW" "$DB" ||
+  { kit_warn "could not replace ${DB#$ROOT/}; it was left unchanged."; exit 1; }
 
 # Recovering these commits keeps derived status correct, but doing it quietly would hide a
 # merge flow that mangles trailers -- and the next thing that reads them (a CI gate, another
