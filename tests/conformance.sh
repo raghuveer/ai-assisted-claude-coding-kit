@@ -605,6 +605,72 @@ else
 fi
 rm -rf "$nx"
 
+step "provenance is recorded, defaulted and excluded from the rate it would dilute"
+# Escape rate was computed over EVERY task regardless of whether this pipeline had ever run on
+# one. On a brownfield adoption most of the backlog is pre-existing or hand-done, so the
+# denominator filled with work the kit never reviewed and the headline metric was diluted from
+# the first day -- in the direction that makes tiering look ineffective.
+#
+# Four things have to hold together, and the last is the one with teeth: a bogus value must
+# not be stored, an unrecorded task must be `unknown` rather than quietly counted, the trailer
+# must beat the frontmatter the way tier already does, and the rate must exclude everything
+# that is not `kit` while NAMING what it excluded.
+vx="$WORK.via"; rm -rf "$vx"; mkdir -p "$vx/.claude" "$vx/.project/tasks" "$vx/src"
+( cd "$vx" && git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"; echo "---"; } > .claude/project-profile.md
+  printf -- '---\nid: T-kit\ntitle: k\ntier: T2\nvia: kit\n---\nb\n'   > .project/tasks/T-kit.md
+  printf -- '---\nid: T-man\ntitle: m\ntier: T2\nvia: manual\n---\nb\n' > .project/tasks/T-man.md
+  printf -- '---\nid: T-none\ntitle: n\ntier: T2\n---\nb\n'             > .project/tasks/T-none.md
+  printf -- '---\nid: T-bad\ntitle: b\ntier: T2\nvia: made-up\n---\nb\n' > .project/tasks/T-bad.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  echo x > src/a; git add -A
+  git commit -q --no-verify -m "feat: w
+
+Task-Id: T-man
+Tier: T2
+Via: agent"
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  # frontmatter honoured; a value outside the vocabulary becomes unknown rather than stored;
+  # absence becomes unknown; and the TRAILER beats the frontmatter, as tier does -- T-man
+  # declares `manual` in its file and the commit says `agent`.
+  got=$(sqlite3 .project/index.db "SELECT group_concat(id||'='||via,' ') FROM (SELECT id,via FROM task ORDER BY id);" | sed 's/\r$//')
+  [ "$got" = "T-bad=unknown T-kit=kit T-man=agent T-none=unknown" ] || exit 1
+
+  # The rate covers kit-run work only, and says what it left out, by value. `unknown` must
+  # appear as itself -- folding it into `manual` would turn "nobody recorded this" into a claim.
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -q 'T2  0 / 1' STATUS.generated.md || exit 1
+  grep -q 'Excluded from the rate above' STATUS.generated.md || exit 1
+  grep -qE '^- unknown  2$' STATUS.generated.md || exit 1
+  grep -qE '^- agent  1$' STATUS.generated.md || exit 1
+
+  # The trailer validator rejects a value outside the vocabulary and accepts one inside it.
+  printf 'feat: x\n\nTask-Id: T-kit\nTier: T2\nVia: made-up\n' > m.txt
+  bash "$KIT/tooling/kit-trailers.sh" message m.txt 2>&1 | grep -q 'invalid  Via' || exit 1
+  printf 'feat: x\n\nTask-Id: T-kit\nTier: T2\nVia: kit\n' > m2.txt
+  [ -z "$(bash "$KIT/tooling/kit-trailers.sh" message m2.txt 2>&1)" ] || exit 1 )
+check $? "via: vocabulary honoured, unknown by default, trailer wins, rate excludes and names"
+rm -rf "$vx"
+
+step "the via vocabulary is defined in exactly one place"
+# The finding vocabulary was restated in four locations once, and the agents then emitted
+# values the recorder threw away. This one has a single definition in kit-lib.sh and every
+# consumer reads it from there; a literal copy anywhere else is the drift starting again.
+#
+# The pattern comes from the definition rather than being typed here. Spelling it out would
+# have made this file the second copy -- which it was, on the first run, and the check caught
+# itself. A test that cannot be written without violating the rule it enforces is telling you
+# something about the rule; here it just meant: ask the source.
+( . "$KIT/tooling/kit-lib.sh"
+  VOCAB=$(kit_via_vocab)
+  copies=$(grep -rlF "$VOCAB" "$KIT/tooling" "$KIT/tests" 2>/dev/null | wc -l | tr -d ' ')
+  [ "$copies" = 1 ] || { echo "  '$VOCAB' appears in $copies file(s), expected 1:"
+                         grep -rlF "$VOCAB" "$KIT/tooling" "$KIT/tests" 2>/dev/null | sed 's/^/    /'; }
+  [ "$copies" = 1 ] )
+check $? "one definition of the via vocabulary, read by every consumer"
+
 step "a tier below its floor is reported"
 # Under-tiering is silent and it is the dangerous direction. Two of three recorded tiers in a
 # real backlog were below their floor -- and a floor computed only from touched files would

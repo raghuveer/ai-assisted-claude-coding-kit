@@ -67,3 +67,22 @@ kit_version() {
 }
 
 kit_warn() { printf 'kit: %s\n' "$*" >&2; }
+
+# kit_via_vocab -> how a unit of work was executed. THE definition; every consumer reads it
+# from here, and tests/conformance.sh asserts that no second copy exists. The finding
+# vocabulary was restated in four places once and the agents emitted values the recorder threw
+# away; this one starts with a single home.
+#
+#   kit      this project's own pipeline ran on it -- tiered, spawned, reviewed
+#   agent    a coding agent did it, without the kit
+#   manual   a human did it
+#   unknown  nobody can say, which on a brownfield back-fill is most of the backlog
+#
+# `unknown` is a real value that reports as unknown. It is not a synonym for `manual`, and it
+# is the default precisely so that an unrecorded task is visibly absent from a comparison
+# rather than quietly counted into one.
+#
+# THE HUMAN GATE IS THE POINT. A model may propose the value; a person confirms it. A
+# self-reported `kit` from the agent that did the work is the one value nobody should take on
+# trust, which is why nothing in the kit ever writes this for you.
+kit_via_vocab() { printf 'kit agent manual unknown'; }

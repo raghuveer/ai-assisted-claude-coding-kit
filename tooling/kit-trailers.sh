@@ -81,7 +81,7 @@ check_msg() {
   tv() { printf '%s' "$PARSED" | sed -n "s/^$1:[[:space:]]*//p" | head -1; }
 
   stranded=""
-  for k in Task-Id Tier Task-Status Fixes-Escape-Of; do
+  for k in Task-Id Tier Task-Status Via Fixes-Escape-Of; do
     printf '%s' "$MSG" | grep -Eq "^$k:[[:space:]]*\S" || continue
     printf '%s' "$PARSED" | grep -Eq "^$k:[[:space:]]*\S" && continue
     stranded="$stranded $k"
@@ -113,6 +113,16 @@ check_msg() {
     case "$v" in started|progress|blocked|unblocked|done|abandoned) ;;
       *) printf '  invalid  Task-Status: %s\n' "$v" ;;
     esac
+  fi
+
+  # How the work was done. Optional -- absence means unknown, which is a real reported value
+  # and not a synonym for any of the others. A wrong value is still never forgiven: a rejected
+  # trailer is fixable while you are writing it, a believed-but-wrong one never is.
+  v=$(tv Via)
+  if [ -n "$v" ]; then
+    _ok=0
+    for _w in $(kit_via_vocab); do [ "$v" = "$_w" ] && _ok=1; done
+    [ "$_ok" = 1 ] || printf '  invalid  Via: %s  — one of %s\n' "$v" "$(kit_via_vocab)"
   fi
 
   for k in Task-Id Fixes-Escape-Of; do

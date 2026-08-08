@@ -57,12 +57,34 @@ printf -- '- %s done, %s abandoned\n' \
   "$(q "SELECT COUNT(*) FROM task WHERE state='done';")" \
   "$(q "SELECT COUNT(*) FROM task WHERE state='abandoned';")"
 
+# Escape rate is the metric the whole tiering design rests on, and it was computed over EVERY
+# task regardless of whether this pipeline had ever run on one. On a brownfield adoption most
+# of the backlog is pre-existing or hand-done, so the denominator filled with work the kit
+# never reviewed and the rate was diluted from the first day -- in the direction that makes
+# tiering look ineffective. A metric that cannot tell "reviewed, nothing escaped" from "never
+# reviewed" is the open-circuit failure the findings loop had.
+#
+# So it is computed over via='kit' only, and what was left out is NAMED rather than dropped
+# quietly. A task whose provenance nobody recorded is `unknown` and is excluded: absent from
+# the comparison rather than counted into it.
 printf '\n## Escape rate by tier\n\n'
+printf '_Over work this pipeline ran on (`via: kit`). Other provenance is excluded and counted below._\n\n'
 ESC=$(q "SELECT COALESCE(NULLIF(t.tier,''),'untiered')||'  '||
                 SUM(CASE WHEN e.kind='escaped' THEN 1 ELSE 0 END)||' / '||COUNT(DISTINCT t.id)
          FROM task t LEFT JOIN event e ON e.task_id=t.id
+         WHERE t.via='kit'
          GROUP BY COALESCE(NULLIF(t.tier,''),'untiered') ORDER BY 1;")
-[ -n "$ESC" ] && printf '%s\n' "$ESC" | sed 's/^/- /' || printf '_no data yet_\n'
+[ -n "$ESC" ] && printf '%s\n' "$ESC" | sed 's/^/- /' || printf '_no kit-run task recorded yet_\n'
+
+# The excluded population, by value. `unknown` is reported as itself and never folded into
+# `manual`: they mean different things, and only one of them is a claim.
+EXCL=$(q "SELECT via||'  '||COUNT(*) FROM task WHERE via<>'kit' GROUP BY via ORDER BY 1;")
+if [ -n "$EXCL" ]; then
+  printf '\n**Excluded from the rate above**\n\n'
+  printf '%s\n' "$EXCL" | sed 's/^/- /'
+  printf '\n> Provenance comes from a `Via:` trailer or a `via:` frontmatter key, and nothing in\n'
+  printf '> the kit writes it for you — a model may propose it, a human confirms it.\n'
+fi
 
 # Cost is a function of tier, and tier is assigned before anything spawns -- so a tiered
 # backlog is already a forecast. This is the other half: what it actually cost.
@@ -102,6 +124,15 @@ if [ "${SPENT:-0}" -gt 0 ]; then
   SCOPE=$(q "SELECT scope||'  '||COUNT(*)||' transcript(s), '||(SUM($BTE)/100000)||'k'
                FROM spend s GROUP BY scope ORDER BY 1;")
   [ -n "$SCOPE" ] && { printf '\n**By scope**\n\n'; printf '%s\n' "$SCOPE" | sed 's/^/- /'; }
+
+  # And by provenance, because "did the kit pay for itself" is a comparison, and a comparison
+  # needs both populations labelled. Spend attributed to a task this pipeline never ran is not
+  # the kit's cost; folding it in flatters or damns the wrong thing.
+  VIASPEND=$(q "SELECT t.via||'  '||COUNT(DISTINCT s.task_id)||' task(s), '||(SUM($BTE)/100000)||'k'
+                  FROM spend s JOIN task t ON t.id=s.task_id
+                 WHERE s.task_id IS NOT NULL AND s.task_id<>''
+                 GROUP BY t.via ORDER BY 1;")
+  [ -n "$VIASPEND" ] && { printf '\n**By provenance**\n\n'; printf '%s\n' "$VIASPEND" | sed 's/^/- /'; }
 
   MIX=$(q "SELECT COUNT(DISTINCT COALESCE(NULLIF(model,''),'?')) FROM spend;")
   if [ "${MIX:-0}" -gt 1 ]; then

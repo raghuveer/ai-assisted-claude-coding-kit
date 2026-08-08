@@ -30,22 +30,63 @@ nothing escaped" from "never reviewed" is the same open-circuit failure the find
 
 ## Acceptance criteria
 
-- [ ] A task records how it was executed, from a CLOSED vocabulary, defaulting to unknown.
-      Proposed: `kit` (this project's pipeline ran), `agent` (a coding agent, no kit), `manual`
-      (a human), `unknown`. Unknown must be a real value that reports as unknown, not a silent
-      third meaning for one of the others.
-- [ ] It is recorded the way state already is — a `Via:` trailer validated by the same hook
+- [x] A task records how it was executed, from a CLOSED vocabulary, defaulting to unknown.
+      `kit | agent | manual | unknown`, defined once in `kit_via_vocab()` in `kit-lib.sh`.
+      A value outside it is not stored: the indexer writes `unknown` instead, so a typo
+      cannot invent a fifth population.
+- [x] It is recorded the way state already is -- a `Via:` trailer validated by the same hook
       that validates `Task-Id` and `Tier`, and a frontmatter key for tasks that never reach a
-      commit. One vocabulary, defined in ONE place, asserted by a test. The finding vocabulary
-      drifted across four locations once; this must not become the fifth.
-- [ ] Every derived metric that mixes the populations either filters by it or prints the mix.
-      Escape rate by tier is the one that matters; spend and the tier-floor report should be
-      checked for the same shape.
-- [ ] A task with no value recorded is visibly absent from a comparison rather than counted
-      into one — the same rule spend already follows for unattributed rows.
-- [ ] The human gate is preserved. A model may propose the value; a human confirms it, exactly
+      commit. One vocabulary, defined in ONE place, asserted by a test.
+      Trailer beats frontmatter, the same precedence and for the same reason as tier: git
+      records what actually happened, frontmatter declares an intent. Verified -- a task
+      declaring `via: manual` in its file, committed with `Via: agent`, indexes as `agent`.
+      The single-definition rule has its own conformance step, and that step builds its search
+      pattern by calling `kit_via_vocab` rather than spelling the list out, because spelling it
+      out made the test file the second copy. It caught itself on the first run.
+- [x] Every derived metric that mixes the populations either filters by it or prints the mix.
+      Escape rate by tier now reads `WHERE t.via='kit'` and says so in the report, with the
+      excluded population listed BY VALUE beneath it. Spend gained a **By provenance** split,
+      because "did the kit pay for itself" is a comparison and a comparison needs both
+      populations labelled. The tier-floor report was checked and deliberately left alone:
+      under-tiering is a property of the task, not of who did the work.
+- [x] A task with no value recorded is visibly absent from a comparison rather than counted
+      into one -- the same rule spend already follows for unattributed rows.
+      `unknown` is excluded from the rate and printed as itself. It is never folded into
+      `manual`: one says nobody recorded it, the other is a claim about what happened.
+- [x] The human gate is preserved. A model may propose the value; a human confirms it, exactly
       as `kit-task.sh` requires for a task itself. A self-reported `via: kit` from the agent
       that did the work is the one value nobody should take on trust.
+      Nothing in the kit writes this value anywhere. `kit-task.sh` does not set it, no hook
+      sets it, no agent sets it; it appears only where a person typed it. The working
+      agreement in `templates/CLAUDE.kit.md` states it in those terms, and **the commit
+      implementing this carries no `Via:` trailer** -- it would have been the first
+      self-report, and it indexes as `unknown` like anything else nobody vouched for.
+
+## Outcome
+
+    task.via   kit | agent | manual | unknown, NOT NULL DEFAULT 'unknown'
+    Via:       trailer, validated by kit-trailers.sh against kit_via_vocab()
+    via:       frontmatter key, for a task that never reaches a commit
+    event      kind 'via', so history holds what actually happened
+
+Measured on a fixture with all four cases:
+
+    T-kit   via: kit in frontmatter                    -> kit
+    T-man   via: manual in frontmatter, Via: agent      -> agent      (trailer wins)
+    T-none  nothing anywhere                            -> unknown
+    T-bad   via: made-up                                -> unknown    (not stored)
+
+and the report:
+
+    ## Escape rate by tier
+    _Over work this pipeline ran on (`via: kit`)..._
+    - T2  0 / 1
+    **Excluded from the rate above**
+    - agent  1
+    - unknown  2
+
+Mutation-verified three ways: removing the `via='kit'` filter, removing the vocabulary guard,
+and removing the trailer precedence each turn the conformance step red on their own.
 
 ## Notes
 

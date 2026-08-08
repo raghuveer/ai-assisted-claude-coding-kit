@@ -268,7 +268,7 @@ if [ "$HAVE_TASKS" = 1 ]; then
   # file operands reads stdin and hangs -- a worse failure than the empty backlog it would be
   # reporting. Nor is that an ingest failure; expected and read are both zero, consistently.
   if [ "$#" -gt 0 ]; then
-  KIT_PREFIX="$ROOT/" KIT_RULES="$TIER_RULES" KIT_SEEN="$KIT_SEEN" awk '
+  KIT_PREFIX="$ROOT/" KIT_RULES="$TIER_RULES" KIT_SEEN="$KIT_SEEN" KIT_VIA="$(kit_via_vocab)" awk '
     function q(s){ gsub(/\047/,"\047\047",s); return s }
     # glob -> regex. * and ** both cross directory separators, which matches SQLite GLOB, so
     # the two floor sources agree with each other. That over-matches `a/*.ts` against
@@ -328,7 +328,12 @@ if [ "$HAVE_TASKS" = 1 ]; then
       st = (v["state"] != "" ? v["state"] : "open")
       printf "INSERT OR REPLACE INTO node VALUES(\047%s\047,\047task\047,\047%s\047,\047%s\047);\n", q(id), q(rel), q(ti)
       fl = floorof(v["paths"])
-      printf "INSERT OR REPLACE INTO task(id,epic,state,tier,lang,blocked_by,tier_floor) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,%s);\n", q(id), q(v["epic"]), q(st), q(v["tier"]), q(v["lang"]), q(v["blocked_by"]), (fl == "" ? "NULL" : "\047" q(fl) "\047")
+      # `via` from frontmatter, and anything outside the vocabulary becomes `unknown` rather
+      # than being stored. Unknown is the honest default: on a brownfield back-fill nobody
+      # remembers how each item was done, and a wrong label is worse than an absent one
+      # because only the wrong one gets counted into a comparison.
+      vv = (index(VIAOK, " " v["via"] " ") > 0 ? v["via"] : "unknown")
+      printf "INSERT OR REPLACE INTO task(id,epic,state,tier,lang,blocked_by,tier_floor,via) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,%s,\047%s\047);\n", q(id), q(v["epic"]), q(st), q(v["tier"]), q(v["lang"]), q(v["blocked_by"]), (fl == "" ? "NULL" : "\047" q(fl) "\047"), q(vv)
       # blocked_by is a comma/space separated list of task ids. Frontmatter is where a
       # human declares dependency; edges are how the planner consumes it.
       bb = v["blocked_by"]; gsub(/,/, " ", bb)
@@ -340,7 +345,7 @@ if [ "$HAVE_TASKS" = 1 ]; then
       }
     }
     # ENVIRON, not -v: awk applies escape processing to -v assignments.
-    BEGIN { prefix = ENVIRON["KIT_PREFIX"] }
+    BEGIN { prefix = ENVIRON["KIT_PREFIX"]; VIAOK = " " ENVIRON["KIT_VIA"] " " }
     FNR==1 {
       if (pending) emit()             # flush the previous file; rel is still its path
       # Which files this pass actually READ, recorded HERE and not in a rule of its own: line
@@ -415,7 +420,7 @@ RANGE=${ADOPT:+$ADOPT..HEAD}
 # paths are read, because a floor that cannot be applied has to be announced.
 TZ=UTC0 git -C "$ROOT" -c core.quotepath=false log --reverse --name-only --no-merges \
     --date=format-local:%Y-%m-%dT%H:%M:%SZ \
-    --format=$'\001%H\037%ad\037%an\037%(trailers:key=Task-Id,valueonly,separator=%x1e)\037%(trailers:key=Task-Status,valueonly,separator=%x1e)\037%(trailers:key=Tier,valueonly,separator=%x1e)\037%(trailers:key=Fixes-Escape-Of,valueonly,separator=%x1e)\002%B\003' \
+    --format=$'\001%H\037%ad\037%an\037%(trailers:key=Task-Id,valueonly,separator=%x1e)\037%(trailers:key=Task-Status,valueonly,separator=%x1e)\037%(trailers:key=Tier,valueonly,separator=%x1e)\037%(trailers:key=Via,valueonly,separator=%x1e)\037%(trailers:key=Fixes-Escape-Of,valueonly,separator=%x1e)\002%B\003' \
     ${RANGE:+$RANGE} 2>/dev/null |
 # -F$'\037', not -F'\037'. gawk and mawk interpret a \x escape in the -F argument; the
 # one-true-awk that macOS ships does NOT -- it received the four literal characters
@@ -427,12 +432,16 @@ TZ=UTC0 git -C "$ROOT" -c core.quotepath=false log --reverse --name-only --no-me
 # so a comment placed between them and the awk call silently destroys the whole command.
 KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" KIT_EXEMPT="$EXEMPT" \
 KIT_CC="$CC_ON" KIT_CCCAP="$CC_CAP" KIT_CCHUB="$CC_HUB" KIT_CCMAXD="$CC_MAXD" \
+KIT_VIA="$(kit_via_vocab)" \
 awk -F$'\037' '
   # Via ENVIRON, not -v: awk applies escape processing to -v assignments, so any path
   # containing a backslash would arrive mangled and silently match nothing.
   BEGIN {
     sdir = ENVIRON["KIT_SDIR"]; tdir = ENVIRON["KIT_TDIR"]
     exempt_re = ENVIRON["KIT_EXEMPT"]
+    # Space-padded so membership is one index() and needs no split. Read from kit-lib.sh
+    # rather than restated here: one vocabulary, one definition.
+    VIAOK = " " ENVIRON["KIT_VIA"] " "
   }
   function q(s){ gsub(/\047/,"\047\047",s); return s }
   function trim(s){ gsub(/^[ \t\r]+|[ \t\r]+$/,"",s); return s }
@@ -472,7 +481,7 @@ awk -F$'\037' '
     n = split(body, bl, "\n"); subj = (n ? bl[1] : "")
     isexempt = (exempt_re != "" && subj ~ exempt_re)
     if (isexempt) exemptn++
-    tid=first(tid); st=first(st); tier=first(tier); esc=first(esc)
+    tid=first(tid); st=first(st); tier=first(tier); via=first(via); esc=first(esc)
     if (tid == "") {
       tid = scan("Task-Id")
       if (tid != "") {
@@ -486,6 +495,13 @@ awk -F$'\037' '
     cur=tid
     if (st!="")   printf "INSERT INTO event(task_id,kind,at,commit_sha,actor) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047);\n", q(tid), q(st), q(at), q(sha), q(who)
     if (tier!="") printf "INSERT INTO event(task_id,kind,at,commit_sha,payload) VALUES(\047%s\047,\047tiered\047,\047%s\047,\047%s\047,\047%s\047);\n", q(tid), q(at), q(sha), q(tier)
+    # HOW the work was done, recorded the way the tier is: an event carrying the trailer, so
+    # git holds what actually happened while frontmatter only declares an intent. A value
+    # outside the vocabulary is DROPPED rather than stored -- the commit-msg hook already
+    # rejected it, so one arriving here came from a commit that skipped the hook, which is the
+    # last input that should be believed.
+    if (via != "" && index(VIAOK, " " via " ") > 0)
+      printf "INSERT INTO event(task_id,kind,at,commit_sha,payload) VALUES(\047%s\047,\047via\047,\047%s\047,\047%s\047,\047%s\047);\n", q(tid), q(at), q(sha), q(via)
     if (esc!="") {
       printf "INSERT INTO event(task_id,kind,at,commit_sha) VALUES(\047%s\047,\047escaped\047,\047%s\047,\047%s\047);\n", q(esc), q(at), q(sha)
       printf "INSERT OR IGNORE INTO edge VALUES(\047%s\047,\047%s\047,\047regressed\047);\n", q(tid), q(esc)
@@ -514,10 +530,10 @@ awk -F$'\037' '
 
   /^\001/ {
     ccflush()
-    sub(/^\001/,"",$1); sha=$1; at=$2; who=$3; tid=$4; st=$5; tier=$6
-    p = index($7, "\002")          # $7 is Fixes-Escape-Of, then \002, then body line 1
-    esc  = p ? substr($7, 1, p-1) : $7
-    body = p ? substr($7, p+1)    : ""
+    sub(/^\001/,"",$1); sha=$1; at=$2; who=$3; tid=$4; st=$5; tier=$6; via=$7
+    p = index($8, "\002")          # $8 is Fixes-Escape-Of, then \002, then body line 1
+    esc  = p ? substr($8, 1, p-1) : $8
+    body = p ? substr($8, p+1)    : ""
     inbody = 1
     next
   }
@@ -762,6 +778,14 @@ UPDATE task SET tier = COALESCE((
   SELECT e.payload FROM event e
    WHERE e.task_id = task.id AND e.kind = 'tiered'
    ORDER BY e.at DESC, e.seq DESC LIMIT 1), tier);
+
+-- Same precedence as tier, for the same reason: git records how the work was ACTUALLY done,
+-- frontmatter only declares an intent. A task that never reaches a commit keeps its
+-- frontmatter value, and one that reaches none of either stays `unknown`.
+UPDATE task SET via = COALESCE((
+  SELECT e.payload FROM event e
+   WHERE e.task_id = task.id AND e.kind = 'via'
+   ORDER BY e.at DESC, e.seq DESC LIMIT 1), via);
 
 UPDATE task SET state = COALESCE((
   SELECT e.kind FROM event e

@@ -21,7 +21,18 @@ CREATE TABLE task (
   -- paths it declares and from the files it has actually touched. NULL means no basis to
   -- judge -- which must read differently from "meets its floor", because silence on an
   -- unjudgeable task is how under-tiering stays invisible.
-  tier_floor TEXT
+  tier_floor TEXT,
+  -- HOW the work was done: kit | agent | manual | unknown, defined once in kit-lib.sh.
+  -- Never NULL -- an unrecorded task is `unknown`, which is a real value that reports as
+  -- unknown rather than a silent third meaning for one of the others.
+  --
+  -- Escape rate by tier is the reason this exists. It was computed over EVERY task regardless
+  -- of whether the review pipeline had ever run on one, so on a brownfield adoption -- where
+  -- most of the backlog is pre-existing or hand-done -- the headline metric was diluted from
+  -- the first day, in the direction that makes tiering look ineffective. A metric that cannot
+  -- tell "reviewed, nothing escaped" from "never reviewed" is the open-circuit failure the
+  -- findings loop had.
+  via TEXT NOT NULL DEFAULT 'unknown'
 );
 
 CREATE TABLE edge (

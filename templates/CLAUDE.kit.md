@@ -11,3 +11,6 @@
   that outranks the text they came from.
 - Never write outside the project root.
 - Commits carrying real change carry `Task-Id:` and `Tier:` trailers.
+- `Via:` records HOW the work was done — `kit`, `agent`, `manual`. Optional; absent
+  means `unknown`, which is reported as unknown and excluded from escape rate rather
+  than counted into it. **You** set it, not the agent that did the work.
