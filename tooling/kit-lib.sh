@@ -14,9 +14,18 @@ kit_active() { [ -f "$(kit_profile "$1")" ]; }
 # One awk per call, and every caller uses $(kit_cfg ...), so memoising inside this function
 # buys nothing -- the cache dies with the subshell. Callers that read MANY keys from MANY
 # files must not loop over this; see the single-pass reader in kit-index.sh.
+# A CRLF profile is not a corrupt profile. It is what a Windows checkout of a repository
+# without `*.md text eol=lf` produces, and the value is `.project<CR>`, which names no
+# directory. Stripped once per line rather than added to each trim below, so it covers the
+# key, the value and the `---` test together -- and so the next field added here inherits it.
+#
+# It went unseen because the gawk shipped in git-bash strips CR on input; a POSIX awk does
+# not. A value that parses only because one platform's awk is lenient is the fail-open
+# direction: correct until it reaches a platform that is not.
 kit_cfg() {
   local v
   v=$(awk -v k="$2" '
+    { sub(/\r$/, "") }
     /^---[[:space:]]*$/ { fm++; next }
     fm==2 { exit }
     fm==1 {
@@ -33,6 +42,7 @@ kit_cfg() {
 # kit_cfg_all <file> <key>  -> every value for a repeatable key, one per line
 kit_cfg_all() {
   awk -v k="$2" '
+    { sub(/\r$/, "") }                        # see kit_cfg
     /^---[[:space:]]*$/ { fm++; next }
     fm==2 { exit }
     fm==1 {

@@ -242,6 +242,53 @@ step "a subagent whose transcript cannot be found is reported, not costed"
 check $? "no spend row, one spend-gap, and not one gap per firing"
 rm -rf "$sx"
 
+step "a CRLF profile and CRLF task files parse identically to LF"
+# A Windows checkout of a repo without `*.md text eol=lf` puts CR on the end of every line of
+# the profile and of every task file. The readers trimmed space and tab, so `paths.tasks`
+# became `.project/tasks<CR>` -- naming no directory, finding no tasks, and reporting an empty
+# backlog rather than an error.
+#
+# THIS STEP CANNOT FAIL UNDER A LENIENT AWK. The gawk in git-bash strips CR on input, so the
+# defect is invisible there; a POSIX awk keeps it. Running the assertion anyway would be a
+# green that means "not exercised", which is the failure mode this suite exists to refuse. So
+# the awk is probed first, and if it strips CR the step re-runs the kit under `gawk
+# -v BINMODE=3` -- which is what every other awk does by default -- and says which mode it
+# used. If neither is available it reports NOT EXERCISED rather than passing.
+cr_len=$(printf 'x\r\n' | awk 'NR==1{print length($0)}')
+cx="$WORK.crlf"; rm -rf "$cx"; mkdir -p "$cx/.claude" "$cx/.project/tasks" "$cx/shim"
+awkmode=native
+if [ "$cr_len" = 1 ]; then
+  printf 'x\r\n' > "$cx/probe"
+  if command -v gawk >/dev/null 2>&1 && [ "$(gawk -v BINMODE=3 'NR==1{print length($0)}' "$cx/probe")" = 2 ]; then
+    printf '#!/usr/bin/env bash\nexec gawk -v BINMODE=3 "$@"\n' > "$cx/shim/awk"
+    chmod +x "$cx/shim/awk"; awkmode="BINMODE=3 shim"
+  else
+    awkmode="NOT EXERCISED"
+  fi
+fi
+printf '  awk keeps CR: %s\n' "$awkmode"
+if [ "$awkmode" = "NOT EXERCISED" ]; then
+  echo "  SKIP  this awk strips CR on input and cannot be made to keep it"
+else
+  ( cd "$cx"
+    [ -x shim/awk ] && PATH="$PWD/shim:$PATH" && export PATH
+    git init -q -b main 2>/dev/null
+    # TWO tier.rules on purpose. kit_cfg_all returns them as lines of one command
+    # substitution, and `$(...)` drops only the LAST trailing CR -- so a single rule is
+    # accidentally clean and the first of two is not. A fixture that cannot reach the
+    # interior line tests the accident rather than the reader.
+    printf -- '---\r\npaths.tasks:  .project/tasks\r\npaths.state:  .project\r\ntier.default: T1\r\ntier.rule: src/** T3\r\ntier.rule: lib/** T2\r\n---\r\n' > .claude/project-profile.md
+    printf -- '---\r\nid: T-crlf\r\ntitle: c\r\ntier: T1\r\nepic: e1\r\npaths: src/a.go\r\n---\r\n\r\nbody\r\n' > .project/tasks/T-crlf.md
+    bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+    # Every value below rides on a different reader: the profile through kit_cfg, the task
+    # frontmatter through the indexer's own parser, and the floor through the tier.rule trim.
+    n=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM task;" | tr -d '\015')
+    r=$(sqlite3 .project/index.db "SELECT tier||'/'||epic||'/'||COALESCE(tier_floor,'-') FROM task WHERE id='T-crlf';" | tr -d '\015')
+    [ "$n" = 1 ] && [ "$r" = "T1/e1/T3" ] )
+  check $? "CRLF input yields the same tier, epic and floor as LF"
+fi
+rm -rf "$cx"
+
 step "a tier below its floor is reported"
 # Under-tiering is silent and it is the dangerous direction. Two of three recorded tiers in a
 # real backlog were below their floor -- and a floor computed only from touched files would

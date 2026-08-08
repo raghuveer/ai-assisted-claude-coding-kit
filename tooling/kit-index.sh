@@ -185,13 +185,16 @@ if [ "$HAVE_TASKS" = 1 ]; then
     function floorof(paths,   n, i, parts2, j, m, rule, g, t, best, rules) {
       best = ""
       if (paths == "") return ""
-      n = split(paths, parts2, /[ ,\t]+/)
+      n = split(paths, parts2, /[ ,\t\r]+/)
       m = split(ENVIRON["KIT_RULES"], rules, "\036")
       for (j = 1; j <= m; j++) {
         if (rules[j] == "") continue
         split(rules[j], rule, "\t")
         g = rule[1]; t = rule[2]
-        gsub(/^[ \t]+|[ \t]+$/, "", g); gsub(/^[ \t]+|[ \t]+$/, "", t)
+        # \r in the class: these come from a profile line, and the readers upstream now strip
+        # it -- but a rule whose tier is `T3<CR>` compares wrong rather than failing, and a
+        # floor that silently does not apply is the direction under-tiering already fails in.
+        gsub(/^[ \t\r]+|[ \t\r]+$/, "", g); gsub(/^[ \t\r]+|[ \t\r]+$/, "", t)
         if (g == "" || t == "") continue
         for (i = 1; i <= n; i++) {
           if (parts2[i] == "") continue
@@ -226,6 +229,12 @@ if [ "$HAVE_TASKS" = 1 ]; then
       rel = FILENAME
       if (index(rel, prefix) == 1) rel = substr(rel, length(prefix) + 1)
     }
+    # Task files are hand-authored markdown and arrive CRLF from a Windows checkout, where a
+    # trailing CR would ride on every value: `tier: T2<CR>` fails the tier regex, and a `paths:`
+    # value carries it into the glob. The trailer reader below already strips CR in its own
+    # trim() -- that knowledge was one function away from here and did not travel, which is why
+    # this is a per-line strip and not a fifth place to keep in sync.
+    { sub(/\r$/, "") }
     /^---[[:space:]]*$/ { fm++; next }
     fm == 1 {
       i = index($0, ":")
