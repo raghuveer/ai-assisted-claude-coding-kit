@@ -11,7 +11,12 @@ if [ -f "$ROOT/.claude/project-profile.md" ]; then
   echo "profile exists, left alone"
 else
   ADOPTED=0
-  cp "$HERE/../templates/project-profile.md" "$ROOT/.claude/project-profile.md"
+  # tr, not cp: this writes a file into someone else's repository, and it must land the same
+  # on every platform. `cp` copies the plugin checkout's bytes verbatim, so a kit fetched with
+  # core.autocrlf=true -- or unpacked from an archive built on Windows -- seeded a CRLF
+  # profile that then travelled to a colleague on Linux. The kit's own .gitattributes pins
+  # *.md to LF, which fixes the git path and not the archive path; this fixes both.
+  tr -d '\r' < "$HERE/../templates/project-profile.md" > "$ROOT/.claude/project-profile.md"
   echo "created .claude/project-profile.md  <- fill this in; the kit is inert until you do"
 fi
 

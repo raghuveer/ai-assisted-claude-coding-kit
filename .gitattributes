@@ -7,5 +7,12 @@ commit-msg  text eol=lf
 *.py        text eol=lf
 *.sql       text eol=lf
 
+# Markdown for a different reason: none of it would break on CRLF, but the kit READS it as
+# data. Agent instructions carry the finding vocabulary inline and a test compares that
+# against `kit-finding.sh --vocab`; the profile template is copied verbatim into every repo
+# that adopts the kit. Both compared a CRLF working tree against an LF expectation and
+# reported drift that did not exist. Being read by a tool is its own reason to pin.
+*.md        text eol=lf
+
 # append-only shared log: take both sides rather than conflicting
 .project/events.ndjson merge=union

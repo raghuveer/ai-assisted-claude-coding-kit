@@ -5,7 +5,7 @@ epic: portability
 tier: T2
 lang: bash
 paths: tooling/kit-init.sh, tests/conformance.sh, .gitattributes
-state: open
+state: done
 ---
 
 ## Intent
@@ -45,22 +45,63 @@ line-ending configuration as much as of the kit.
 
 ## Acceptance criteria
 
-- [ ] The fixture produces one commit id on Linux, macOS and a `core.autocrlf=true` Windows
+- [x] The fixture produces one commit id on Linux, macOS and a `core.autocrlf=true` Windows
       checkout of the same commit. Decide whether that is achieved by pinning `*.md` to
       `eol=lf`, by making `kit-init.sh` normalise what it copies, or by having the fixture
       normalise what it commits — and record which, because they protect different things.
-- [ ] Do NOT re-pin `EXPECT_HEAD` to the value this machine produces. The comment above it
+      The first two. `.gitattributes` pins `*.md text eol=lf`, which covers everyone who gets
+      the kit through git; `kit-init.sh` writes the profile through `tr -d '
+'` instead of
+      `cp`, which additionally covers a kit unpacked from an archive, where no git attribute
+      is in force. The third was rejected: normalising inside the fixture would make the test
+      pass while leaving real user repositories seeded with CRLF, which is the failure and
+      not the symptom.
+- [x] Do NOT re-pin `EXPECT_HEAD` to the value this machine produces. The comment above it
       already says: update it deliberately, never to make a red run go green. That advice is
       correct and this task is a test of it.
-- [ ] On mismatch the check must say what differs, not only that something does. A bare hash
+      `EXPECT_HEAD` is untouched. The suite now reaches `53000060db1445...` on its own.
+- [x] On mismatch the check must say what differs, not only that something does. A bare hash
       inequality, plus a comment asserting that a mismatch means drift, sent this
       investigation through the template history, the kit-init history and a two-version
       fixture rebuild before reaching the blob. Printing the seed commit id alongside HEAD
       would have named it immediately.
-- [ ] `kit-init.sh` copying a text file with `cp` is the mechanism here, and it copies into
+      The seed commit is now pinned separately and printed on mismatch, with the two cases
+      spelled out: seed matching means this script moved, seed differing means a file
+      `kit-init.sh` commits is not byte-identical. Both branches were exercised by tampering
+      with each pin in a scratch copy — an error path that has never run is not a diagnostic.
+- [x] `kit-init.sh` copying a text file with `cp` is the mechanism here, and it copies into
       real user repositories too, not only fixtures. Establish whether a CRLF
       `project-profile.md` reaches a Windows user's repo and travels to their Linux
       colleague, and whether anything downstream cares. Report the answer even if it is "no".
+      IT DID, and the reproduction is in this repo's own history: every `.md` here was CRLF
+      on disk, and `kit-init.sh` copied those bytes verbatim into `.claude/project-profile.md`.
+      Whether anything downstream cares is platform-dependent, and the honest answer is worse
+      than "no". `kit_cfg` strips only `[ 	]` from a value, not `
+`. It did not bite here
+      because the gawk in git-bash strips CR on input -- demonstrated: a deliberately CRLF
+      profile yields `paths.state` as 8 clean bytes. That is a property of this awk build, not
+      of the code, and it is the reason the CR-counting in this investigation had to be redone
+      with `tr`. What happens on an awk that does not strip CR could not be tested on this
+      machine, so it is stated as a hazard rather than a result: a CRLF profile written on
+      Windows and read on a colleague's Linux checkout would leave `
+` on every value.
+      Filed as T-20260808-kit-cfg-strips-space-and-tab-from-a-valu rather than fixed here --
+      `kit-lib.sh` is read by every script in the kit and deserves its own tier and its own
+      review, not a one-character rider on a test fix.
+
+## Outcome
+
+`kit-init.sh` writes the profile with `tr -d '
+'` rather than `cp`; `.gitattributes` pins
+`*.md` to LF; the FINGERPRINT step pins and prints the seed commit so a mismatch says which
+half moved.
+
+The convincing test is not that the suite is green — it is that the suite is green on a
+checkout whose profile template was deliberately CRLF-ified. That is the exact condition that
+produced `ea3722c5...` before, and `kit-init.sh` now normalises it away at the copy, so the
+fixture reaches the pinned `53000060db1445...` from a corrupted source. `.gitattributes`
+alone would have hidden the defect on this machine while leaving it live for anyone
+installing from an archive.
 
 ## Notes
 

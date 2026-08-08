@@ -5,7 +5,7 @@ epic: validation
 tier: T2
 lang: bash
 paths: tests/conformance.sh, .gitattributes
-state: open
+state: done
 ---
 
 ## Intent
@@ -43,18 +43,48 @@ every run since it was written.
 
 ## Acceptance criteria
 
-- [ ] The check passes on a CRLF working tree and still fails on genuine drift — prove the
+- [x] The check passes on a CRLF working tree and still fails on genuine drift — prove the
       second half by editing one agent's class list and watching it go red.
-- [ ] Decide where the normalisation belongs and record why. Two candidates, and they are
+      Both proven. A copy of the kit with every agent and template CRLF-ified runs 23 passed,
+      0 failed. Renaming `style` to `styling` in one agent, on a CRLF file, still goes red.
+- [x] Decide where the normalisation belongs and record why. Two candidates, and they are
       not equivalent: `*.md text eol=lf` in `.gitattributes` fixes the checkout for every
       reader, and stripping `\r` at read time fixes only this comparison. A repository whose
       tests read working-tree bytes has more than one such comparison.
-- [ ] Whatever is chosen, no test in the suite may depend on the checkout's line endings.
+      BOTH, deliberately, and the second is the one that matters. `.gitattributes` fixes the
+      checkout for everyone who gets the kit through git; `tr -d '\r'` in the reader makes
+      the guard independent of anyone's configuration. Relying on the attribute alone would
+      leave a test that passes only while every contributor's git agrees with it.
+- [x] Whatever is chosen, no test in the suite may depend on the checkout's line endings.
       Audit the rest of `tests/conformance.sh` for the same shape rather than fixing the one
       step that happened to fail.
-- [ ] The failure message names the DIFFERENCE, not just the file. "class list differs" sent
+      Audited. One other reader of a checked-out file: the `tools:` line in "no agent is told
+      to run a tool it does not have". It survived a CRLF checkout by luck -- the value it
+      searches for is never last on the line, so the trailing `\r` never landed inside the
+      match. Normalised anyway; luck is not a property. `validate.py` also reads these files
+      and is immune, because Python's text mode collapses `\r\n` on read.
+- [x] The failure message names the DIFFERENCE, not just the file. "class list differs" sent
       the reader to compare two identical lists by eye; printing the first differing run of
       bytes would have named the cause immediately.
+      It now names the word the match dies on, and prints what `--vocab` says:
+      `class list differs: security-reviewer.md — breaks at "style"`.
+
+## Outcome
+
+Three changes, and only the middle one is the actual fix:
+
+1. `.gitattributes` pins `*.md text eol=lf`, so a markdown file checks out the same on every
+   platform. The comment says why markdown is there for a different reason than `*.sh`:
+   nothing in it would BREAK on CRLF, but the kit reads it as data.
+2. The two readers in `tests/conformance.sh` strip `\r` before comparing. This is what makes
+   the guard true regardless of configuration, and it is why 1 alone was not enough.
+3. The failure names the word the match dies on rather than only the file.
+
+Verified against a checkout with every agent and template deliberately CRLF-ified: 23 passed,
+0 failed. Before the change that same checkout reported all three reviewers as drifted.
+
+The working tree of this repository was renormalised in the same commit -- the committed
+blobs were already LF, so nothing in git changed; only the files on this machine's disk did.
 
 ## Notes
 

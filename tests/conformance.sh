@@ -45,11 +45,31 @@ V=$(bash "$KIT/tooling/kit-finding.sh" --vocab)
 VC=$(printf '%s' "$V" | sed -n 's/^class:[[:space:]]*//p')
 VS=$(printf '%s' "$V" | sed -n 's/^severity:[[:space:]]*//p')
 drift=0
+# Name the word the match dies on. "class list differs" alone sends the reader to compare two
+# lists by eye, and the difference that actually occurred was an invisible byte -- so the one
+# thing the message must not do is leave the reader looking at two lists that appear equal.
+first_divergence() {  # <expected list> <flattened agent text>
+  _pre=""
+  for _w in $1; do
+    if [ -n "$_pre" ]; then _try="$_pre $_w"; else _try="$_w"; fi
+    case "$2" in *"$_try"*) _pre="$_try" ;; *) printf '%s' "$_w"; return ;; esac
+  done
+}
 for a in "$KIT"/agents/*.md; do
   grep -q 'kit-finding.sh' "$a" || continue
-  flat=$(tr '\n' ' ' < "$a" | tr -s ' ')
-  case "$flat" in *"$VC"*) ;; *) echo "  class list differs: $(basename "$a")"; drift=1 ;; esac
-  case "$flat" in *"$VS"*) ;; *) echo "  severity list differs: $(basename "$a")"; drift=1 ;; esac
+  # CR is deleted BEFORE the newlines become spaces. Without that, a list wrapped across a
+  # line flattens to `...style<CR> unclassified` on a CRLF checkout and matches nothing --
+  # which reported all three reviewers as drifted while every one of them was correct. A
+  # guard that is red for a reason unrelated to what it guards stops being read.
+  flat=$(tr -d '\r' < "$a" | tr '\n' ' ' | tr -s ' ')
+  case "$flat" in *"$VC"*) ;; *)
+    echo "  class list differs: $(basename "$a") — breaks at \"$(first_divergence "$VC" "$flat")\""
+    echo "    kit-finding.sh --vocab: $VC"; drift=1 ;;
+  esac
+  case "$flat" in *"$VS"*) ;; *)
+    echo "  severity list differs: $(basename "$a") — breaks at \"$(first_divergence "$VS" "$flat")\""
+    echo "    kit-finding.sh --vocab: $VS"; drift=1 ;;
+  esac
 done
 check $drift "every agent's inlined vocabulary matches kit-finding.sh --vocab"
 
@@ -58,7 +78,11 @@ step "no agent is told to run a tool it does not have"
 # Glob. It guessed the classes instead, and 3 of its 4 would have been rejected.
 ungranted=0
 for a in "$KIT"/agents/*.md; do
-  tools=$(sed -n 's/^tools:[[:space:]]*//p' "$a" | head -1)
+  # `tr -d '\r'` here and in every other reader of a checked-out file below. .gitattributes
+  # pins *.md to LF, and a test that only passes while it does is a test of the reader's git
+  # configuration. This one survived a CRLF checkout by luck -- the tool name it looks for is
+  # never last on the line -- and the vocabulary check three steps down did not.
+  tools=$(tr -d '\r' < "$a" | sed -n 's/^tools:[[:space:]]*//p' | head -1)
   case "$tools" in *Bash*) continue ;; esac
   if grep -qE 'Run `kit-[a-z-]+\.sh' "$a"; then
     echo "  $(basename "$a") has no Bash but is told to run a script"; ungranted=1
@@ -283,6 +307,11 @@ printf -- '---\nid: T-a\ntitle: bound retry\ntier: T2\nlang: go\nepic: e1\n---\n
 printf -- '---\nid: T-b\ntitle: add jitter\ntier: T1\nlang: go\nepic: e1\nblocked_by: T-a\n---\n\nbody\n' > .project/tasks/T-b.md
 printf 'seed\n' > README.md
 git add -A && git commit -q --no-verify -m "chore: seed"
+# Kept for the FINGERPRINT report. The seed commit is the only one whose content comes from
+# OUTSIDE this script -- kit-init.sh copies the profile template in -- so it is where an
+# environmental difference enters, and every commit after it is printf output. Reporting it
+# separates "the kit's files differ" from "this script changed".
+SEED=$(git rev-parse HEAD)
 
 # 24 paired commits: each module's two files always change together, README changes in
 # every one and must be dropped as a hub, and 24 gives hub_pct a real denominator.
@@ -318,6 +347,9 @@ echo "  commits: $(git rev-list --count HEAD)"
 # it forces a template edit to be noticed rather than silently changing what two
 # platforms are comparing. Update it deliberately, never to make a red run go green.
 EXPECT_HEAD=53000060db14454d607a4db4bacef4e758ed0382
+# The seed alone, so a mismatch says WHICH half moved. Unchanged since the pin above was set,
+# which is how the CRLF diagnosis was confirmed: the fixture had not drifted at all.
+EXPECT_SEED=ef380ef1265d36244ebd24940adb2ca0e32125f5
 
 step "trailer hook"
 sed -i.bak 's|^git.trailer_enforcement:.*|git.trailer_enforcement:  enforce|' .claude/project-profile.md
@@ -384,8 +416,17 @@ printf '  head    %s\n' "$H"
 printf '  index   %s\n' \
   "$(grep -v 'sqlite_sequence\|writable_schema' a.dump | { sha256sum 2>/dev/null || shasum -a 256; } | awk '{print $1}')"
 # The fixture is fully determined -- fixed author and committer dates, fixed content -- so
-# HEAD must be the same commit on every machine. If this fails the fixture drifted, and the
-# fingerprint above is comparing two different things rather than two platforms.
+# HEAD must be the same commit on every machine. A mismatch has two causes and they are not
+# the same problem: the fixture drifted, or the FILES IT COMMITS differ between checkouts.
+# Say which. Reading only the HEAD mismatch, the obvious conclusion is drift, and once that
+# was assumed a CRLF profile template took a template diff, a kit-init diff and a two-version
+# fixture rebuild to find. The seed commit is where anything from outside this script enters.
+if [ "$H" != "$EXPECT_HEAD" ]; then
+  printf '  seed    %s  (expected %s)\n' "$SEED" "$EXPECT_SEED"
+  [ "$SEED" = "$EXPECT_SEED" ] &&
+    printf '  ^ seed matches, so the divergence is in this script, not in the kit files it commits\n' ||
+    printf '  ^ seed differs: a file kit-init.sh commits is not byte-identical here. Compare\n    `git ls-tree -r %s` against a known-good checkout before touching EXPECT_HEAD.\n' "$SEED"
+fi
 [ "$H" = "$EXPECT_HEAD" ]
 check $? "fixture is reproducible (HEAD == $EXPECT_HEAD)"
 
