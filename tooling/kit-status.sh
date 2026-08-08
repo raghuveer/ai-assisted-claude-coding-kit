@@ -57,33 +57,74 @@ printf -- '- %s done, %s abandoned\n' \
   "$(q "SELECT COUNT(*) FROM task WHERE state='done';")" \
   "$(q "SELECT COUNT(*) FROM task WHERE state='abandoned';")"
 
-# Escape rate is the metric the whole tiering design rests on, and it was computed over EVERY
-# task regardless of whether this pipeline had ever run on one. On a brownfield adoption most
-# of the backlog is pre-existing or hand-done, so the denominator filled with work the kit
-# never reviewed and the rate was diluted from the first day -- in the direction that makes
-# tiering look ineffective. A metric that cannot tell "reviewed, nothing escaped" from "never
-# reviewed" is the open-circuit failure the findings loop had.
+# Escape rate is the metric the whole tiering design rests on, and it has now been wrong in
+# two opposite directions.
 #
-# So it is computed over via='kit' only, and what was left out is NAMED rather than dropped
-# quietly. A task whose provenance nobody recorded is `unknown` and is excluded: absent from
-# the comparison rather than counted into it.
+# It was first computed over EVERY task regardless of whether this pipeline had ever run on
+# one. On a brownfield adoption most of the backlog is pre-existing or hand-done, so the
+# denominator filled with work the kit never reviewed and the rate was diluted from the first
+# day -- in the direction that makes tiering look ineffective.
+#
+# The fix was to compute it over via='kit' only, and that introduced a worse failure than the
+# one it cured: filtering can make a recorded escape DISAPPEAR. Anything that moves a task out
+# of `via='kit'` -- a kit command writing the column, a later `chore:` commit carrying
+# `Via: manual`, a value nobody ever recorded -- removes its escapes from the only place
+# escapes are ever surfaced. The `escaped` row stays in the database and the report reads zero.
+#
+# So both populations are reported and NEITHER is presented as the escape rate. The un-diluted
+# number is what the filter was for and it is still here; the honest denominator is back beside
+# it. Nothing is excluded from the report -- only from one of its two columns.
+#
+# That is what makes disappearance impossible by construction rather than by care. The `all`
+# column has no WHERE clause, so it counts the escapes of every task in the index; the only
+# escape it cannot reach is one attached to no task row at all, and that residue is counted
+# separately below. The two are exhaustive: together they are `COUNT(*) WHERE kind='escaped'`.
 printf '\n## Escape rate by tier\n\n'
-printf '_Over work this pipeline ran on (`via: kit`). Other provenance is excluded and counted below._\n\n'
-ESC=$(q "SELECT COALESCE(NULLIF(t.tier,''),'untiered')||'  '||
-                SUM(CASE WHEN e.kind='escaped' THEN 1 ELSE 0 END)||' / '||COUNT(DISTINCT t.id)
+printf '_Two populations, both reported. `via:kit` is work this pipeline actually ran; `all` is\n'
+printf 'every task. Neither alone is the escape rate — the first omits work the kit never saw,\n'
+printf 'the second is the un-filtered denominator._\n\n'
+ESC=$(q "SELECT printf('%-11s', COALESCE(NULLIF(t.tier,''),'untiered'))||
+                printf('%-18s', SUM(CASE WHEN e.kind='escaped' AND t.via='kit' THEN 1 ELSE 0 END)||
+                                ' / '||COUNT(DISTINCT CASE WHEN t.via='kit' THEN t.id END)||' via:kit')||
+                SUM(CASE WHEN e.kind='escaped' THEN 1 ELSE 0 END)||' / '||COUNT(DISTINCT t.id)||' all'
          FROM task t LEFT JOIN event e ON e.task_id=t.id
-         WHERE t.via='kit'
          GROUP BY COALESCE(NULLIF(t.tier,''),'untiered') ORDER BY 1;")
-[ -n "$ESC" ] && printf '%s\n' "$ESC" | sed 's/^/- /' || printf '_no kit-run task recorded yet_\n'
+[ -n "$ESC" ] && printf '%s\n' "$ESC" | sed 's/^/- /' || printf '_no task recorded yet_\n'
 
-# The excluded population, by value. `unknown` is reported as itself and never folded into
-# `manual`: they mean different things, and only one of them is a claim.
-EXCL=$(q "SELECT via||'  '||COUNT(*) FROM task WHERE via<>'kit' GROUP BY via ORDER BY 1;")
-if [ -n "$EXCL" ]; then
-  printf '\n**Excluded from the rate above**\n\n'
-  printf '%s\n' "$EXCL" | sed 's/^/- /'
+# The rest of the population, by value, WITH its escapes. Counting tasks alone was the older
+# shape and it is exactly the one that reads clean: "12 excluded" says nothing about whether
+# any of the twelve escaped. `unknown` is reported as itself and never folded into `manual` --
+# they mean different things, and only one of them is a claim.
+OTHER=$(q "SELECT printf('%-9s', t.via)||COUNT(DISTINCT t.id)||' task(s), '||
+                  SUM(CASE WHEN e.kind='escaped' THEN 1 ELSE 0 END)||' escape(s)'
+             FROM task t LEFT JOIN event e ON e.task_id=t.id
+            WHERE t.via<>'kit'
+            GROUP BY t.via ORDER BY 1;")
+if [ -n "$OTHER" ]; then
+  printf '\n**Other provenance** — in the `all` column above, not in `via:kit`\n\n'
+  printf '%s\n' "$OTHER" | sed 's/^/- /'
   printf '\n> Provenance comes from a `Via:` trailer or a `via:` frontmatter key, and nothing in\n'
   printf '> the kit writes it for you — a model may propose it, a human confirms it.\n'
+fi
+
+# The residue: an escape whose task is not in the index at all. It is in neither column above,
+# so it is the one way the report could still read zero while the database does not -- which
+# makes saying it out loud the last piece of the guarantee, not a nicety.
+#
+# It cannot fire TODAY, and that is measured rather than assumed: `kit-index.sh` materialises a
+# task row for any id it sees in a trailer, `Fixes-Escape-Of:` included, so the escape target
+# always exists as a row -- as an untiered `unknown` phantom, which is its own filed defect
+# (T-20260808-a-task-id-matching-no-task-file-is-count). Fixing that defect is what makes this
+# branch live: stop inventing the row and the escape pointing at it becomes invisible in both
+# columns. So this is written now, with the metric it protects, rather than left as a trap for
+# whoever removes phantom tasks and has no reason to look here. Conformance covers it directly.
+ORPH=$(q "SELECT COUNT(*) FROM event
+           WHERE kind='escaped'
+             AND (task_id IS NULL OR task_id='' OR task_id NOT IN (SELECT id FROM task));")
+if [ "${ORPH:-0}" -gt 0 ]; then
+  printf '\n> **%s recorded escape(s) belong to no task in this index.** A commit carried\n' "$ORPH"
+  printf '> `Fixes-Escape-Of:` naming a task that has no file here, so the escape is real and\n'
+  printf '> counted in neither column above. Fix the reference or restore the task file.\n'
 fi
 
 # Cost is a function of tier, and tier is assigned before anything spawns -- so a tiered

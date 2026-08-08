@@ -25,6 +25,20 @@ materially above the others is under-reviewed for the modules it covers, and the
 correct response is to raise the floor for those paths in `tier.rule:` — not to add
 reviewers everywhere.
 
+**Two columns, and neither one is "the" escape rate.** `via:kit` counts only work this
+pipeline actually ran, which is the number that says whether tiering works. `all` counts
+every task, which on a brownfield repository is mostly work the kit never saw and will
+read lower for that reason alone. Quote the one that answers the question asked, and say
+which one it is — a rate given without its population is not a measurement.
+
+Read them together rather than separately. `via:kit` far above `all` is the pipeline
+looking worse than the codebase, which usually means too few tasks are labelled. The two
+converging means the kit has run on most of the backlog.
+
+**Other provenance** carries its own escape count for a reason: that line is what makes a
+recorded escape impossible to lose when a task is labelled out of `via:kit`. If it ever
+shows escapes, they are real escapes — they are simply not attributable to this pipeline.
+
 Treat small numbers as small numbers. Two escapes out of three tasks is not a rate.
 
 ## Trailer discipline

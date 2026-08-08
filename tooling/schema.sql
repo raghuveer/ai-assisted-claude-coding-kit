@@ -32,6 +32,13 @@ CREATE TABLE task (
   -- the first day, in the direction that makes tiering look ineffective. A metric that cannot
   -- tell "reviewed, nothing escaped" from "never reviewed" is the open-circuit failure the
   -- findings loop had.
+  --
+  -- It PARTITIONS that metric and never filters it. Filtering was tried and was worse than the
+  -- dilution it cured: anything that moves a task out of `kit` -- a command writing the column,
+  -- a later chore: commit, a value nobody recorded -- took its escapes out of the only report
+  -- that shows escapes, and the row stayed in `event` saying otherwise. Both populations are
+  -- reported side by side so this column can change what a number means and never whether an
+  -- escape is visible.
   via TEXT NOT NULL DEFAULT 'unknown'
 );
 

@@ -14,5 +14,7 @@
 - Never write outside the project root.
 - Commits carrying real change carry `Task-Id:` and `Tier:` trailers.
 - `Via:` records HOW the work was done — `kit`, `agent`, `manual`. Optional; absent
-  means `unknown`, which is reported as unknown and excluded from escape rate rather
-  than counted into it. **You** set it, not the agent that did the work.
+  means `unknown`, which is reported as unknown. Escape rate is reported over the
+  kit-run population **and** over every task, side by side — so provenance changes
+  what a number means, never whether an escape is visible. **You** set it, not the
+  agent that did the work.

@@ -611,7 +611,7 @@ else
 fi
 rm -rf "$nx"
 
-step "provenance is recorded, defaulted and excluded from the rate it would dilute"
+step "provenance is recorded, defaulted and split out of the rate it would dilute"
 # Escape rate was computed over EVERY task regardless of whether this pipeline had ever run on
 # one. On a brownfield adoption most of the backlog is pre-existing or hand-done, so the
 # denominator filled with work the kit never reviewed and the headline metric was diluted from
@@ -619,8 +619,8 @@ step "provenance is recorded, defaulted and excluded from the rate it would dilu
 #
 # Four things have to hold together, and the last is the one with teeth: a bogus value must
 # not be stored, an unrecorded task must be `unknown` rather than quietly counted, the trailer
-# must beat the frontmatter the way tier already does, and the rate must exclude everything
-# that is not `kit` while NAMING what it excluded.
+# must beat the frontmatter the way tier already does, and the rate must report the kit-run
+# population SEPARATELY while NAMING the rest by value.
 vx="$WORK.via"; rm -rf "$vx"; mkdir -p "$vx/.claude" "$vx/.project/tasks" "$vx/src"
 ( cd "$vx" && git init -q -b main 2>/dev/null
   git config user.email a@b.c; git config user.name T
@@ -644,21 +644,103 @@ Via: agent"
   got=$(sqlite3 .project/index.db "SELECT group_concat(id||'='||via,' ') FROM (SELECT id,via FROM task ORDER BY id);" | sed $'s/\r$//')
   [ "$got" = "T-bad=unknown T-kit=kit T-man=agent T-none=unknown" ] || exit 1
 
-  # The rate covers kit-run work only, and says what it left out, by value. `unknown` must
-  # appear as itself -- folding it into `manual` would turn "nobody recorded this" into a claim.
+  # The rate reports the kit-run population beside the whole one, and names the rest by value
+  # WITH its escape count. `unknown` must appear as itself -- folding it into `manual` would
+  # turn "nobody recorded this" into a claim. One of the four tasks is `kit`; all four are T2.
   bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
-  grep -q 'T2  0 / 1' STATUS.generated.md || exit 1
-  grep -q 'Excluded from the rate above' STATUS.generated.md || exit 1
-  grep -qE '^- unknown  2$' STATUS.generated.md || exit 1
-  grep -qE '^- agent  1$' STATUS.generated.md || exit 1
+  grep -qE '^- T2 +0 / 1 via:kit +0 / 4 all$' STATUS.generated.md || exit 1
+  grep -q 'Other provenance' STATUS.generated.md || exit 1
+  grep -qE '^- unknown +2 task\(s\), 0 escape\(s\)$' STATUS.generated.md || exit 1
+  grep -qE '^- agent +1 task\(s\), 0 escape\(s\)$' STATUS.generated.md || exit 1
 
   # The trailer validator rejects a value outside the vocabulary and accepts one inside it.
   printf 'feat: x\n\nTask-Id: T-kit\nTier: T2\nVia: made-up\n' > m.txt
   bash "$KIT/tooling/kit-trailers.sh" message m.txt 2>&1 | grep -q 'invalid  Via' || exit 1
   printf 'feat: x\n\nTask-Id: T-kit\nTier: T2\nVia: kit\n' > m2.txt
   [ -z "$(bash "$KIT/tooling/kit-trailers.sh" message m2.txt 2>&1)" ] || exit 1 )
-check $? "via: vocabulary honoured, unknown by default, trailer wins, rate excludes and names"
+check $? "via: vocabulary honoured, unknown by default, trailer wins, rate splits and names"
 rm -rf "$vx"
+
+step "a recorded escape cannot be filtered out of the report"
+# The failure this exists to make impossible: an escape is recorded, the task is then moved out
+# of `via='kit'`, and the metric reads clean while the database says otherwise. It is not
+# hypothetical -- one documented command wrote the column and dropped a task carrying a
+# recorded escape out of the report entirely, and a later `chore:` commit carrying
+# `Via: manual` can still relabel a task with nothing warning that the population changed.
+#
+# So the relabel is performed here on purpose and the escape must survive it. The `via:kit`
+# column is ALLOWED to drop the task -- that is the column's job. The `all` column and the
+# provenance breakdown are not.
+ex="$WORK.esc"; rm -rf "$ex"; mkdir -p "$ex/.claude" "$ex/.project/tasks" "$ex/src"
+( cd "$ex" && git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"; echo "---"; } > .claude/project-profile.md
+  printf -- '---\nid: T-esc\ntitle: e\ntier: T2\n---\nb\n' > .project/tasks/T-esc.md
+  printf -- '---\nid: T-fix\ntitle: f\ntier: T2\n---\nb\n' > .project/tasks/T-fix.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  echo x > src/a; git add -A
+  git commit -q --no-verify -m "feat: w
+
+Task-Id: T-esc
+Tier: T2
+Via: kit"
+  echo y > src/b; git add -A
+  git commit -q --no-verify -m "fix: repair
+
+Task-Id: T-fix
+Tier: T2
+Via: kit
+Fixes-Escape-Of: T-esc"
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  # While both tasks are kit-run the two columns agree, which is the uninteresting case.
+  grep -qE '^- T2 +1 / 2 via:kit +1 / 2 all$' STATUS.generated.md || exit 1
+
+  # Relabel the ESCAPED task out of the measured population. Nothing else changes.
+  git commit -q --allow-empty --no-verify -m "chore: retag
+
+Task-Id: T-esc
+Tier: T2
+Via: manual"
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  sqlite3 .project/index.db "SELECT via FROM task WHERE id='T-esc';" | sed $'s/\r$//' | grep -qx manual || exit 1
+
+  # The escape left the kit column and stayed in the report.
+  grep -qE '^- T2 +0 / 1 via:kit +1 / 2 all$' STATUS.generated.md || exit 1
+  grep -qE '^- manual +1 task\(s\), 1 escape\(s\)$' STATUS.generated.md || exit 1
+
+  # And the general claim, executed rather than argued: the escapes the report shows sum to the
+  # escapes the database holds. A report that can read zero while the database cannot is the
+  # thing being ruled out, so it is asserted as an identity and not as a spot check.
+  dbesc=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM event WHERE kind='escaped';" | sed $'s/\r$//' | tr -d ' ')
+  shown=$(grep -oE '[0-9]+ / [0-9]+ all' STATUS.generated.md | awk '{s+=$1} END{print s+0}')
+  [ "$dbesc" = 1 ] || exit 1
+  [ "$shown" = "$dbesc" ] || exit 1
+
+  # The residue, covered directly because it cannot be reached through the front door. Every id
+  # in a trailer -- `Fixes-Escape-Of:` included -- currently gets a task row invented for it, so
+  # an escape belonging to no task is unreachable while that phantom behaviour stands. It is a
+  # filed defect and removing it makes this the only thing standing between a real escape and
+  # silence, so the row is seeded straight into the index and the report is made to say it.
+  #
+  # The index is derived and disposable, which is what makes writing to it legitimate here: the
+  # unit under test is kit-status.sh reading a state kit-index.sh does not yet produce.
+  sqlite3 .project/index.db "INSERT INTO event(task_id,kind,at) VALUES('T-vanished','escaped','2026-01-01T00:00:00Z');"
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -q 'belong to no task in this index' STATUS.generated.md || exit 1
+
+  # The identity that actually holds, and the one the two columns plus the residue are built to
+  # satisfy: everything stored is somewhere in the report. Asserting `shown = stored` instead
+  # would have been true only by the accident of there being no residue.
+  dbesc=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM event WHERE kind='escaped';" | sed $'s/\r$//' | tr -d ' ')
+  shown=$(grep -oE '[0-9]+ / [0-9]+ all' STATUS.generated.md | awk '{s+=$1} END{print s+0}')
+  orph=$(grep -oE '\*\*[0-9]+ recorded escape' STATUS.generated.md | tr -dc '0-9')
+  [ "$dbesc" = 2 ] || exit 1
+  [ $((shown + ${orph:-0})) = "$dbesc" ] || exit 1 )
+check $? "escape survives a relabel out of via:kit; nothing stored is missing from the report"
+rm -rf "$ex"
 
 step "the via vocabulary is defined in exactly one place"
 # The finding vocabulary was restated in four locations once, and the agents then emitted
