@@ -73,3 +73,46 @@ the one critical security finding the other two confirmed independently.
 Cheapest fix for the verification half is granting Bash to `implementation-reviewer`.
 The vocabulary half cannot be fixed by tool grants alone, because inlining the list is
 what caused the original four-way drift -- see the sibling task.
+
+## What the ecosystem does, surveyed 2026-08-08
+
+The open half of this task was the TOOLSET: implementation review is an execution task
+carrying a reading toolset, and on an uncommitted change the reviewer cannot diff. The
+question was whether that is normal. It is not.
+
+Twelve real code-reviewer / architect-review agent definitions surveyed:
+
+    4   declare Bash explicitly
+    6   omit `tools:` entirely and inherit it
+    2   have an allowlist without it
+
+So **ten of twelve effectively have Bash — but only four by deliberate choice.** The ecosystem
+mostly runs on omitting `tools:`, which is a default rather than a design. And the most
+prominent instance of the failing shape is Anthropic's own
+`feature-dev/agents/code-reviewer.md`: its body says to review changes from `git diff` while
+its allowlist omits Bash. Filed upstream as claude-plugins-official#4235 — the identical
+defect this task records, in the first-party plugin.
+
+**The pattern that solves it, and it is what Anthropic's own `/code-review` command does:**
+hold NARROW git access at the command or skill layer, pre-compute the diff, and keep the
+subagent read-only. Not bare `Bash`, but scoped patterns —
+
+    allowed-tools: Bash(git diff:*), Bash(gh pr diff:*), Bash(gh pr view:*)
+
+— with the diff INJECTED into the prompt, so the reviewer receives the actual diff rather than
+a reference to one it cannot fetch. Two variants also in use: an orchestrator passing
+`git diff --name-only <base>...HEAD` into each agent's prompt, and granting `Bash` narrowed by
+a PreToolUse hook that permits read-only git and blocks push.
+
+That last variant is worth noting because this kit already has the mechanism: `kit-guard.sh`
+is a PreToolUse hook, and a read-only-git allowlist is the same shape as the write boundary it
+already enforces.
+
+**One caution before adopting any of it.** An inversion showed up in the survey: the two
+largest collections grant Bash generically, and the string `git` appears nowhere in their
+review agents. The files that say "run git diff" are mostly the ones that cannot. Granting the
+tool is not the same as the reviewer using it, which is the measurement this repository would
+need to make rather than assume — the 2026-08-08 harness run confirmed our own reviewer
+reviewed the file rather than the diff, and said so, twice, unprompted.
+
+Related: T-20260808-an-agent-tools-entry-that-resolves-to-no, filed from the same survey.
