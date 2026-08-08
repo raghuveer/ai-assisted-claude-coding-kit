@@ -203,6 +203,17 @@ TIER_RULES=$(kit_cfg_all "$PROFILE" tier.rule | awk '
       if (n != 2)                       { refuse("expected <path-glob> <tier>"); next }
       if (index(f[1], "[") || index(f[1], "]"))
                                         { refuse("[ and ] are not supported in a glob"); next }
+      # `?` joins them, for the same reason and on the same evidence. globre maps it to a
+      # regex `.`, which this awk matches as a BYTE, while the `?` in SQLite GLOB matches a
+      # CHARACTER. Measured: `src/?.go` matches `src/é.go` on the SQL floor and not on the
+      # declared-paths floor -- and the declared-paths floor is the one that matters before
+      # work starts, when a task has no touches edges yet.
+      #
+      # Not fixed by making the regex byte-correct: a one-UTF-8-character matcher needs hex
+      # escapes inside an awk program, and macOS ships an awk that does not interpret them.
+      # The kit already paid for that lesson once (T-20260731-remove-hex-escapes-from-awk-...),
+      # and it is not worth re-buying for a character no shipped example uses.
+      if (index(f[1], "?"))             { refuse("? is not supported in a glob"); next }
       if (f[2] !~ /^T[0-3]$/)           { refuse(f[2] " is not a tier (T0-T3)"); next }
       printf "%s\t%s\n", f[1], f[2]
     }' | tr '\n' '\036')
@@ -269,13 +280,12 @@ if [ "$HAVE_TASKS" = 1 ]; then
     # the SQL floor and let `\(` compile to an uncompilable regex. `[` and `]` cannot reach
     # this function -- rules carrying them are refused where TIER_RULES is built.
     #
-    # NOT full agreement, and do not read it as such. `?` maps to `.`, which this awk matches
-    # as a BYTE where the `?` in SQLite GLOB matches a character -- so `src/?.go` still
-    # resolves differently on the two paths for a non-ASCII name. Differentially fuzzed at 401,265
-    # glob/subject pairs with zero disagreements on ASCII, and 96 on the first multi-byte
-    # subject, every one of that shape. Filed as
-    # T-20260808-a-glob-with-a-question-mark-resolves-dif; until it is closed, agreement here is
-    # a claim about ASCII paths only.
+    # `?` cannot reach this function either -- rules carrying it are refused for the same
+    # reason, one level up. What remains is `*`, which both engines cross directory separators
+    # with, and literal text. Differentially fuzzed against SQLite GLOB at 401,265 glob/subject
+    # pairs with zero disagreements; the 96 that did disagree were all `?` on a multi-byte
+    # subject, and `?` is now gone. The claim here is agreement, without the ASCII caveat it
+    # used to carry.
     function globre(g,   r) {
       r = g
       gsub(/[\\.^$+(){}|]/, "\\\\&", r)
@@ -386,7 +396,11 @@ RANGE=${ADOPT:+$ADOPT..HEAD}
 # TZ=UTC0 with format-local renders every commit in one canonical zone, matching the
 # `date -u` format kit-finding.sh already writes into events.ndjson. Both sources now
 # produce strings whose lexical order is their chronological order.
-TZ=UTC0 git -C "$ROOT" log --reverse --name-only --no-merges \
+# -c core.quotepath=false: by default git renders a path containing any byte above 0x7F as
+# `"src/\303\251.go"` -- quoted, and octal-escaped. That name is what lands in the `touches`
+# edge, so a non-ASCII path is recorded under a name matching no glob, no tier.rule and no
+# other reader of the index. Measured, not assumed. The flag makes git emit the path as it is.
+TZ=UTC0 git -C "$ROOT" -c core.quotepath=false log --reverse --name-only --no-merges \
     --date=format-local:%Y-%m-%dT%H:%M:%SZ \
     --format=$'\001%H\037%ad\037%an\037%(trailers:key=Task-Id,valueonly,separator=%x1e)\037%(trailers:key=Task-Status,valueonly,separator=%x1e)\037%(trailers:key=Tier,valueonly,separator=%x1e)\037%(trailers:key=Fixes-Escape-Of,valueonly,separator=%x1e)\002%B\003' \
     ${RANGE:+$RANGE} 2>/dev/null |
@@ -534,7 +548,9 @@ if [ "$SRC_COMMITS" = git ] && [ "$CC_ON" = 1 ]; then
 CC_SINCE=$(kit_cfg "$PROFILE" cochange.since "")
 # %x01, not a shell-quoted $'\001'. A format consisting only of a literal control byte
 # produces no output at all; git needs its own escape when there is nothing else in it.
-git -C "$ROOT" log --reverse --no-merges --name-only --format='%x01' \
+# core.quotepath again, same reason: a mangled name here splits one file into two co-change
+# nodes, and neither is the file anyone will look up.
+git -C "$ROOT" -c core.quotepath=false log --reverse --no-merges --name-only --format='%x01' \
     ${CC_SINCE:+"$CC_SINCE..HEAD"} 2>/dev/null |
 KIT_SDIR="$STATE_DIR/" KIT_TDIR="$TASKS_DIR/" \
 KIT_CCCAP="$CC_CAP" KIT_CCHUB="$CC_HUB" KIT_CCMAXD="$CC_MAXD" awk '

@@ -464,6 +464,58 @@ ax="$WORK.apos"; rm -rf "$ax"; mkdir -p "$ax/.claude" "$ax/.project/tasks"
 check $? "apostrophe refused before the SQL, failed build preserves the index and stays loud"
 rm -rf "$ax"
 
+step "the two floor sources agree on a non-ASCII path, and ? is refused"
+# A tier floor is derived twice and the two derivations must agree. `globre` turns the glob
+# into an awk regex for the DECLARED-paths source; the same glob goes to SQLite GLOB for the
+# TOUCHED-files source. Two ways they diverged on a non-ASCII name, both measured:
+#
+#   `?` -> regex `.`, one BYTE here, where GLOB's `?` is one CHARACTER. src/?.go matched
+#         src/é.go on the SQL side and not on the awk side. Refused now rather than fixed:
+#         a byte-correct one-character matcher needs hex escapes inside an awk program, and
+#         macOS ships an awk that does not interpret them.
+#   git   renders any path above 0x7F as `"src/\303\251.go"` by default, so the touches edge
+#         was recorded under a name matching no glob at all -- the touched-files floor simply
+#         never applied. Fixed with core.quotepath=false, which is the load-bearing half.
+#
+# The test name uses a character with NO canonical decomposition, so macOS NFD/NFC cannot
+# fail this for an unrelated reason.
+nx="$WORK.nonascii"; rm -rf "$nx"; mkdir -p "$nx/.claude" "$nx/.project/tasks" "$nx/src"
+if ( cd "$nx" && printf 'x\n' > "src/ß.go" && [ -f "src/ß.go" ] ) 2>/dev/null; then
+  ( cd "$nx" && git init -q -b main 2>/dev/null
+    git config user.email a@b.c; git config user.name T
+    { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+      echo "tier.default: T1"; echo "tier.rule: src/** T3"; echo "---"; } > .claude/project-profile.md
+    printf -- '---\nid: T-decl\ntitle: d\ntier: T1\npaths: src/ß.go\n---\nb\n' > .project/tasks/T-decl.md
+    printf -- '---\nid: T-touch\ntitle: t\ntier: T1\n---\nb\n' > .project/tasks/T-touch.md
+    git add -A && git commit -q --no-verify -m "chore: seed"
+    printf 'y\n' > "src/ß.go"; git add -A
+    git commit -q --no-verify -m "feat: w
+
+Task-Id: T-touch
+Tier: T1"
+    bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+
+    # The assertion with teeth: the SAME file, reached by the two different sources, must
+    # produce the same floor. Before core.quotepath=false the declared side said T3 and the
+    # touched side said nothing at all.
+    d=$(sqlite3 .project/index.db "SELECT COALESCE(tier_floor,'-') FROM task WHERE id='T-decl';" | sed 's/\r$//')
+    t=$(sqlite3 .project/index.db "SELECT COALESCE(tier_floor,'-') FROM task WHERE id='T-touch';" | sed 's/\r$//')
+    [ "$d" = T3 ] && [ "$t" = T3 ] || exit 1
+    # And the file is recorded under its own name, not an octal-escaped one.
+    sqlite3 .project/index.db "SELECT id FROM node WHERE type='file';" | sed 's/\r$//' | grep -qxF 'f:src/ß.go' || exit 1
+
+    # `?` is refused by name, and refusing it does not take the build down.
+    { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+      echo "tier.default: T1"; echo "tier.rule: src/?.go T3"; echo "---"; } > .claude/project-profile.md
+    bash "$KIT/tooling/kit-index.sh" >/dev/null 2>q.err || exit 1
+    grep -q '? is not supported in a glob' q.err || exit 1 )
+  check $? "same floor from both sources on a non-ASCII path; ? refused by name"
+else
+  skip "this filesystem would not take a non-ASCII filename" \
+       "same floor from both sources on a non-ASCII path"
+fi
+rm -rf "$nx"
+
 step "a tier below its floor is reported"
 # Under-tiering is silent and it is the dangerous direction. Two of three recorded tiers in a
 # real backlog were below their floor -- and a floor computed only from touched files would
@@ -568,15 +620,18 @@ echo "  commits: $(git rev-list --count HEAD)"
 # the fixture's first commit. That is the cost of also using this as a drift detector:
 # it forces a template edit to be noticed rather than silently changing what two
 # platforms are comparing. Update it deliberately, never to make a red run go green.
-# Moved 2026-08-08, deliberately and with the cause established first: kit-init.sh now writes
-# `.project/index.db*` instead of `.project/index.db`, because the indexer builds into
-# `index.db.new` and marks a failed build with `index.db.failed`. Verified before re-pinning
-# that exactly one blob differs between the old and new seed trees, and that the difference is
-# exactly that one line -- which is what this check exists to force someone to do.
-EXPECT_HEAD=29acc6bd842a59b81cb3e61ab48a71a75f8518a7
-# The seed alone, so a mismatch says WHICH half moved. Unchanged since the pin above was set,
-# which is how the CRLF diagnosis was confirmed: the fixture had not drifted at all.
-EXPECT_SEED=b68f76cbfe6d26872e97a4e375388b84fc497a7b
+# Moved TWICE on 2026-08-08, each time deliberately and each time with the cause
+# established BEFORE re-pinning -- exactly one blob differing between the old and new seed
+# trees, and that difference being exactly the intended edit. That is the work this check
+# exists to force, and both times it forced it.
+#   1. kit-init.sh writes `.project/index.db*` rather than `.project/index.db`, because the
+#      indexer builds into `index.db.new` and marks a failed build with `index.db.failed`.
+#   2. templates/project-profile.md now documents which tier.rule globs are refused, and
+#      kit-init.sh copies that template into the fixture's first commit.
+EXPECT_HEAD=ff40e675370db48da64177309438fdae84eca5ec
+# The seed alone, so a mismatch says WHICH half moved: seed intact means this script changed,
+# seed moved means a file kit-init.sh commits did.
+EXPECT_SEED=df86de1fe6afabc9ae1b501764f9341bd55c1dd0
 
 step "trailer hook"
 sed -i.bak 's|^git.trailer_enforcement:.*|git.trailer_enforcement:  enforce|' .claude/project-profile.md

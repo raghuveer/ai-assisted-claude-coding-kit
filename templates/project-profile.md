@@ -37,6 +37,16 @@ ladder.rung3:
 ladder.rung5:
 
 # --- tier floors. Repeatable. `<path-glob> <tier>`. Floors only, never ceilings. ---
+#
+# Exactly two fields, and the glob vocabulary is `*` / `**` plus literal text. A rule the kit
+# cannot apply identically through BOTH floor sources is refused by name and reported, rather
+# than applied through one of them: a floor that means two things is worse than one that is
+# missing and announced. So these are rejected, not silently reinterpreted —
+#   three or more fields   a glob containing a space is not distinguishable from a stray token
+#   `[` or `]`             SQLite GLOB honours a character class; the regex side would not
+#   `?`                    one CHARACTER to SQLite GLOB, one BYTE to awk — they disagree on
+#                          any non-ASCII name
+#   a tier that is not T0-T3
 tier.default: T1
 # tier.rule: src/auth/** T3
 # tier.rule: migrations/** T3
