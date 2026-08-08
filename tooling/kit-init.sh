@@ -72,7 +72,11 @@ fi
 # The index is derived. Committing it would create a second source of truth and an
 # unresolvable binary merge conflict for every developer on the repo.
 GI="$ROOT/.gitignore"
-grep -qxF '.project/index.db' "$GI" 2>/dev/null || printf '\n# derived, rebuildable — never commit\n.project/index.db\n' >> "$GI"
+# `index.db*`, not `index.db`: the indexer builds into `index.db.new` and marks a failed build
+# with `index.db.failed`, and an EXIT trap cannot fire on a kill or a power loss. An
+# exact-match ignore left those untracked, where the next `git add -A` stages a derived
+# database into a repository whose ignore comment says never to commit one.
+grep -qxF '.project/index.db*' "$GI" 2>/dev/null || printf '\n# derived, rebuildable — never commit\n.project/index.db*\n' >> "$GI"
 grep -qxF 'STATUS.generated.md' "$GI" 2>/dev/null || echo 'STATUS.generated.md' >> "$GI"
 # Cluster packs are a snapshot of the index for one plan. Committing them would put a
 # stale copy of derived state in the repo — the second-truth problem this design avoids.

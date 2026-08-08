@@ -1,5 +1,5 @@
 
 # derived, rebuildable — never commit
-.project/index.db
+.project/index.db*
 STATUS.generated.md
 .project/packs/

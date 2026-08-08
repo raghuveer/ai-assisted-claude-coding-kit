@@ -19,6 +19,13 @@ ADOPT=$(kit_cfg "$PROFILE" git.adopted_at "")   # commit-ish; history before it 
 EXEMPT=$(kit_cfg "$PROFILE" git.trivial_pattern '^(chore|docs|style)(\(.*\))?:')
 
 DB="$ROOT/$STATE_DIR/index.db"
+# A build that failed leaves this beside the index, and --if-stale refuses to call the index
+# fresh while it exists. mtime alone is not enough: it only notices causes that are WATCHED
+# below, and an ingest.extra adapter is not one -- so a build failing because of an adapter
+# announced itself once and every later run went quiet over the same stale index. Outside the
+# index on purpose; a marker inside it would be recorded in the file the failure corrupted.
+FAILED_MARK="$DB.failed"
+build_failed() { : > "$FAILED_MARK" 2>/dev/null; exit 1; }
 
 # ---- the ingest seam ---------------------------------------------------------------
 # Sections 1-3 below turn a SOURCE into SQL. Section 4 derives current state from that SQL
@@ -107,7 +114,7 @@ run_adapter() {
 # Local sources are compared by mtime. An external adapter cannot be: a GitHub issue changes
 # with no local file touched, so mtime would report fresh forever. Those declare a
 # fingerprint instead, which is stored in meta and compared on the next run.
-if [ "${1:-}" = "--if-stale" ] && [ -f "$DB" ]; then
+if [ "${1:-}" = "--if-stale" ] && [ -f "$DB" ] && [ ! -e "$FAILED_MARK" ]; then
   STALE=0
   WATCH="$PROFILE"
   [ "$SRC_TASKS"  = files ]  && WATCH="$WATCH $ROOT/$TASKS_DIR"
@@ -170,25 +177,35 @@ INGEST_FAILED=0; TASKS_EXPECTED=0; TASKS_EMPTY=""; KIT_SEEN=""; NEW=""
 # discarded and its output is a file read later, so a warning that exists only on a terminal
 # nobody was watching is not a refusal anyone hears -- and the artifact then says "no declared
 # paths:" about a task that declares them, which is a false cause dressed as a benign one.
+#
+# ONE parse, here, emitting the already-split form. There used to be two: this validator read
+# the LAST whitespace field as the tier, and a `sed` downstream cut at the FIRST whitespace
+# run. They agree on a two-token rule and disagree on everything else -- so `src/** ',x T3`
+# passed validation on its trailing `T3` while the consumers took the tier to be `',x T3`.
+# That floor sorts below every real tier, so `tier < tier_floor` never fired and an
+# under-tiered task simply stopped being reported. Measured: the below-floor section vanished
+# from STATUS.generated.md entirely, exit 0, nothing refused.
+#
+# A validator that checks a different token than the consumers use is not a validator. Two
+# fields, both checked, emitted tab-separated so there is nothing left to re-split.
 TIER_RULES=$(kit_cfg_all "$PROFILE" tier.rule | awk '
-    index($0, "[") || index($0, "]") {
-      printf "kit: tier.rule ignored — [ and ] are not supported in a glob: %s\n", $0 > "/dev/stderr"
+    function refuse(why,   msg) {
+      printf "kit: tier.rule ignored — %s: %s\n", why, $0 > "/dev/stderr"
       print $0 > ENVIRON["KIT_REFUSED"]
-      next
     }
-    # And the tier must BE a tier. The floor is compared against the recorded tier to report
-    # under-tiering, so a rule ending `T3(typo` yields a floor that sorts unpredictably against
-    # T0..T3 -- reporting a task as below a floor that does not exist, or hiding one that is.
-    # Same argument as the glob above: refuse it and say so, rather than derive from it.
     {
-      t = $0; sub(/^.*[ \t]/, "", t)
-      if (t !~ /^T[0-3]$/) {
-        printf "kit: tier.rule ignored — %s is not a tier (T0-T3): %s\n", t, $0 > "/dev/stderr"
-        print $0 > ENVIRON["KIT_REFUSED"]
-        next
-      }
-      print
-    }' | sed 's/[[:space:]][[:space:]]*/\t/' | tr '\n' '\036')
+      line = $0; sub(/^[ \t]+/, "", line); sub(/[ \t]+$/, "", line)
+      if (line == "") next
+      n = split(line, f, /[ \t]+/)
+      # The documented grammar is `<path-glob> <tier>`. A third field means the line is not
+      # what it looks like -- a glob containing a space, a paste artifact -- and guessing which
+      # part is the glob is how the two parses came to differ in the first place.
+      if (n != 2)                       { refuse("expected <path-glob> <tier>"); next }
+      if (index(f[1], "[") || index(f[1], "]"))
+                                        { refuse("[ and ] are not supported in a glob"); next }
+      if (f[2] !~ /^T[0-3]$/)           { refuse(f[2] " is not a tier (T0-T3)"); next }
+      printf "%s\t%s\n", f[1], f[2]
+    }' | tr '\n' '\036')
 # Plain assignment, not `grep ... || echo 0`: grep exits 1 on zero matches, so the `||` ran
 # too and the variable held two lines. Every numeric test against it then errored.
 REFUSED_N=0; [ -s "$KIT_REFUSED" ] && REFUSED_N=$(grep -c . "$KIT_REFUSED")
@@ -764,7 +781,7 @@ echo "COMMIT;"
 if [ "$ADAPTER_FAILED" != 0 ]; then
   kit_warn "an ingest adapter failed; the existing index was left unchanged."
   kit_warn "Derived status is therefore stale, not wrong — rerun once the source is reachable."
-  exit 1
+  build_failed
 fi
 
 # An empty task file is a draft, not a defect: `kit-task.sh` writes a skeleton and a human
@@ -795,7 +812,7 @@ if [ "$INGEST_FAILED" != 0 ]; then
   # warns and continues does not -- and on the second, this exited 1 saying nothing at all.
   kit_warn "the task ingest did not complete; the index at ${DB#$ROOT/} was NOT rebuilt."
   kit_warn "Derived status is stale, not wrong. Fix the cause above and rerun."
-  exit 1
+  build_failed
 fi
 
 # Built beside the index and moved into place, never written over it. The comment at the top
@@ -812,12 +829,13 @@ NEW="$DB.new"
 trap 'rm -f "$SQL" "$KIT_REFUSED" "$KIT_SEEN" "$NEW"' EXIT
 rm -f "$NEW"
 sqlite3 "$NEW" < "$(dirname "$0")/schema.sql" ||
-  { kit_warn "could not create the index schema; ${DB#$ROOT/} was left unchanged."; exit 1; }
+  { kit_warn "could not create the index schema; ${DB#$ROOT/} was left unchanged."; build_failed; }
 sqlite3 "$NEW" < "$SQL" ||
   { kit_warn "index build failed; ${DB#$ROOT/} was left unchanged and is now stale."
-    kit_warn "Nothing was half-written — fix the cause above and rerun."; exit 1; }
+    kit_warn "Nothing was half-written — fix the cause above and rerun."; build_failed; }
+rm -f "$FAILED_MARK"
 mv -f "$NEW" "$DB" ||
-  { kit_warn "could not replace ${DB#$ROOT/}; it was left unchanged."; exit 1; }
+  { kit_warn "could not replace ${DB#$ROOT/}; it was left unchanged."; build_failed; }
 
 # Recovering these commits keeps derived status correct, but doing it quietly would hide a
 # merge flow that mangles trailers -- and the next thing that reads them (a CI gate, another
