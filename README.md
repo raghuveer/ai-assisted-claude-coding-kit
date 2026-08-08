@@ -204,7 +204,8 @@ Everything else works on 3.8+; `kit-plan.sh` warns and withholds the packs rathe
 failing, so an older sqlite costs you the caching, not the plan.
 
 Plus the POSIX text utilities that ship alongside those: `awk`, `sed`, `grep`, `sort`,
-`cut`, `tr`, `wc`. No language runtime. Bash is reachable on Windows via the shell git
+`cut`, `tr`, `wc`. No language runtime — `validate.py` is the one exception, and it is an
+authoring check never run by the kit itself. Bash is reachable on Windows via the shell git
 already ships, and git is a hard dependency anyway since status is derived from it.
 
 ## Platforms
