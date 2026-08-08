@@ -3,6 +3,27 @@
 A risk-tiered review pipeline and derived project state for AI-assisted coding with
 Claude Code. Stack-agnostic baseline.
 
+## Where this came from
+
+This was **extracted from a subagent pipeline already in use on a large project**, not
+designed from scratch. The history shows the shape of that extraction:
+
+| | |
+|---|---|
+| `0.1` — 2026-07-26 | The agent set as copyable files: eight core agents, a core/overlay split, a PowerShell script to sync them into a project, and a profile template. A distribution mechanism for agents that already existed. |
+| `0.2.0` — 2026-07-29 | The turn from copying to a plugin, and the point at which **state and context management became the product**: derived project state, semantic task clustering, commands to skills, the checkpoint to a hook. |
+
+The reason for extracting it was to productise what was being tuned by hand — state and
+context management for quality outcomes at controlled token cost — so it could be pointed at
+other projects instead of one. Everything since 0.2.0 is that work: measuring what the
+pipeline costs, making the state derived rather than maintained, and closing the gaps that
+only appear when the same machinery meets an unfamiliar codebase.
+
+Two consequences worth stating up front. The kit has been **measured on exactly one project**,
+greenfield and single-stack (`docs/MEASUREMENTS.md`, n=1 per cell) — brownfield and polyglot
+are the untested cases, and the backlog says so. And the agents predate the kit, so the
+pipeline is older and better exercised than the state layer wrapped around it.
+
 ## What changed in 0.2.0
 
 - **Distributed as a plugin**, not copied. Copies drift; versions are what make feedback
