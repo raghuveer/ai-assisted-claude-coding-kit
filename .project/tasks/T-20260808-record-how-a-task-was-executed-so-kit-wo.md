@@ -2,7 +2,7 @@
 id: T-20260808-record-how-a-task-was-executed-so-kit-wo
 title: Record how a task was executed, so kit work and other work are distinguishable
 epic: measurement
-tier: T2
+tier: T3
 lang: bash
 paths: tooling/schema.sql, tooling/kit-index.sh, tooling/kit-status.sh, tooling/kit-task.sh
 state: open
@@ -58,3 +58,7 @@ honest default is unknown, and the honest report says how much of the sample it 
 
 Blocks T-20260808-trial-the-kit-on-one-unfamiliar-brownfie: a trial without this produces
 data that cannot be interpreted afterwards.
+
+Recorded T3, not the T2 it was proposed at: it touches `tooling/kit-index.sh`, which carries a
+T3 floor, and the kit reported `recorded T2, floor T3` on the next reindex. Raised before the
+work rather than after, which is the only order in which a tier is a control.
