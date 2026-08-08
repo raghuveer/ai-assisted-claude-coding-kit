@@ -286,11 +286,16 @@ if [ "$HAVE_TASKS" = 1 ]; then
     # pairs with zero disagreements; the 96 that did disagree were all `?` on a multi-byte
     # subject, and `?` is now gone. The claim here is agreement, without the ASCII caveat it
     # used to carry.
+    # Returns "" for a glob it cannot translate faithfully, and the caller SKIPS such a rule.
+    # `?` used to be mapped to a regex `.` here -- one byte, where SQLite GLOB reads one
+    # character -- and the only thing preventing that divergence was a guard at the single
+    # caller, seventy lines away. Add a second caller, or edit that guard, and the
+    # disagreement came back silently. The guarantee now lives in the function that provides it.
     function globre(g,   r) {
+      if (index(g, "?") || index(g, "[") || index(g, "]")) return ""
       r = g
       gsub(/[\\.^$+(){}|]/, "\\\\&", r)
       gsub(/\052+/, ".*", r)
-      gsub(/\077/, ".", r)
       return "^" r "$"
     }
     function floorof(paths,   n, i, parts2, j, m, rule, g, t, best, rules) {
@@ -307,9 +312,11 @@ if [ "$HAVE_TASKS" = 1 ]; then
         # floor that silently does not apply is the direction under-tiering already fails in.
         gsub(/^[ \t\r]+|[ \t\r]+$/, "", g); gsub(/^[ \t\r]+|[ \t\r]+$/, "", t)
         if (g == "" || t == "") continue
+        re = globre(g)
+        if (re == "") continue          # untranslatable; refused upstream, skipped here too
         for (i = 1; i <= n; i++) {
           if (parts2[i] == "") continue
-          if (parts2[i] ~ globre(g) && t > best) best = t
+          if (parts2[i] ~ re && t > best) best = t
         }
       }
       return best
@@ -399,7 +406,13 @@ RANGE=${ADOPT:+$ADOPT..HEAD}
 # -c core.quotepath=false: by default git renders a path containing any byte above 0x7F as
 # `"src/\303\251.go"` -- quoted, and octal-escaped. That name is what lands in the `touches`
 # edge, so a non-ASCII path is recorded under a name matching no glob, no tier.rule and no
-# other reader of the index. Measured, not assumed. The flag makes git emit the path as it is.
+# other reader of the index. Measured, not assumed.
+#
+# The flag suppresses that escaping for bytes above 0x7F AND NOTHING ELSE. git quotes
+# independently for a double quote, a backslash or any control byte, all of which are legal
+# filenames on a POSIX checkout, and no flag turns that off. Measured: a path containing a
+# backslash still arrives quoted with the flag on. Those are dropped and counted where the
+# paths are read, because a floor that cannot be applied has to be announced.
 TZ=UTC0 git -C "$ROOT" -c core.quotepath=false log --reverse --name-only --no-merges \
     --date=format-local:%Y-%m-%dT%H:%M:%SZ \
     --format=$'\001%H\037%ad\037%an\037%(trailers:key=Task-Id,valueonly,separator=%x1e)\037%(trailers:key=Task-Status,valueonly,separator=%x1e)\037%(trailers:key=Tier,valueonly,separator=%x1e)\037%(trailers:key=Fixes-Escape-Of,valueonly,separator=%x1e)\002%B\003' \
@@ -521,12 +534,21 @@ awk -F$'\037' '
     # inflating blast radius and collapsing semantic clustering into one blob.
     if (sdir != "" && index(p, sdir) == 1) next
     if (tdir != "" && index(p, tdir) == 1) next
+    # A path git returned QUOTED is a path this reader cannot use. core.quotepath=false stops
+    # the escaping of bytes above 0x7F and nothing else: git quotes independently for `"`,
+    # backslash and any control byte, and those are legal filenames on a POSIX checkout.
+    # Recording `"src/i\\j.go"` as a node was measured to match no glob and no tier.rule, so
+    # the touched-files floor silently did not apply -- the under-tiering direction, on a name
+    # the author chooses. Dropped and COUNTED rather than recorded wrong or dropped quietly:
+    # the rule in this repository is that a floor which cannot be applied must be announced.
+    if (substr(p, 1, 1) == "\042") { quoted++; next }
     if (cur != "") {
       printf "INSERT OR IGNORE INTO node VALUES(\047f:%s\047,\047file\047,\047%s\047,NULL);\n", q(p), q(p)
       printf "INSERT OR IGNORE INTO edge VALUES(\047%s\047,\047f:%s\047,\047touches\047);\n", q(cur), q(p)
     }
   }
   END {
+    printf "INSERT OR REPLACE INTO meta VALUES(\047paths_unusable\047,\047%d\047);\n", quoted + 0
     printf "INSERT OR REPLACE INTO meta VALUES(\047commits_total\047,\047%d\047);\n", total
     printf "INSERT OR REPLACE INTO meta VALUES(\047commits_untagged\047,\047%d\047);\n", untagged
     printf "INSERT OR REPLACE INTO meta VALUES(\047commits_exempt\047,\047%d\047);\n", exemptn
@@ -548,7 +570,7 @@ if [ "$SRC_COMMITS" = git ] && [ "$CC_ON" = 1 ]; then
 CC_SINCE=$(kit_cfg "$PROFILE" cochange.since "")
 # %x01, not a shell-quoted $'\001'. A format consisting only of a literal control byte
 # produces no output at all; git needs its own escape when there is nothing else in it.
-# core.quotepath again, same reason: a mangled name here splits one file into two co-change
+# core.quotepath again, same reason and the same limit: a mangled name splits one file into two
 # nodes, and neither is the file anyone will look up.
 git -C "$ROOT" -c core.quotepath=false log --reverse --no-merges --name-only --format='%x01' \
     ${CC_SINCE:+"$CC_SINCE..HEAD"} 2>/dev/null |
@@ -585,6 +607,10 @@ KIT_CCCAP="$CC_CAP" KIT_CCHUB="$CC_HUB" KIT_CCMAXD="$CC_MAXD" awk '
     p = $0
     if (sdir != "" && index(p, sdir) == 1) next   # kit state is not project code
     if (tdir != "" && index(p, tdir) == 1) next
+    # Same rule as the touches pass: a path git returned quoted is one this reader cannot use,
+    # and a mangled name here splits one file into two co-change nodes. Counted over there,
+    # not here -- one counter for one cause.
+    if (substr(p, 1, 1) == "\042") next
     cf[++nf] = p
   }
 

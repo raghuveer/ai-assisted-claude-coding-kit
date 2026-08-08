@@ -5,7 +5,7 @@ epic: portability
 tier: T3
 lang: bash
 paths: tooling/kit-index.sh
-state: open
+state: done
 ---
 
 ## Intent
@@ -62,33 +62,48 @@ already recorded here.
       relying on prose. Note that `core.quotepath` must be false for the touched-files half to
       reproduce — git renders a non-ASCII path as `"src/Ã©.go"` by default, which is a
       THIRD way these two sources can disagree and is worth checking while you are here.
-      Checked, and it was not merely a testing obstacle — it was the larger half of the defect.
+      Checked, and it was not merely a testing obstacle -- it was the larger half of the
+      defect, and after review it turned out to have a residual of its own.
+
       Neither of `kit-index.sh`'s two git invocations passed `-c core.quotepath=false`, so
       EVERY non-ASCII path was recorded in the `touches` edges and in the co-change graph under
-      an octal-escaped name matching no glob and no other reader. Measured on the same file
-      through both floor sources:
+      an octal-escaped name matching no glob and no other reader:
 
           before:  declared-paths floor T3, touched-files floor (none)
                    node recorded as  f:"src/Ã©.go"
           after:   declared-paths floor T3, touched-files floor T3
                    node recorded as  f:src/ß.go
 
-      The conformance case asserts the two sources produce the SAME floor for one non-ASCII
-      file, that the node carries the real name, and that a `?` rule is refused by name. It
-      uses a character with no canonical decomposition so macOS NFD/NFC cannot fail it for an
-      unrelated reason, and it skips loudly rather than passing if the filesystem will not take
-      a non-ASCII name at all. Mutation-verified: reverting `core.quotepath` on the touches
-      pass turns it red, and removing the `?` refusal turns it red.
+      **The flag does not do what the first version of this claimed.** It suppresses escaping
+      for bytes above 0x7F AND NOTHING ELSE: git quotes unconditionally for a double quote, a
+      backslash or a control byte, all legal filenames on a POSIX checkout. Measured through
+      the unmodified indexer -- `src/i\j.go` still arrived as `"src/i\j.go"`, node recorded
+      under the mangled name, touched-files floor NONE, against a `src/** T3` rule. Same
+      mechanism, same silence, same under-tiering direction, and author-controllable.
+      Those paths are now DROPPED, counted in `meta.paths_unusable`, and named by
+      `kit-status.sh` -- missing and announced, which is the rule this repository already
+      applies to a refused rule.
+
+      So the honest scope of the claim: the two sources agree for every path git will report
+      unescaped, and a path it will only report escaped produces no floor from either source
+      and says so. The conformance case covers the non-ASCII path through BOTH git invocations
+      (co-change included, with `hub_pct` raised so the fixture actually produces a co-change
+      row), the quoted path via nested tree objects, and the `?` refusal.
 
 ## Outcome
 
-Three changes, and the second is the one that mattered most:
+Five changes:
 
 1. `?` is refused in a `tier.rule` glob, where `[` and `]` already are.
-2. Both git invocations in `kit-index.sh` pass `-c core.quotepath=false`, so a non-ASCII path
-   is recorded as itself in the touches edges and in co-change.
-3. `templates/project-profile.md` documents the glob vocabulary an operator may use and what
-   is refused, since that is the file someone reads while writing a rule.
+2. `globre` returns "" for any glob it cannot translate faithfully and the caller skips that
+   rule, so the guarantee lives in the function rather than in a guard seventy lines away at
+   its single caller. The `?`-to-`.` mapping is gone rather than dead.
+3. Both git invocations pass `-c core.quotepath=false`, so a non-ASCII path is recorded as
+   itself in the touches edges and in co-change.
+4. A path git reports escaped anyway is dropped, counted in `meta.paths_unusable`, and named
+   in `STATUS.generated.md`.
+5. `templates/project-profile.md` documents the glob vocabulary and what is refused, since
+   that is the file someone reads while writing a rule.
 
 One thing verified rather than believed along the way: an early transcription of `globre` into
 a test harness produced `^src/.&go$`, which looked like a live escaping bug. Extracting the
@@ -99,6 +114,36 @@ something that worked.
 The template edit moved the fixture, and FINGERPRINT caught it for the second time today. The
 cause was established first — exactly one blob, exactly the intended lines — and only then were
 both pins moved.
+
+## The T3 review, run 2026-08-08
+
+Run before closing. `implementation-reviewer` (sonnet) **REVISE**, `security-reviewer` (opus)
+**REVISE**, 7 findings recorded. Both rungs in parallel, second reader blind.
+
+**The second reader disproved a comment I had just written.** "The flag makes git emit the path
+as it is" is false; it covers bytes above 0x7F only. Reproduced independently before acting --
+a backslash path still arrives quoted, still lands as a mangled node, still loses its floor
+silently. Fixed by dropping and announcing, and the comment now states the limit.
+
+**The first reader proved a half of the fix had no coverage.** The flag was added to BOTH git
+invocations and the conformance case only reached the touches one: reverting the co-change flag
+alone left the step green. It also showed why the obvious fixture could not test it -- with
+`hub_pct` at 20 and a two-commit fixture, every file is filtered as a hub and the cochange
+table comes out empty, so the assertion would have passed against anything. The fixture now
+raises `hub_pct` and commits two files together.
+
+Both also flagged the dead `?`-to-`.` mapping still sitting in `globre`, guarded only from a
+distance. Removed, and `globre` now refuses rather than translates.
+
+Worth recording as evidence FOR the change: the second reader differentially fuzzed the
+extracted `globre` against SQLite GLOB over **1,708,826 glob/subject pairs with zero
+disagreements**, including combining characters, astral-plane characters and embedded quotes
+and backslashes -- with 16,955 positive matches, so the comparison is not vacuously empty.
+That is what makes dropping the ASCII caveat a measured claim rather than an assertion.
+
+Mutation-verified four ways after the rework: reverting the touches flag, reverting the
+co-change flag, removing the `?` refusal, and removing the quoted-path drop each turn the step
+red on their own.
 
 ## Notes
 

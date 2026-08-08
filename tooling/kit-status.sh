@@ -190,6 +190,18 @@ fi
 # paths and had them judged by a rule that was thrown away. The indexer says this on stderr
 # too, but kit-status.sh runs it with stderr discarded, so the terminal warning reaches nobody
 # and the file is what gets read.
+# A path git would only give us quoted -- one containing a double quote, a backslash or a
+# control byte -- is dropped rather than recorded under a name that matches no rule. That is
+# the same "missing floor" the message above describes, arriving by a different route, and it
+# has to be said for the same reason: the benign cause must not stand in for this one.
+UNUSABLE=$(q "SELECT value FROM meta WHERE key='paths_unusable';")
+case "${UNUSABLE:-0}" in ''|0) ;; *)
+  printf '\n> **%s changed path(s) could not be indexed.** git only reports a name containing a\n' "$UNUSABLE"
+  printf '> quote, a backslash or a control byte in escaped form, and a floor derived from that\n'
+  printf '> name would match nothing — so those files carry no `touches` edge and no floor here.\n'
+  printf '> Blast radius and tier floor are therefore incomplete for them, not clean.\n' ;;
+esac
+
 REFUSED=$(q "SELECT value FROM meta WHERE key='tier_rules_refused';")
 case "${REFUSED:-0}" in ''|0) ;; *)
   printf '\n> **%s `tier.rule` line(s) refused as unusable, so their floor never applied:**\n' "$REFUSED"

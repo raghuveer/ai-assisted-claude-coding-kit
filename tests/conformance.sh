@@ -483,17 +483,28 @@ nx="$WORK.nonascii"; rm -rf "$nx"; mkdir -p "$nx/.claude" "$nx/.project/tasks" "
 if ( cd "$nx" && printf 'x\n' > "src/ß.go" && [ -f "src/ß.go" ] ) 2>/dev/null; then
   ( cd "$nx" && git init -q -b main 2>/dev/null
     git config user.email a@b.c; git config user.name T
+    # hub_pct 100 so nothing is filtered as a hub: with the default 20 and a two-commit
+    # fixture the threshold is 0.4, every file is a hub, and the cochange table comes out
+    # EMPTY -- which would make the co-change assertion below pass against anything.
     { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
-      echo "tier.default: T1"; echo "tier.rule: src/** T3"; echo "---"; } > .claude/project-profile.md
+      echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"
+      echo "cochange.hub_pct: 100"; echo "tier.rule: src/** T3"; echo "---"; } > .claude/project-profile.md
     printf -- '---\nid: T-decl\ntitle: d\ntier: T1\npaths: src/ß.go\n---\nb\n' > .project/tasks/T-decl.md
     printf -- '---\nid: T-touch\ntitle: t\ntier: T1\n---\nb\n' > .project/tasks/T-touch.md
     git add -A && git commit -q --no-verify -m "chore: seed"
-    printf 'y\n' > "src/ß.go"; git add -A
+    # Two files in ONE commit, so the pair produces a co-change row. The flag was added to
+    # BOTH git invocations and only the touches one was covered; a mangled name here splits
+    # one file into two nodes and nothing noticed.
+    printf 'y\n' > "src/ß.go"; printf 'y\n' > src/plain.go; git add -A
     git commit -q --no-verify -m "feat: w
 
 Task-Id: T-touch
 Tier: T1"
     bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+    # The co-change pass, asserted on the real name. Reverting core.quotepath on that
+    # invocation alone leaves the touches assertions below green, which is how it shipped
+    # untested the first time.
+    [ "$(sqlite3 .project/index.db "SELECT COUNT(*) FROM cochange WHERE src='f:src/ß.go' OR dst='f:src/ß.go';" | sed 's/\r$//')" -ge 1 ] || exit 1
 
     # The assertion with teeth: the SAME file, reached by the two different sources, must
     # produce the same floor. Before core.quotepath=false the declared side said T3 and the
@@ -503,6 +514,29 @@ Tier: T1"
     [ "$d" = T3 ] && [ "$t" = T3 ] || exit 1
     # And the file is recorded under its own name, not an octal-escaped one.
     sqlite3 .project/index.db "SELECT id FROM node WHERE type='file';" | sed 's/\r$//' | grep -qxF 'f:src/ß.go' || exit 1
+
+    # A path git will ONLY report escaped -- one containing a backslash, a quote or a control
+    # byte -- is not healed by core.quotepath=false, which covers bytes above 0x7F and nothing
+    # else. Measured: `src/i\j.go` still arrives as `"src/i\\j.go"`, and recording that as a
+    # node gave a file matching no rule and a floor that silently did not apply. It must be
+    # DROPPED and COUNTED, and the count must reach the status file.
+    #
+    # Built through nested tree objects because git refuses such a name in a worktree on
+    # Windows; the object database takes it, which is also how it would arrive from a POSIX
+    # checkout where the name is perfectly legal.
+    bl=$(printf 'z\n' | git hash-object -w --stdin)
+    st=$(printf '100644 blob %s\ti\\j.go\n' "$bl" | git mktree)
+    rt=$( { git ls-tree HEAD^{tree}; printf '040000 tree %s\tsrcq\n' "$st"; } | git mktree )
+    cq=$(git commit-tree "$rt" -p HEAD -m "feat: q
+
+Task-Id: T-touch
+Tier: T1")
+    git update-ref refs/heads/main "$cq"
+    bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+    [ "$(sqlite3 .project/index.db "SELECT COUNT(*) FROM node WHERE id LIKE '%j.go%';" | sed 's/\r$//')" = 0 ] || exit 1
+    [ "$(sqlite3 .project/index.db "SELECT value FROM meta WHERE key='paths_unusable';" | sed 's/\r$//')" = 1 ] || exit 1
+    bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+    grep -q 'could not be indexed' STATUS.generated.md || exit 1
 
     # `?` is refused by name, and refusing it does not take the build down.
     { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
