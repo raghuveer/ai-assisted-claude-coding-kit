@@ -50,13 +50,48 @@ of them until a project opts in — see below.
 
 ---
 
-## B. Starting a NEW project
+## Which case are you in?
 
-    cd your-repo
+Three, and they need different things. Read the one you are in.
+
+| | you have | go to |
+|---|---|---|
+| **B** | an empty folder — no git, no code | [B. Empty folder](#b-adopting-into-an-empty-folder) |
+| **C** | a codebase with history that has never seen the kit | [C. Existing codebase](#c-adopting-an-existing-codebase) |
+| **D** | a clone of a repository that already adopted it | [D. Joining](#d-joining-a-repository-that-has-already-adopted) |
+
+B and C are both *adoption* and share steps 1-5 below; C additionally has to decide what the kit
+should believe about history that predates it, which is the whole of its extra work. D is not
+adoption at all — the decisions were made by whoever did B or C.
+
+---
+
+## B. Adopting into an empty folder
+
+**`git init` first.** `kit-init.sh` locates the repository with `git rev-parse --show-toplevel`
+and stops when there is none — it prints git's own `fatal: not a git repository` followed by
+`not a git repository`, **and exits 0**, so a script that only checks the status code will
+continue as though it worked.
+
+    mkdir myproject && cd myproject
+    git init
     $CLAUDE_PLUGIN_ROOT/tooling/kit-init.sh
 
 Creates `.claude/project-profile.md`, generates the `commit-msg` and `pre-push` hooks, and writes
 `.gitignore` / `.gitattributes` entries.
+
+**What is inert until there is code**, so you do not spend an afternoon wondering:
+
+- `commands.build` / `test` / `lint` / `typecheck` name tools that do not exist yet. Write them
+  for the stack you are about to build, or leave them empty — an empty ladder rung is *declared*
+  and raises the tier, which is the correct behaviour and not a bug.
+- `tier.rule` globs match no files, so every task takes `tier.default` until directories exist.
+- Co-change is derived from history. There is none, so blast radius is unknown for everything.
+- **`kit-plan.sh` is at its measured worst here.** With no `touches` edges and no co-change, 22
+  greenfield tasks collapsed into 2 layers and the scaffolding task everything depends on ranked
+  eleventh. Until you have history, sequence the first few explicitly with `blocked_by:` in the
+  task frontmatter rather than trusting the ordering. Known limit, owned by
+  `T-20260801-kit-plan-has-no-notion-of-prerequisite-w`.
 
 Then, in order:
 
@@ -101,7 +136,55 @@ surviving copy will be edited by someone, and then you have two truths again.
 
 ---
 
-## C. JOINING an existing project
+## C. Adopting an existing codebase
+
+Run the same `kit-init.sh` and the same steps 1-5 as B — the repository already exists, so there
+is no `git init` question. What B does not have to decide, and you do, is **what the kit should
+believe about the history that predates it.**
+
+**1. Choose `git.adopted_at`.** One commit-ish in the profile, and it decides how much history
+the indexer reads: it becomes the range `<adopted_at>..HEAD`, and unset means all of it.
+
+- **Unset (all history).** Every pre-adoption commit is scanned and none of them carry trailers,
+  so they all count as untagged and the trailer-discipline warning reads as though the team is
+  ignoring the rule. What you get for it: `touches` edges and co-change over the full history.
+- **Set to the adoption commit.** The discipline numbers describe only work done under the kit,
+  which is the honest denominator. Cost: nothing before that point contributes edges.
+
+Neither is wrong. Set it if you want the discipline metrics to mean something from day one;
+leave it unset if you want blast radius from history more than you want clean counters.
+
+**2. Expect the backlog to over-tier at first, and know why.** `touches` edges need a `Task-Id`
+trailer, so a freshly adopted repository has an empty edge table. Blast radius is unknown for
+everything, and unknown floors at T2 — so the whole backlog tiers high until trailers accumulate.
+Co-change exists precisely to fill that gap and needs no trailers, only history; but it withholds
+itself entirely if the graph comes out denser than `cochange.max_degree`, reporting nothing rather
+than reporting "everything is connected to everything" with confidence. Both behaviours are
+deliberate. Neither is a misconfiguration to hunt.
+
+**3. Bring the backlog you already have.** A roadmap document, an issue tracker, or a tree of
+analysis and task files does not need retyping into `kit-task.sh`. `ingest.tasks` in the profile
+takes an executable that emits SQL, and the kit reads your source instead of its own — see
+[docs/ADAPTERS.md](docs/ADAPTERS.md) and `templates/ingest-tasks-csv.sh`. Adapters are the
+built-for-this answer to "we already have a backlog"; the index is derived and disposable, so
+pointing it at your source loses nothing.
+
+**4. Back-fill what was already finished — including work the kit did not do.** Mark completed
+tasks `state: done` in their frontmatter, and set `Via:` (`kit`, `agent`, `manual`) on work whose
+provenance you know. This matters more than it looks: escape rate is reported over the kit-run
+population *and* over every task, side by side, so an inventory that cannot say "done, but not by
+this pipeline" makes the pipeline look responsible for outcomes it never touched. `Via:` is set
+by you, never by the agent that did the work.
+
+**5. A `Task-Id` that matches no task file** — from a typo, or from a task you have not filed yet
+— is **not** counted as work. It is named in the `Unresolved task ids` section of
+`STATUS.generated.md`, with the commit that introduced it, and it reconciles automatically if the
+file turns up later. On a brownfield history you may have several; they are evidence about
+trailer discipline rather than a backlog.
+
+---
+
+## D. Joining a repository that has already adopted
 
     git clone <repo> && cd <repo>
     $CLAUDE_PLUGIN_ROOT/tooling/kit-init.sh     # says "joined an already-adopted repo"
@@ -122,9 +205,10 @@ Two are generated, and they guard different moments:
 | `pre-push` | before anything is shared | `--no-verify` skips the first, and a teammate who never ran `kit-init.sh` never had it |
 
 `pre-push` is the last point a wrong trailer can still be corrected. After a push, a commit
-message can only be changed by rewriting shared history, so a typo'd `Task-Id` becomes
-permanent — and it indexes as a titleless phantom task that every count then includes. This
-kit carries one from before the hook existed.
+message can only be changed by rewriting shared history, so a typo'd `Task-Id` becomes permanent.
+It no longer becomes a phantom task: an id with no task file is reported under `Unresolved task
+ids` with the commit that introduced it, and is in no backlog count or escape-rate denominator.
+This kit carries one from before the hook existed, and it appears there.
 
 ---
 

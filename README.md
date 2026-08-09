@@ -249,8 +249,10 @@ because a merge flow that mangles trailers will also defeat anything else that r
 **Enforcement has three points, and they are not redundant.** `commit-msg` catches a
 trailer while you are still writing it. `pre-push` catches one that got past `--no-verify`
 or past a teammate who never ran `kit-init.sh` — and it is the last moment a commit message
-can be amended, because after a push a wrong `Task-Id` is permanent and indexes as a
-titleless phantom task. CI catches what reaches the remote regardless.
+can be amended, because after a push a wrong `Task-Id` is permanent. CI catches what reaches
+the remote regardless. What gets through all three is reported rather than counted: an id no
+task file backs is named under `Unresolved task ids` with the commit that introduced it, and
+is in no backlog total or escape-rate denominator.
 
 `.git/hooks/` is per-clone and git cannot share it, so the first two protect only developers
 who ran `kit-init.sh`. Copy
