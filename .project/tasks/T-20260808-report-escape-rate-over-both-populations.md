@@ -5,7 +5,7 @@ epic: measurement
 tier: T2
 lang: bash
 paths: tooling/kit-status.sh
-state: open
+state: done
 ---
 
 ## Intent
@@ -133,3 +133,42 @@ verbatim in `sqlite_master`, so the comment added to `via` moved the printed ind
 failed, and both platforms hash the same bytes — but a pure-comment edit and a schema change are
 indistinguishable in that number, which is worth knowing before reading a fingerprint diff as
 drift.
+
+## T2 review, and the one thing it found
+
+One adversarial reviewer, as T2 requires — `security-reviewer` was not spawned, because this is a
+reporting path and none of the high-stakes classes its own description names are touched.
+
+It re-derived the three mutation claims rather than believing them, building three mutated copies
+and confirming each is red alone. Then it found a fourth thing, and it was in the guarantee
+itself.
+
+**`fail-open`, major — a NULL id in `task` silences the entire residue count.** The subquery read
+`task_id NOT IN (SELECT id FROM task)`. SQLite does not enforce NOT NULL on a TEXT PRIMARY KEY,
+so `task` can hold a NULL id, and `x NOT IN (set holding NULL)` is NULL rather than true for
+*every* x. One such row takes the orphan count to zero and hides every orphan, not only its own.
+Reproduced against the real `schema.sql` before accepting it: residue 1 → NULL row accepted → 0,
+and the filtered subquery restores 1.
+
+That is this task's own failure mode, arriving through the guard written to prevent it, and
+`by construction` was therefore overstated: a second precondition — ids are never NULL — was
+load-bearing and disclosed nowhere, while the first (phantom rows) got ten lines of comment.
+Fixed at the reader that makes the claim, with the precondition now written down beside it.
+Unreachable today, since `kit-index.sh` guards every insert and is the only writer — which is
+precisely the status of the phantom-row branch, and the same argument applies: a guard written
+after someone relaxes the upstream discipline is a guard nobody thinks to write.
+
+A fourth mutation now holds, red alone: dropping `WHERE id IS NOT NULL` fails the escape step and
+nothing else (31 passed, 1 failed). Conformance 32/32 with it. The index fingerprint did not move
+— `d923228d…`, unchanged — because the fix is in `kit-status.sh` and touches no schema text.
+
+The schema-level answer, `CHECK (id IS NOT NULL AND id <> '')`, is deliberately NOT taken here.
+It belongs to the missing-CHECK finding already open on
+`T-20260808-record-how-a-task-was-executed-so-kit-wo`, and closing it there will not make this
+line redundant: the constraint owns the invariant, this line owns the claim.
+
+Also raised and correctly not filed against this change: a task's frontmatter `tier:` is never
+validated the way a `Tier:` trailer is (`kit-index.sh:336`), so a malformed value can produce an
+oddly-labelled row in the tier table. Exhaustiveness is unaffected — the escape is still counted,
+just under an unexpected label — and `kit-index.sh` is untouched here. Pre-existing, and filed
+separately if it is wanted.

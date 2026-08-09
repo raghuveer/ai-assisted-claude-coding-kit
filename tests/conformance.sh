@@ -738,8 +738,26 @@ Via: manual"
   shown=$(grep -oE '[0-9]+ / [0-9]+ all' STATUS.generated.md | awk '{s+=$1} END{print s+0}')
   orph=$(grep -oE '\*\*[0-9]+ recorded escape' STATUS.generated.md | tr -dc '0-9')
   [ "$dbesc" = 2 ] || exit 1
+  [ $((shown + ${orph:-0})) = "$dbesc" ] || exit 1
+
+  # The same identity again, with one NULL id in `task`. SQLite does not enforce NOT NULL on a
+  # TEXT PRIMARY KEY, and `x NOT IN (set holding NULL)` is NULL rather than true for every x --
+  # so an unguarded residue subquery reports zero orphans here while the database still holds
+  # one, and hides every other orphan with it. The report would read clean through the very
+  # guard written to stop it reading clean.
+  #
+  # Seeded directly for the same reason as the row above: kit-index.sh rejects a blank id on
+  # every insert, so this state is unreachable through shipped code TODAY and the guard would
+  # otherwise be a claim nobody ever executed.
+  sqlite3 .project/index.db "INSERT INTO task(id) VALUES(NULL);"
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -q 'belong to no task in this index' STATUS.generated.md || exit 1
+  dbesc=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM event WHERE kind='escaped';" | sed $'s/\r$//' | tr -d ' ')
+  shown=$(grep -oE '[0-9]+ / [0-9]+ all' STATUS.generated.md | awk '{s+=$1} END{print s+0}')
+  orph=$(grep -oE '\*\*[0-9]+ recorded escape' STATUS.generated.md | tr -dc '0-9')
+  [ "$dbesc" = 2 ] || exit 1
   [ $((shown + ${orph:-0})) = "$dbesc" ] || exit 1 )
-check $? "escape survives a relabel out of via:kit; nothing stored is missing from the report"
+check $? "escape survives a relabel out of via:kit; nothing stored is missing from the report, and a NULL id cannot silence the residue"
 rm -rf "$ex"
 
 step "the via vocabulary is defined in exactly one place"

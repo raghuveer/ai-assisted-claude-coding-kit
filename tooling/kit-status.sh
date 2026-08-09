@@ -127,9 +127,23 @@ fi
 # branch live: stop inventing the row and the escape pointing at it becomes invisible in both
 # columns. So this is written now, with the metric it protects, rather than left as a trap for
 # whoever removes phantom tasks and has no reason to look here. Conformance covers it directly.
+#
+# `WHERE id IS NOT NULL` in the subquery is load-bearing and is not defensive habit. SQLite does
+# not enforce NOT NULL on a TEXT PRIMARY KEY -- a documented deviation it keeps for backward
+# compatibility -- so `task` can hold a NULL id, and `x NOT IN (set containing NULL)` is NULL for
+# EVERY x, never true. One NULL id would therefore take this count to zero and hide every orphan,
+# not just its own: the exact failure this whole block exists to rule out, arriving silently and
+# through the guard against it. Measured, not reasoned: seeding one NULL-id row moved the residue
+# from 1 to 0 and the filtered subquery restored it. `kit-index.sh` guards every insert into
+# `task` against a blank id and is the only writer today, so this is unreachable through shipped
+# code -- which is exactly what was true of the branch above, and is why it is written and tested
+# rather than trusted. The invariant belongs in the schema as a CHECK; that is the missing-CHECK
+# finding already open on T-20260808-record-how-a-task-was-executed-so-kit-wo, and closing it
+# there does not make this line redundant, because this is the reader that makes the claim.
 ORPH=$(q "SELECT COUNT(*) FROM event
            WHERE kind='escaped'
-             AND (task_id IS NULL OR task_id='' OR task_id NOT IN (SELECT id FROM task));")
+             AND (task_id IS NULL OR task_id=''
+                  OR task_id NOT IN (SELECT id FROM task WHERE id IS NOT NULL));")
 if [ "${ORPH:-0}" -gt 0 ]; then
   printf '\n> **%s recorded escape(s) belong to no task in this index.** A commit carried\n' "$ORPH"
   printf '> `Fixes-Escape-Of:` naming a task that has no file here, so the escape is real and\n'
