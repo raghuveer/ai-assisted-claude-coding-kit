@@ -825,6 +825,24 @@ UPDATE task SET state = COALESCE((
      AND e.kind IN ('started','progress','blocked','unblocked','done','abandoned')
    ORDER BY e.at DESC, e.seq DESC LIMIT 1), state, 'open');
 
+-- A finding harvested from a reviewer carries no task: the hook that harvests it fires when
+-- the reviewer stops, and nothing in this kit tracks a current task. Bound the same way spend
+-- is -- to the next task-status transition at or after it -- because it is the same question
+-- with the same available evidence, and one attribution rule is one rule to get right.
+--
+-- The CASE sits INSIDE the selected row for the reason spend's does: as a WHERE clause it does
+-- not stop the search, it skips to the next REAL transition however unrelated, and files the
+-- finding against a task that had nothing to do with it. Measured on spend, fixed there, and
+-- the identical shape would be identically wrong here.
+UPDATE finding SET task_id = (
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM task t WHERE t.id = e.task_id) THEN e.task_id END
+    FROM event e
+   WHERE e.task_id IS NOT NULL AND e.task_id <> ''
+     AND e.kind IN ('started','progress','blocked','unblocked','done','abandoned')
+     AND e.at >= finding.at
+   ORDER BY e.at, e.seq LIMIT 1)
+ WHERE task_id IS NULL OR task_id = '';
+
 -- finding.tier must be resolved AFTER task tiers are derived, or escape-rate-by-tier
 -- silently reports every finding as untiered.
 UPDATE finding SET tier = (SELECT t.tier FROM task t WHERE t.id = finding.task_id)

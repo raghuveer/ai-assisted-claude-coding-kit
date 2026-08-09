@@ -289,6 +289,60 @@ Task-Status: done"
   [ "$sub" = "security-reviewer/A1/m-sub/200/405" ] && [ "$main" = "[]/m-main/500" ] )
 check $? "one row per transcript, agent rows from agent files, main loop unlabelled"
 
+step "a reviewer's findings reach the table without anyone remembering"
+# The defect: reviewers emitted correctly formatted blocks and NOTHING consumed them. A real
+# project that had run a T2 and a T3 review held zero finding rows, and every escape-rate number
+# in the README was computed from that empty table -- `T3 0/13` reading as "nothing escaped"
+# while meaning "nothing was recorded". 19 rows appeared the moment the blocks were piped in by
+# hand, which is the part that has to stop being by hand.
+#
+# The fixture is deliberately awkward in three ways, because each is a real failure: the format
+# is QUOTED in prose before the block (reviewers explain what they emit), one line carries a
+# class the vocabulary does not accept, and the hook is fired TWICE.
+fl="$WORK.floop"; rm -rf "$fl"; mkdir -p "$fl/sess/subagents" "$fl/src"
+( cd "$fl" && git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  printf -- '---\nid: T-r\ntitle: r\ntier: T2\n---\nb\n' > .project/tasks/T-r.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  printf '{"type":"assistant","message":{"content":[{"type":"text","text":"Emit lines shaped class|severity|lang|pattern|domain here.\\n\\n## Findings (recordable)\\nfail-open|major|sql||\\ncorrectness|minor|bash||\\nbogus-class|major|bash||\\n\\n## What I did not check\\nnothing"}]}}\n' \
+    > sess/subagents/agent-A9.jsonl
+  : > sess.jsonl
+  printf '{"session_id":"S1","transcript_path":"%s/sess.jsonl","agent_id":"A9","agent_type":"security-reviewer"}' "$PWD" > hook.json
+  Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+
+  bash "$KIT/tooling/kit-review-findings.sh" < hook.json >/dev/null 2>&1
+  # Two recorded, the third rejected for its class -- and the prose above the heading, which
+  # contains the same pipe-separated shape, is not harvested.
+  [ "$(grep -c '"kind":"finding"' .project/events.ndjson)" = 2 ] || exit 1
+  grep -q '"kind":"finding-gap"' .project/events.ndjson || exit 1
+  grep -q '"emitted":3,"recorded":2' .project/events.ndjson || exit 1
+
+  # Fired twice, recorded once. kit-spend.sh took four firings for two events before it keyed
+  # them; an append-only event log has to guard this in the writer.
+  bash "$KIT/tooling/kit-review-findings.sh" < hook.json >/dev/null 2>&1
+  [ "$(grep -c '"kind":"finding"' .project/events.ndjson)" = 2 ] || exit 1
+
+  # Unattributed until a task transition follows, and SAID so rather than dropped.
+  bash "$KIT/tooling/kit-index.sh"  >/dev/null 2>&1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  [ "$(Q "SELECT COUNT(*) FROM finding WHERE task_id IS NULL OR task_id='';")" = 2 ] || exit 1
+  grep -q 'finding(s) unattributed' STATUS.generated.md || exit 1
+  grep -q 'emitted findings that were not all recorded' STATUS.generated.md || exit 1
+
+  # The task then commits, and the same heuristic that binds spend binds these -- including the
+  # tier, without which escape-rate-by-tier reports every finding as untiered.
+  echo x > src/a; git add -A
+  git commit -q --no-verify -m "feat: w
+
+Task-Id: T-r
+Tier: T2
+Task-Status: progress"
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  [ "$(Q "SELECT COUNT(*) FROM finding WHERE task_id='T-r' AND tier='T2';")" = 2 ] || exit 1 )
+check $? "findings are harvested once, rejections are counted, and attribution follows the task"
+rm -rf "$fl"
+
 step "a subagent whose transcript cannot be found is reported, not costed"
 # The alternative -- writing the row anyway from whatever transcript is at hand -- is the
 # defect. Nothing is recorded, and the fact that nothing was recorded is.
@@ -885,7 +939,7 @@ Tier: T1
 Task-Status: done"
   bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
   bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
-  bash "$KIT/tooling/kit-plan.sh" >/dev/null 2>"$PWD/plan.err"
+  bash "$KIT/tooling/kit-plan.sh" >"$PWD/plan.out" 2>"$PWD/plan.err"
   Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
 
   # The blocked task is withheld, and so is what waits behind it. T-D is untouched, which is
@@ -920,6 +974,13 @@ Task-Status: done"
   grep -qE 'open task\(s\) withheld' plan.err || exit 1
   [ "$(Q "SELECT value FROM meta WHERE key='plan_withheld:default';")" = "2 3" ] || exit 1
 
+  # ON STDOUT, and asserted there specifically. The finding this answers was that the magnitude
+  # reached nobody when stderr was dropped -- and the first fix for it moved the number into the
+  # index and then read it back out through kit_warn, which is stderr again. A test that greps
+  # only plan.err passes just as happily with the stdout line deleted: mutation-checked, and it
+  # did exactly that. The channel is the fix, so the channel is what gets asserted.
+  grep -qE '^# 2 of 3 open task\(s\) withheld' plan.out || exit 1
+
   # Priority must not be inflated by work that cannot be released. T-D survives and its only
   # dependent, T-C, is withheld; scoring it over the raw graph counts that dependent anyway.
   # w_unblocks=3, w_tier=1, T-D is T1, so the score is 3*0 + 1 = 1 when withheld descendants
@@ -935,8 +996,38 @@ Task-Status: done"
   grep -qE '^> \*\*3 task id\(s\) are referenced' STATUS.generated.md || exit 1
   grep -qE '^- $' STATUS.generated.md && exit 1
 
-  # Spend naming an id with no task row is in a figure or in the warning, never neither: every
-  # spend figure joins `task`, and a test for NULL alone would never mention this row.
+  # The FOURTH field. Three were stripped and a comment claimed all of them; the commit sha went
+  # out raw, and a backtick plus a newline in it fabricated a bullet and moved the rendered count
+  # with it, because the count is `grep -c .` over lines rather than rows. Both are asserted --
+  # the row count AND the printed number -- because either alone passes while the other is wrong.
+  sqlite3 .project/index.db "UPDATE event SET commit_sha='ab'||CHAR(96)||'cd'||CHAR(10)||'- fabricated row'
+                              WHERE task_id='T-zzz-sorts-after';"
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  [ "$(sed -n '/^## Unresolved/,/^> /p' STATUS.generated.md | grep -c '^- ')" = 3 ] || exit 1
+  grep -qE '^> \*\*3 task id\(s\) are referenced' STATUS.generated.md || exit 1
+  grep -qF '- fabricated row' STATUS.generated.md && exit 1
+
+  # A FAILING PLAN QUERY MUST REACH THE CALLER. It stopped doing so when the withheld read-back
+  # became the last command in the script: a `case` matching nothing returns 0, so empty stdout
+  # and success -- indistinguishable from "no work left" -- was what an orchestrator received.
+  # The existing exit-status check only ever exercised the success path, so it went quiet at the
+  # same time and said nothing.
+  #
+  # Injected with a shim rather than raced. The realistic cause is kit-index.sh swapping the
+  # database underneath a concurrent run at session start, and a race this suite loses on purpose
+  # is a race it will also lose by accident on someone else's machine.
+  realsq=$(command -v sqlite3)
+  mkdir -p shimbin
+  { printf '#!/usr/bin/env bash\n'
+    printf 'for a in "$@"; do case "$a" in *"ORDER BY p.layer, p.rank"*) exit 1 ;; esac; done\n'
+    printf 'exec "%s" "$@"\n' "$realsq"; } > shimbin/sqlite3
+  chmod +x shimbin/sqlite3
+  PATH="$PWD/shimbin:$PATH" bash "$KIT/tooling/kit-plan.sh" --next 5 >/dev/null 2>&1
+  [ $? -ne 0 ] || exit 1
+  rm -rf shimbin
+
+  # Spend naming an id with no task row is in a figure or in the warning, never neither: the
+  # figures that join `task` drop it, and a test for NULL alone would never mention this row.
   sqlite3 .project/index.db "INSERT INTO spend(transcript,scope,at,turns,tok_in,tok_out,cache_read,cache_write,context,task_id)
                              VALUES('tr-x','main','2026-01-01T00:00:00Z',1,10,10,0,0,0,'T-B-unfiled');"
   bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1

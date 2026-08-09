@@ -32,9 +32,15 @@ ROOT=$(kit_root) || exit 0
 kit_active "$ROOT" || exit 0
 
 task=""; agent=""; class=""; sev=""; lang=""; model=""; domain=""; pattern=""; batch=0
+agent_id=""; unattributed=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --task) task=${2:-}; shift; shift ;;
+    # An explicit flag, not an empty --task. A caller that does not know the task must SAY so,
+    # because the alternative -- accepting a blank id -- turns every mistyped invocation into a
+    # silently unattributed finding, which is the shape this whole file exists to refuse.
+    --unattributed) unattributed=1; shift ;;
+    --agent-id) agent_id=${2:-}; shift; shift ;;
     --agent) agent=${2:-}; shift; shift ;;
     --class) class=${2:-}; shift; shift ;;
     --severity) sev=${2:-}; shift; shift ;;
@@ -49,10 +55,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-for req in task agent; do
-  eval "v=\$$req"
-  [ -n "$v" ] || { kit_warn "missing --$req"; exit 2; }
-done
+[ -n "$agent" ] || { kit_warn "missing --agent"; exit 2; }
+if [ -z "$task" ] && [ "$unattributed" = 0 ]; then
+  kit_warn "missing --task (or --unattributed if the caller genuinely cannot know it)"
+  exit 2
+fi
+if [ -n "$task" ] && [ "$unattributed" = 1 ]; then
+  kit_warn "--task and --unattributed are contradictory; refusing rather than picking one"
+  exit 2
+fi
 
 PROFILE=$(kit_profile "$ROOT")
 STATE_DIR=$(kit_cfg "$PROFILE" paths.state ".project")
@@ -70,8 +81,11 @@ validate() {  # validate <class> <severity>
 }
 
 record() {  # record <class> <severity> <lang> <pattern> <domain>
-  printf '{"task":"%s","kind":"finding","at":"%s","agent":"%s","class":"%s","severity":"%s","lang":"%s","pattern":"%s","domain":"%s","model":"%s"}\n' \
-    "$task" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$agent" "$1" "$2" "$3" "$4" "$5" "$model" >> "$EV"
+  # agent_id is carried so the harvesting hook can tell whether THIS agent has already been
+  # recorded. Without it a second firing of SubagentStop re-harvests the same block, which is
+  # the defect kit-spend.sh hit with four firings for two events.
+  printf '{"task":"%s","kind":"finding","at":"%s","agent":"%s","agent_id":"%s","class":"%s","severity":"%s","lang":"%s","pattern":"%s","domain":"%s","model":"%s"}\n' \
+    "$task" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$agent" "$agent_id" "$1" "$2" "$3" "$4" "$5" "$model" >> "$EV"
 }
 
 # A domain names an INDUSTRY and seeds the industry accelerator, so an arbitrary string

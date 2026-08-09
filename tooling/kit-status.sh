@@ -84,12 +84,19 @@ printf -- '- %s done, %s abandoned\n' \
 # passes HTML through. A report that its own input can silence is not a control. CHAR(96) rather
 # than a literal backtick: this SQL sits in a double-quoted shell string, where a backtick opens
 # a command substitution.
-# EVERY field on the line is stripped and wrapped, not just the id. The id was hardened first
-# because it was the one a review had already broken the section with; `kind` comes from a
-# `Task-Status:` trailer that nothing checks against a vocabulary -- unlike `Via:`, which is
-# checked -- and the path comes from a filename. Hardening one field of three and leaving the
-# rest to the accident that the id happens to sit at the start of the line is a fix that holds
-# until someone reorders the fields. Same treatment everywhere, no line-position argument.
+# All FOUR variable fields on this line are stripped; the id, the kinds and the path are also
+# wrapped in a code span. The count matters: an earlier version of this comment said "every
+# field" while meaning three, and the fourth -- the commit sha -- went out raw. A backtick and a
+# newline injected into `commit_sha` then fabricated an extra bullet and moved the rendered count
+# with it, because UNRESN below counts LINES, not rows. So the sha is stripped here too; it is
+# not code-spanned only because it is already constrained to hex by everything that writes it,
+# and `(no commit)` reads better unfenced.
+#
+# Why any of them: `kind` comes from a `Task-Status:` trailer that nothing checks against a
+# vocabulary -- unlike `Via:`, which is checked -- the path comes from a filename, and the sha
+# from an event row an ingest adapter may write directly. Hardening some fields and leaving the
+# rest to the accident that the id sits first on the line is a fix that holds only until someone
+# reorders the fields.
 #
 # `n.id IS NOT NULL` is not decoration either. The row is a concatenation, and a NULL anywhere
 # in it makes the WHOLE row NULL: one NULL id would print a blank bullet, put the count out of
@@ -99,9 +106,11 @@ printf -- '- %s done, %s abandoned\n' \
 # failed to apply to the query it was adding.
 UNRES=$(q "SELECT CHAR(96)||REPLACE(REPLACE(REPLACE(n.id,CHAR(96),''),CHAR(10),' '),CHAR(13),' ')||CHAR(96)||'  '||
                   CASE WHEN EXISTS (SELECT 1 FROM event e WHERE e.task_id=n.id)
-                    THEN COALESCE((SELECT SUBSTR(e.commit_sha,1,7) FROM event e
-                                    WHERE e.task_id=n.id AND e.commit_sha IS NOT NULL AND e.commit_sha<>''
-                                    ORDER BY e.at, e.seq LIMIT 1),'(no commit)')
+                    THEN REPLACE(REPLACE(REPLACE(
+                           COALESCE((SELECT SUBSTR(e.commit_sha,1,7) FROM event e
+                                      WHERE e.task_id=n.id AND e.commit_sha IS NOT NULL AND e.commit_sha<>''
+                                      ORDER BY e.at, e.seq LIMIT 1),'(no commit)')
+                           ,CHAR(96),''),CHAR(10),' '),CHAR(13),' ')
                          ||'  seen as: '||CHAR(96)||
                          REPLACE(REPLACE(REPLACE(
                            (SELECT GROUP_CONCAT(k) FROM
@@ -154,8 +163,9 @@ if [ -n "$UNRES" ]; then
     printf '\n> **%s id(s) carry a recorded `done` or `abandoned`.** Whatever those closed is\n' "$GONE"
     printf '> not in the counts above — not in the done total, not in the escape-rate denominator\n'
     printf '> for their tier. If one had a task file, restoring it brings that history back. This\n'
-    printf '> counts what is recorded, not what was deleted: a task closed only in its frontmatter\n'
-    printf '> leaves no event to count, so this number is a floor.\n'
+    printf '> counts ids with a recorded closure and no file — which is a floor on THAT, and not a\n'
+    printf '> count of deleted files in either direction: a task closed only in its frontmatter\n'
+    printf '> leaves no event here, and an id that was only ever a typo never had a file to lose.\n'
   fi
 fi
 
@@ -326,23 +336,30 @@ if [ "${SPENT:-0}" -gt 0 ]; then
     printf '%s\n' "$EST" | sed 's/^/- /'
   fi
 
-  # An UNSET task_id is not the only way spend can belong to nothing. A row naming an id that
-  # has no task row is dropped by every figure above -- all of them join `task` -- while a test
-  # for NULL alone never mentions it: neither attributed nor reported, which is the third
-  # category this warning exists to prevent, arriving by the other door. The indexer's own
-  # derivation cannot produce it since the id must resolve to a task before it is bound, but an
-  # ingest adapter writes `spend` directly and section 4 deliberately preserves a pre-set value.
-  # That is the same standing this file gave the escape residue guard -- unreachable through
-  # shipped code today, written and counted anyway, because the reader is where the claim is
-  # made. Counted together because the remedy is identical: the cost is real and belongs to no
-  # task here.
+  # An UNSET task_id is not the only way spend can belong to nothing. A row naming an id with no
+  # task row is dropped by every figure that JOINS `task` -- the per-tier table, By provenance,
+  # and the rate card -- while a test for NULL alone never mentions it: neither attributed nor
+  # reported, which is the third category this warning exists to prevent, arriving by the other
+  # door. The indexer cannot produce it, since the id must resolve to a task before it is bound,
+  # but an ingest adapter writes `spend` directly and section 4 preserves a pre-set value. Same
+  # standing as the escape residue guard: unreachable through shipped code, counted anyway,
+  # because the reader is where the claim is made.
+  #
+  # WHICH FIGURES, precisely -- an earlier version of this said "every figure above" and was
+  # wrong. By scope and the model mix read `FROM spend` with no join, so they count this cost and
+  # always did. That is correct for what they measure: they answer "where did the tokens go",
+  # which is about transcripts and models, not about tasks. What was wrong was the sentence
+  # printed below telling the reader it was excluded from figures that include it -- measured at
+  # 1.4M of 1.5M reported. The number was never wrong; the claim about it was.
   UNATT=$(q "SELECT COUNT(*) FROM spend
               WHERE task_id IS NULL OR task_id=''
                  OR task_id NOT IN (SELECT id FROM task WHERE id IS NOT NULL);")
   if [ "${UNATT:-0}" -gt 0 ]; then
     printf '\n> **%s spend record(s) unattributed.** Either no task-status transition followed\n' "$UNATT"
-    printf '> them, or the task they name has no file here — so they belong to no task, and the\n'
-    printf '> work happened, the cost is real, and it is excluded from every figure above.\n'
+    printf '> them, or the task they name has no file here — so they belong to no task. The work\n'
+    printf '> happened and the cost is real: it is absent from the per-tier table, **By\n'
+    printf '> provenance** and the rate card, which are per task — and PRESENT in **By scope**\n'
+    printf '> and the per-model figures, which count transcripts and do not ask whose they were.\n'
   fi
 
   # Rows from before 0.8.0. Their numbers came from the session transcript while their label
@@ -365,6 +382,34 @@ if [ "${GAP:-0}" -gt 0 ]; then
   printf '\n> **%s subagent run(s) unmeasured.** No per-agent transcript was found when they\n' "$GAP"
   printf '> stopped, so nothing was recorded for them — not even a zero, which would have read\n'
   printf '> as free work.\n'
+fi
+
+# The findings equivalent, and the reason the loop is now closed rather than merely plumbed. A
+# reviewer that emitted findings none of which were recorded is the exact failure this section
+# exists to end: the table read zero and the README called it "nothing escaped". Emitted and
+# recorded are BOTH shown, because the gap is the number that matters -- it is how the
+# vocabulary problem gets measured instead of estimated at "roughly half".
+# Counted, not summed: the generic event reader stores the WHOLE json line in `payload`, so the
+# emitted/recorded numbers are inside a string rather than in columns. Extracting them here
+# would mean parsing json in SQL to print a number this line does not need -- the count is the
+# signal, and the detail is in events.ndjson where it was written.
+FGAPN=$(q "SELECT COUNT(*) FROM event WHERE kind='finding-gap';")
+if [ "${FGAPN:-0}" -gt 0 ]; then
+  printf '\n> **%s review(s) emitted findings that were not all recorded.** A finding rejected\n' "$FGAPN"
+  printf '> for an unrecognised class or severity is discarded, not stored — so a review can\n'
+  printf '> look complete while contributing nothing. See the vocabulary in `kit-finding.sh\n'
+  printf '> --vocab`, which is the one authoritative list.\n'
+fi
+
+# Findings the attribution heuristic could not bind to a task. Same standing as unattributed
+# spend: the work was reviewed and the finding is real, so it is named rather than dropped from
+# the count it should have been in.
+FUNATT=$(q "SELECT COUNT(*) FROM finding
+             WHERE task_id IS NULL OR task_id=''
+                OR task_id NOT IN (SELECT id FROM task WHERE id IS NOT NULL);")
+if [ "${FUNATT:-0}" -gt 0 ]; then
+  printf '\n> **%s finding(s) unattributed.** No task-status transition followed them, or the\n' "$FUNATT"
+  printf '> task they bound to has no file here — so they are in no per-task or per-tier figure.\n'
 fi
 
 # Under-tiering is silent and it is the dangerous direction: a task recorded T1 that should
