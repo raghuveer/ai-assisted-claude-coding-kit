@@ -213,6 +213,61 @@ Audited and found sound, independently: `UNATT` is correct and cannot double-cou
 after withholding cannot under-count a placed task, the deleted INSERT really was dead (49
 identical task rows, re-derived), and the event-kind and path escaping hold.
 
+## The fourth T3 review: REJECT twice, and one control that never could fail
+
+Fourth round, fourth set of real defects, and again the defects are this task's own claims.
+
+**critical — the commit sha is stripped but NOT code-spanned, on a rationale the same comment
+refutes four lines later.** `kit-status.sh:91-93` says it is "already constrained to hex by
+everything that writes it"; `:96-97` says it comes "from an event row an ingest adapter may write
+directly". The second is true, and it is worse than adapters: reached through an ORDINARY commit.
+`kit-index.sh` frames records as `\001<sha>\037…\002<body>\003` and splits on lines beginning
+`\001`, so a commit whose BODY contains such a line is parsed as a new record and its field 1
+becomes `commit_sha`. `SUBSTR(...,1,7)` leaves exactly room for `<!--` plus three characters,
+which then swallows every bullet, both count paragraphs, escape rate, spend, tier floors and
+trailer discipline. The same forged record also consumed the real commit's `Task-Id`. Third
+consecutive round in which this one line ships an incomplete escape.
+
+**major — the meta round-trip fails in both directions and every correction goes to stderr**, the
+channel this whole chain exists because callers drop. DELETE fails: the previous run's count is
+printed on stdout beside tasks that are scheduled, contradicting itself. INSERT fails: this run's
+real count is silently absent. `HELDN` holds the correct value in-process at that very line and
+is not consulted. The comment claiming both writes being CHECKED prevents this is false —
+checking reports, it does not prevent.
+
+**major — a spend row can still be attributed to nothing and reported as nothing.** `spend.scope`
+is nullable and the `By scope` grouping is a bare concatenation, so a NULL-scope row renders as
+an empty `- ` bullet with its cost in no figure at all. Reproduced with 5.4M billable
+token-equivalents vanishing — while the sentence added last round tells the reader such rows are
+PRESENT there.
+
+**major — the control for the round-3 sha defect cannot fail.** `grep -qF '- fabricated row'`
+begins with `-`, so grep parses it as options, exits 2 without reading the file, and `&& exit 1`
+never fires. Verified independently: rc=2 without `--`, rc=0 with it. The suite has printed
+`grep: unknown option` on every run and reported PASS. The commit message claiming "twelve
+controls proven able to fail" is wrong by exactly one, and it is the one asserting the injected
+text is absent.
+
+**minor/nit** — the `--show` rationale is false (`--show` recomputes everything, so there is no
+"`--show` that recomputed nothing"), and U+202E passes through into the code span.
+
+## The approach for these
+
+- **Wrap the sha like the other three fields and delete the false sentence.** The rationale is
+  what let this survive three rounds; removing the exception is smaller than defending it. Then a
+  control asserting an `<!--`-bearing sha renders inert — with `grep -F --`, which is the fix for
+  the vacuous assertion above.
+- **Refuse a non-hex `commit_sha` at the indexer**, so the report is not the only thing standing
+  between a forged record and the log. Separately, the record split being forgeable from a commit
+  body is its own defect and wants its own task rather than being folded in here.
+- **Use the in-process `HELDN`** rather than the meta round-trip when the write failed, and put
+  the qualifier on stdout beside the number. Controls for both directions, shimming DELETE and
+  INSERT separately.
+- **`COALESCE(NULLIF(scope,''),'unknown')`** in the By-scope grouping, matching what the model-mix
+  query already does, plus a control with a NULL-scope row.
+- **Re-verify every control this task claims is proven**, not only the broken one. One demonstrably
+  never could fail, which makes the claim about the other eleven an assertion rather than a result.
+
 ## A closed task whose file is deleted
 
 Decided: **the drop stands, and is made visible.** The row goes for the same reason as any
