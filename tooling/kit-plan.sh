@@ -74,6 +74,14 @@ sqlite3 -separator $'\t' "$DB" "
    WHERE e.rel='depends_on'
      AND e.src IN (SELECT id FROM task WHERE state NOT IN ('done','abandoned'))
      AND e.dst IN (SELECT id FROM task WHERE state NOT IN ('done','abandoned'));
+  -- A blocker that is DONE stops blocking, and the query above drops that edge on purpose.
+  -- A blocker with no task row at all is a different thing entirely and must not leave by the
+  -- same door: it is not satisfied, it is unknown. Emitted separately so the planner can
+  -- withhold the dependent instead of scheduling it as though nothing were in its way.
+  SELECT 'U', e.src, e.dst FROM edge e
+   WHERE e.rel='depends_on'
+     AND e.src IN (SELECT id FROM task WHERE state NOT IN ('done','abandoned'))
+     AND NOT EXISTS (SELECT 1 FROM task t WHERE t.id = e.dst);
   -- Semantic adjacency: two open tasks that touch a file in common are about the same
   -- part of the codebase, whether or not anyone declared a dependency. Hub files are
   -- excluded, or one shared main() would fuse the whole backlog into a single cluster.
@@ -108,6 +116,10 @@ $1=="N" {
 }
 $1=="S" {                             # shared non-hub file => same subject matter
   if (($2 in par) && ($3 in par)) union($2, $3)
+  next
+}
+$1=="U" {                             # blocked by an id that has no task file at all
+  if ($2 in par) unresdep[$2] = unresdep[$2] " " $3
   next
 }
 $1=="E" {
@@ -152,6 +164,37 @@ END {
     stuck=""
     for (i=1; i<=n; i++) if (!placed[ids[i]]) stuck = stuck " " ids[i]
     printf "CYCLE%s\n", stuck > "/dev/stderr"
+  }
+
+  # ---- withhold what a missing blocker makes unsequenceable ---------------------
+  # RULE 1 of this file is that topology beats priority, and an unfiled blocker is the one
+  # way that guarantee can be lost silently: the edge exists in the graph, its target has no
+  # task row, and a filter that reaches for `task` drops the constraint rather than the task.
+  # Measured before this existed -- a task blocked by an unfiled id was planned at layer 0,
+  # first, as though nothing were in its way.
+  #
+  # Withheld rather than reordered, on the same grounds as a cycle: this is a data error, and
+  # a plan that sequences around it is confidently wrong. Propagated to dependents, because
+  # anything waiting on a task that cannot be scheduled cannot be scheduled either -- and the
+  # ROOTS are what gets reported, since naming the whole tail would bury the one file to fix.
+  for (i=1; i<=n; i++) if (ids[i] in unresdep) withheld[ids[i]]=1
+  changed=1
+  while (changed) {
+    changed=0
+    for (i=1; i<=n; i++) {
+      u=ids[i]; if (!(u in withheld)) continue
+      m=split(adj[u], out, " ")
+      for (j=1; j<=m; j++) {
+        v=out[j]
+        if (v!="" && !(v in withheld)) { withheld[v]=1; changed=1 }
+      }
+    }
+  }
+  for (i=1; i<=n; i++) {
+    id=ids[i]
+    if (!(id in withheld)) continue
+    placed[id]=0                        # the one gate the emission below already honours
+    if (id in unresdep) printf "UNRESOLVED %s%s\n", id, unresdep[id] > "/dev/stderr"
   }
 
   # ---- transitive dependents: how much finishing this releases ------------------
@@ -205,8 +248,16 @@ END {
 
 if grep -q '^CYCLE' "$ERR" 2>/dev/null; then
   kit_warn "dependency cycle — these tasks are withheld from the plan, not reordered:"
-  sed 's/^CYCLE//' "$ERR" | tr ' ' '\n' | sed '/^$/d;s/^/  /' >&2
+  grep '^CYCLE' "$ERR" | sed 's/^CYCLE//' | tr ' ' '\n' | sed '/^$/d;s/^/  /' >&2
   kit_warn "fix blocked_by in the task files; a cycle cannot be sequenced."
+fi
+
+# Said out loud for the same reason as the cycle above: a task quietly missing from the plan
+# is indistinguishable from a task the plan judged unimportant, and this one is neither.
+if grep -q '^UNRESOLVED' "$ERR" 2>/dev/null; then
+  kit_warn "blocked by an id with no task file — withheld from the plan, with anything behind them:"
+  grep '^UNRESOLVED' "$ERR" | sed 's/^UNRESOLVED \([^ ]*\)  */  \1 blocked by /' >&2
+  kit_warn "file the blocking task, or correct blocked_by; an unknown blocker is not a satisfied one."
 fi
 
 sqlite3 "$DB" < "$SQL" || { kit_warn "plan write failed"; exit 1; }

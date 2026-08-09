@@ -44,9 +44,11 @@ esac
 
 EXEMPT=$(kit_cfg "$PROFILE" git.trivial_pattern '^(chore|docs|style)(\(.*\))?:')
 
-# task_known <id> -- does this id name a real task? A Task-Id matching nothing still
-# creates a task row in the index, so a typo silently adds a titleless phantom to the
-# backlog and to every count derived from it.
+# task_known <id> -- does this id name a real task? The indexer no longer invents a task row
+# for an id no file backs, so a typo that gets through no longer joins the backlog silently:
+# it lands in `Unresolved task ids` in the status report instead. This check is still the
+# cheaper gate by far, and the only one that acts while the commit can still be amended --
+# afterwards the id is in pushed history and only the report can help.
 task_known() {
   [ -d "$ROOT/$TASKS_DIR" ] || return 0          # no backlog yet: nothing to contradict
   grep -rlq -E "^id:[[:space:]]*$1[[:space:]]*$" "$ROOT/$TASKS_DIR" 2>/dev/null

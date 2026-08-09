@@ -782,11 +782,30 @@ done
 
 # ---- 4. derive current state; text sources always win over stale columns -----
 cat <<'DERIVE'
--- Order matters: a task may exist only in commits, with no task file. Its row must
--- exist before any derivation runs, or its state and tier are silently lost.
+-- A `Task-Id` in a trailer is a REFERENCE, not a task, and the difference is a file. Inventing
+-- a task row for one was how a single-character typo in a pushed commit became a permanent open
+-- task with no title and no epic -- in the Open list, in the backlog count, and in the
+-- escape-rate denominator of a tier nobody ever assigned it. The controls that exist all act
+-- earlier (kit-trailers.sh warns at commit time, pre-push blocks before sharing) and none of
+-- them help for history already pushed, which is the only case that matters here.
+--
+-- So the node is created and the task row is not. The node keeps the graph whole for the edges
+-- that point at the id -- `depends_on` from a blocked_by, `regressed` from a Fixes-Escape-Of --
+-- and it is what kit-status.sh reads to name these ids at all. What used to be an
+-- invented task is now named by kit-status.sh with the commit that introduced it, on the rule
+-- this kit already applies to unattributed spend, refused tier.rules and unusable paths: what
+-- could not be resolved is reported rather than silently discarded. Silently INVENTED is worse
+-- than either, because it reads as work.
+--
+-- An id that later gains a file needs no reconciliation step, and that is a property of the
+-- ordering rather than a promise: section 2 emits the task row from the file with its
+-- frontmatter, this runs afterwards and only ever adds what is missing, so the id becomes a
+-- real task on the next index with nothing to migrate. A task filed after the commit that
+-- referenced it is a normal sequence, not an error.
 INSERT OR IGNORE INTO node
   SELECT DISTINCT task_id,'task',NULL,task_id FROM event WHERE task_id IS NOT NULL AND task_id<>'';
-INSERT OR IGNORE INTO task(id) SELECT id FROM node WHERE type='task';
+INSERT OR IGNORE INTO task(id)
+  SELECT id FROM node WHERE type='task' AND path IS NOT NULL AND path<>'';
 
 -- git records what tier was actually used; frontmatter only declares an intent.
 UPDATE task SET tier = COALESCE((
@@ -826,8 +845,23 @@ UPDATE task SET closed_at = (
 -- session that ends without a commit. That is why unattributed spend is REPORTED rather than
 -- dropped: a cost table missing its expensive rows reads as cheap work, not as measurement
 -- that did not happen.
+-- The existence test is INSIDE the selected row, not in the WHERE clause, and the difference
+-- is the whole finding. Written as `AND EXISTS (...)` it does not stop the search -- it makes
+-- LIMIT 1 skip the phantom's transition and bind to the next REAL one instead, however far in
+-- the future and however unrelated. Measured: spend, then a T-ghost transition, then a later
+-- unrelated T-real transition, and the cost landed on T-real, at T-real's tier, with zero
+-- unattributed and no warning anywhere. That is not the third category this guard was added to
+-- prevent; it is a fourth and worse one -- attributed to the WRONG thing and reading as right,
+-- where the previous behaviour at least kept it on the id the trailer actually named.
+--
+-- So the nearest transition is chosen FIRST, on time alone, exactly as the heuristic describes;
+-- only then is it required to be a real task. A CASE with no ELSE yields NULL, so a phantom
+-- nearest neighbour leaves the row unattributed and the warning below says so. The heuristic
+-- may still be wrong about WHICH task -- it is a heuristic -- but it can no longer be wrong
+-- about which task it CHOSE.
 UPDATE spend SET task_id = (
-  SELECT e.task_id FROM event e
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM task t WHERE t.id = e.task_id) THEN e.task_id END
+    FROM event e
    WHERE e.task_id IS NOT NULL AND e.task_id <> ''
      AND e.kind IN ('started','progress','blocked','unblocked','done','abandoned')
      AND e.at >= spend.at

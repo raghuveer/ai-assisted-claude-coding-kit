@@ -760,6 +760,153 @@ Via: manual"
 check $? "escape survives a relabel out of via:kit; nothing stored is missing from the report, and a NULL id cannot silence the residue"
 rm -rf "$ex"
 
+step "a Task-Id matching no task file is named, not counted as work"
+# One character in a pushed commit -- T-20260801 where T-20260731 was meant -- became a
+# permanent open T1 task with no title and no epic: in the Open list, in the backlog count, and
+# in the escape-rate denominator of a tier nobody ever assigned it. kit-trailers.sh warns at
+# commit time and pre-push blocks before it is shared; both work, and neither reaches history
+# that is already pushed, which is the only case this covers.
+#
+# Dropping it silently would trade a visible wrong number for an invisible one, so the whole
+# behaviour is asserted together: absent from the backlog AND from the metrics, present in the
+# report with the commit that introduced it, and reconciled with no migration when the file
+# turns up later.
+gh="$WORK.ghost"; rm -rf "$gh"; mkdir -p "$gh/src"
+( cd "$gh" && git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  printf -- '---\nid: T-real\ntitle: r\ntier: T2\n---\nb\n' > .project/tasks/T-real.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+
+  # Spend is recorded BEFORE the ghost's commit, so the ghost's own status transition is the
+  # next one after it -- precisely what the attribution heuristic binds to.
+  printf '{"type":"assistant","message":{"model":"m","usage":{"input_tokens":10,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":100}}}\n' > sess.jsonl
+  bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/sess.jsonl" >/dev/null 2>&1
+
+  echo x > src/a; git add -A
+  git commit -q --no-verify -m "feat: w
+
+Task-Id: T-ghost
+Tier: T1
+Task-Status: progress"
+  sha=$(git rev-parse --short=7 HEAD)
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+
+  # Not a task. The node survives, so the edges that point at the id still resolve.
+  [ "$(Q "SELECT COUNT(*) FROM task WHERE id='T-ghost';")" = 0 ] || exit 1
+  [ "$(Q "SELECT COUNT(*) FROM node WHERE id='T-ghost' AND type='task';")" = 1 ] || exit 1
+  # Scoped to the Open section on purpose: the id DOES appear in the report, two sections
+  # lower, and a bare `grep -v` for it would pass by finding the wrong line -- or fail by
+  # finding the right one. Absent from the backlog and present in the report is the whole
+  # behaviour, so each half is asserted where it belongs.
+  sed -n '/^## Open/,/^## Closed/p' STATUS.generated.md | grep -qE '^- T-ghost' && exit 1
+  # Backticks are part of the assertion, not incidental formatting: the id is rendered as a
+  # code span precisely so a hostile id cannot act as markup, and a test matching the bare id
+  # would go green again the day that escaping is dropped.
+  grep -qE '^- `T-ghost`  '"$sha"'  seen as: .*progress' STATUS.generated.md || exit 1
+
+  # Out of the DERIVED metrics too, not just the list -- the tier it was never assigned has no
+  # row at all. Checking the Open list alone would pass while the denominator stayed wrong.
+  grep -qE '^- T1 +' STATUS.generated.md && exit 1
+
+  # And the cost does not vanish into it. Bound to an id with no task row, the spend would be
+  # dropped by every figure in the report (all of which join `task`) while the unattributed
+  # warning counts only a NULL task_id -- neither attributed nor reported, which is worse than
+  # unattributed. It stays NULL, and the existing warning says so.
+  [ "$(Q "SELECT COUNT(*) FROM spend WHERE task_id IS NULL OR task_id='';")" = 1 ] || exit 1
+  grep -q 'spend record(s) unattributed' STATUS.generated.md || exit 1
+
+  # The arrangement the first version of this test avoided, which is why it proved nothing: a
+  # REAL task's transition, later than the ghost's. Skipping the ghost must not become binding
+  # to whatever comes next -- that is not "unattributed", it is the cost of one task charged to
+  # another, at another tier, reading as correct. Measured before the fix: it landed on T-real.
+  echo z > src/c; git add -A
+  git commit -q --no-verify -m "feat: unrelated
+
+Task-Id: T-real
+Tier: T2
+Task-Status: done"
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  [ "$(Q "SELECT COUNT(*) FROM spend WHERE task_id='T-real';")" = 0 ] || exit 1
+  [ "$(Q "SELECT COUNT(*) FROM spend WHERE task_id IS NULL OR task_id='';")" = 1 ] || exit 1
+
+  # The file arrives afterwards, which is a normal sequence rather than an error. There is no
+  # reconciliation pass to run: the file emits the row, the derivation only adds what is
+  # missing, and the id is a real task on the next index -- with the waiting spend attached.
+  printf -- '---\nid: T-ghost\ntitle: g\ntier: T1\n---\nb\n' > .project/tasks/T-ghost.md
+  git add -A && git commit -q --no-verify -m "chore: file it"
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  [ "$(Q "SELECT COUNT(*) FROM task WHERE id='T-ghost';")" = 1 ] || exit 1
+  grep -qE '^- T-ghost +g +\[T1\]' STATUS.generated.md || exit 1
+  grep -q '## Unresolved task ids' STATUS.generated.md && exit 1
+  grep -qE '^- T1 +0 / 0 via:kit +0 / 1 all$' STATUS.generated.md || exit 1
+  [ "$(Q "SELECT COUNT(*) FROM spend WHERE task_id='T-ghost';")" = 1 ] || exit 1 )
+check $? "a ghost id is out of the backlog and every metric, named with its commit, and reconciles when filed"
+rm -rf "$gh"
+
+step "an unknown blocker still blocks, and an id cannot hide itself from the report"
+# Two failures found by review of the change above, both of which it introduced.
+#
+# 1. TOPOLOGY BEATS PRIORITY is kit-plan.sh's first stated rule, and not inventing a task row
+#    silently defeated it: the depends_on edge survives, its target has no task row, and the
+#    planner's filter drops the CONSTRAINT rather than the task. Measured against the parent
+#    commit -- a task blocked by an unfiled id moved from layer 1 to layer 0, first in the
+#    plan, as though nothing were in its way. An unknown blocker is not a satisfied one.
+# 2. A task id is arbitrary text from a git trailer, and this whole feature exists for history
+#    that never passed the commit-msg hook. Rendered raw, an id beginning `<!--` sorts first
+#    under BINARY collation and comments out every row below it AND the count. A report its own
+#    input can silence is not a control.
+ub="$WORK.unblock"; rm -rf "$ub"; mkdir -p "$ub/src"
+( cd "$ub" && git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  printf -- '---\nid: T-A\ntitle: a\ntier: T2\nblocked_by: T-B-unfiled\n---\nb\n' > .project/tasks/T-A.md
+  printf -- '---\nid: T-C\ntitle: c\ntier: T1\nblocked_by: T-A\n---\nb\n'          > .project/tasks/T-C.md
+  printf -- '---\nid: T-D\ntitle: d\ntier: T1\n---\nb\n'                           > .project/tasks/T-D.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  echo x > src/a; git add -A
+  git commit -q --no-verify -m "feat: a
+
+Task-Id: <!-- T-hidden
+Tier: T1
+Task-Status: progress"
+  echo y > src/b; git add -A
+  git commit -q --no-verify -m "feat: b
+
+Task-Id: T-zzz-sorts-after
+Tier: T1
+Task-Status: done"
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-plan.sh" >/dev/null 2>"$PWD/plan.err"
+  Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+
+  # The blocked task is withheld, and so is what waits behind it. T-D is untouched, which is
+  # what stops "withhold" from quietly meaning "plan nothing".
+  [ "$(Q "SELECT COUNT(*) FROM plan_item WHERE task_id='T-A';")" = 0 ] || exit 1
+  [ "$(Q "SELECT COUNT(*) FROM plan_item WHERE task_id='T-C';")" = 0 ] || exit 1
+  [ "$(Q "SELECT COUNT(*) FROM plan_item WHERE task_id='T-D';")" = 1 ] || exit 1
+  # Withheld silently is the same defect wearing a different face: a task missing from the plan
+  # reads as a task the plan judged unimportant.
+  grep -q 'T-A blocked by T-B-unfiled' plan.err || exit 1
+
+  # The id is inert, the rows after it survive, and the count still says three.
+  grep -qF '`<!-- T-hidden`' STATUS.generated.md || exit 1
+  grep -qF '`T-zzz-sorts-after`' STATUS.generated.md || exit 1
+  grep -qE '^> \*\*3 task id\(s\) are referenced' STATUS.generated.md || exit 1
+  # Origin is shown rather than guessed: a trailer id carries its commit, a blocked_by id names
+  # the file that declared it -- where "correct the trailer" would be advice about no trailer.
+  grep -qF 'declared by .project/tasks/T-A.md' STATUS.generated.md || exit 1
+  # Dropping a finished task's history is deliberate; being unable to tell it happened is not.
+  # T-zzz-sorts-after completed and has no file, so the cost of that drop is stated.
+  grep -qE '^> \*\*1 of them finished before the file went missing' STATUS.generated.md || exit 1 )
+check $? "an unfiled blocker withholds its dependents and is reported; a hostile id cannot suppress the section"
+rm -rf "$ub"
+
 step "the via vocabulary is defined in exactly one place"
 # The finding vocabulary was restated in four locations once, and the agents then emitted
 # values the recorder threw away. This one has a single definition in kit-lib.sh and every

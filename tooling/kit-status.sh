@@ -57,6 +57,80 @@ printf -- '- %s done, %s abandoned\n' \
   "$(q "SELECT COUNT(*) FROM task WHERE state='done';")" \
   "$(q "SELECT COUNT(*) FROM task WHERE state='abandoned';")"
 
+# An id referenced by history that no task file backs. The indexer no longer invents a task for
+# it -- that is what put a typo'd id in the Open list, the backlog count and an escape-rate
+# denominator, permanently, from one pushed commit. Dropping it silently would trade a visible
+# wrong number for an invisible one, so it is named here with the commit that introduced it.
+#
+# NOT EXISTS rather than NOT IN: `NOT IN` against a set holding a NULL is NULL for every row,
+# never true, and would empty this section without a word. That is not hypothetical in this
+# file -- the residue count below shipped with exactly that defect and a review caught it.
+#
+# Two origins, and they need different repairs, so the report shows which rather than guessing.
+# An id carrying events came from a git trailer: the introducing commit is where the typo is,
+# and the event kinds are the evidence for whether this was a stray reference or a task that had
+# a life and lost its file. An id with NO events was never in history at all -- it came from
+# another task's `blocked_by:` frontmatter, where "correct the trailer" is advice about a trailer
+# that does not exist, so the declaring FILE is named instead.
+#
+# The kinds are printed rather than interpreted. `done` on a fileless id says a task completed
+# and its file went missing; a lone `progress` says someone typed an id wrong. Both readings are
+# usually right and neither is reliable enough to assert, so the reader gets the evidence.
+#
+# Ids are wrapped in a code span and their backticks and newlines removed first. An id reaches
+# here from a git trailer, which is arbitrary text no gate has vetted -- and this feature exists
+# for history that never passed those gates. Unescaped, an id beginning `<!--` sorts first under
+# BINARY collation and comments out every row below it AND the count, in any renderer that
+# passes HTML through. A report that its own input can silence is not a control. CHAR(96) rather
+# than a literal backtick: this SQL sits in a double-quoted shell string, where a backtick opens
+# a command substitution.
+UNRES=$(q "SELECT CHAR(96)||REPLACE(REPLACE(REPLACE(n.id,CHAR(96),''),CHAR(10),' '),CHAR(13),' ')||CHAR(96)||'  '||
+                  CASE WHEN EXISTS (SELECT 1 FROM event e WHERE e.task_id=n.id)
+                    THEN COALESCE((SELECT SUBSTR(e.commit_sha,1,7) FROM event e
+                                    WHERE e.task_id=n.id AND e.commit_sha IS NOT NULL AND e.commit_sha<>''
+                                    ORDER BY e.at, e.seq LIMIT 1),'(no commit)')
+                         ||'  seen as: '||
+                         (SELECT GROUP_CONCAT(DISTINCT e.kind) FROM event e WHERE e.task_id=n.id)
+                    ELSE 'declared by '||
+                         COALESCE((SELECT n2.path FROM edge d JOIN node n2 ON n2.id=d.src
+                                    WHERE d.rel='depends_on' AND d.dst=n.id
+                                      AND n2.path IS NOT NULL AND n2.path<>''
+                                    ORDER BY n2.path LIMIT 1),'(unknown source)')
+                  END
+             FROM node n
+            WHERE n.type='task'
+              AND NOT EXISTS (SELECT 1 FROM task t WHERE t.id=n.id)
+            ORDER BY n.id;")
+if [ -n "$UNRES" ]; then
+  UNRESN=$(printf '%s\n' "$UNRES" | grep -c .)
+  printf '\n## Unresolved task ids\n\n'
+  printf '%s\n' "$UNRES" | sed 's/^/- /'
+  printf '\n> **%s task id(s) are referenced but have no task file.** A reference is not a task,\n' "$UNRESN"
+  printf '> so none of them is counted as open work or sits in any denominator above. One carrying\n'
+  printf '> a commit came from a trailer — fix it there, or file the task. One declared by a file\n'
+  printf '> came from that file’s `blocked_by:`, and is also withheld from the plan by `kit-plan`,\n'
+  printf '> along with anything behind it. Either way it is named, not assumed.\n'
+
+  # The case that costs something to drop, said out loud rather than left to be inferred from
+  # `seen as: done`. An id that COMPLETED and then lost its file takes its closed history with
+  # it -- out of the done count, out of the escape-rate denominator for its tier. Dropping it is
+  # deliberate: the file is what makes a task and everything here is derived from text, so
+  # deleting one is a statement. Being unable to tell that it happened is not part of that
+  # statement, and a total that shrinks with no explanation is the failure this whole report
+  # exists to refuse.
+  GONE=$(q "SELECT COUNT(*) FROM node n
+             WHERE n.type='task'
+               AND NOT EXISTS (SELECT 1 FROM task t WHERE t.id=n.id)
+               AND EXISTS (SELECT 1 FROM event e
+                            WHERE e.task_id=n.id AND e.kind IN ('done','abandoned'));")
+  if [ "${GONE:-0}" -gt 0 ]; then
+    printf '\n> **%s of them finished before the file went missing.** Their closed history — the\n' "$GONE"
+    printf '> state, the tier, any escape recorded against them — left the counts above with the\n'
+    printf '> file. Restore or re-point it to bring that back; delete it deliberately and this\n'
+    printf '> line is the record of what the deletion cost.\n'
+  fi
+fi
+
 # Escape rate is the metric the whole tiering design rests on, and it has now been wrong in
 # two opposite directions.
 #
