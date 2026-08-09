@@ -288,10 +288,19 @@ sqlite3 "$DB" < "$SQL" || { kit_warn "plan write failed"; exit 1; }
 # churn for nothing. Measured: writing it unconditionally moved the fixture index fingerprint,
 # which is the signal this repository uses to detect drift. A control that costs a false drift
 # signal on every run teaches people to ignore the signal.
+#
+# Both writes are CHECKED. Discarding their status would let the paragraph above be false in the
+# one case it is about: if the DELETE fails on a locked database after the plan write succeeded,
+# the previous run's count survives and is read back as though it described this plan -- a stale
+# warning presented as current, which is the failure this is meant to prevent, arriving through
+# the code meant to prevent it. Every other write in this script is checked; these were not.
 HELDN=$(grep '^WITHHELDCOUNT' "$ERR" 2>/dev/null | head -1 | awk '{print $2" "$3}')
-sqlite3 "$DB" "DELETE FROM meta WHERE key='plan_withheld:$GOAL_SQL';" 2>/dev/null
-[ -n "$HELDN" ] &&
-  sqlite3 "$DB" "INSERT INTO meta VALUES('plan_withheld:$GOAL_SQL','$HELDN');" 2>/dev/null
+if ! sqlite3 "$DB" "DELETE FROM meta WHERE key='plan_withheld:$GOAL_SQL';"; then
+  kit_warn "could not clear the previous withheld count; the line below may describe an older plan"
+elif [ -n "$HELDN" ]; then
+  sqlite3 "$DB" "INSERT INTO meta VALUES('plan_withheld:$GOAL_SQL','$HELDN');" ||
+    kit_warn "could not record the withheld count; it is on stderr above and nowhere else"
+fi
 
 # ---- frozen context packs, one per cluster ------------------------------------------
 # What every session in a cluster needs and none of them should re-derive: which tasks are
@@ -388,6 +397,7 @@ if [ "$SHOW" = 1 ]; then
       FROM plan_item p JOIN task t ON t.id=p.task_id
       LEFT JOIN node n ON n.id=p.task_id
      WHERE p.goal_id='$GOAL_SQL' ORDER BY p.layer, p.rank;"
+  DISPRC=$?
 else
   # The whole point: a session reads this, not the graph.
   sqlite3 -separator '  ' "$DB" "
@@ -395,13 +405,28 @@ else
       FROM plan_item p JOIN task t ON t.id=p.task_id
       LEFT JOIN node n ON n.id=p.task_id
      WHERE p.goal_id='$GOAL_SQL' ORDER BY p.layer, p.rank LIMIT $NEXT;"
+  DISPRC=$?
 fi
 
-# Read back from the index rather than from this run, so it reaches a caller that reruns --show
-# later or that dropped stderr on the run that computed it. A short plan and the reason for it
-# arrive together or the reason may as well not exist.
+# ON STDOUT, beside the plan it qualifies. The previous version wrote this with kit_warn, which
+# is `printf >&2` -- so the finding it was answering ("the count reaches nobody when stderr is
+# dropped") was still true afterwards: the number moved into the index and came back out on the
+# same channel it was criticised for. A caller reading stdout for the plan gets the plan and the
+# reason it is short, or the reason may as well not exist. The stderr copy above stays for the
+# interactive case, where the roots are worth having too.
+#
+# Read from the index rather than from this run, so it also reaches a --show that recomputed
+# nothing. Prefixed with `#` because a session parses these lines: a comment marker keeps it out
+# of a naive `read task tier title` without hiding it from a human.
 HELDBACK=$(sqlite3 "$DB" "SELECT value FROM meta WHERE key='plan_withheld:$GOAL_SQL';" 2>/dev/null | tr -d '\r')
 case "${HELDBACK:-0 0}" in
   ''|'0 0') ;;
-  *) kit_warn "$(printf '%s of %s open task(s) withheld: blocked by an id with no task file. Rerun to list the roots.' ${HELDBACK})" ;;
+  *) printf '# %s of %s open task(s) withheld: blocked by an id with no task file.\n' ${HELDBACK} ;;
 esac
+
+# The display query decides the exit status, which it stopped doing when the read-back above was
+# first added and became the last command in the script: a `case` that matches nothing returns 0,
+# so a failing plan query -- a locked database while kit-index.sh swaps the file at session start
+# is the realistic one -- returned empty stdout and success, which reads exactly like "no work
+# left". conformance.sh checks this status, so the control went quiet at the same time.
+exit "${DISPRC:-0}"

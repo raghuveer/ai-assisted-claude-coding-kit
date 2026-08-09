@@ -172,6 +172,47 @@ fingerprint. Deterministic, so nothing failed — but the fingerprint is the dri
 control that emits false drift on every run teaches people to ignore it. It now writes only when
 tasks are actually withheld, and the fingerprint is back to `d923228d…`.
 
+## The third T3 review
+
+REJECT again, seven findings, thirty-one on this task. The pattern held for the third time: it
+found defects inside the fixes for the previous round, and two of them were claims this task file
+and its commits had already reported as done.
+
+**A regression introduced by the round-2 fix.** The withheld read-back became the last command in
+`kit-plan.sh`, and a `case` matching nothing returns 0 — so the display query's exit status was
+discarded. A failing plan query, realistically a locked database while `kit-index.sh` swaps the
+file at session start, returned empty stdout and success: indistinguishable from "no work left".
+Reproduced with a `sqlite3` shim; the fixed script exits 1 where `039537c` exits 0. The
+conformance control for that status only ever exercised the success path, so it went quiet at the
+same moment the defect appeared and is now backed by a shim-injected failing query.
+
+**"EVERY field is stripped and wrapped" was false — the line has FOUR fields.** The commit sha
+went out raw. A backtick and a newline injected into `commit_sha` fabricated a bullet and moved
+the rendered count with it, because the count is `grep -c .` over lines rather than rows. Three
+fields hardened, a comment claiming all of them, and the fourth exposed — the same shape as the
+defect the round-2 fix existed to close.
+
+**The withhold-magnitude fix was illusory.** The count was persisted to the index and read back
+out through `kit_warn`, which is `printf >&2` — the very channel the finding was about. The data
+moved; the channel did not. It now prints to stdout beside the plan it qualifies, `#`-prefixed so
+a session parsing those lines is not broken by it.
+
+**And a false statement in the rendered report.** "Excluded from every figure above" was untrue:
+`By scope` and the per-model figures read `FROM spend` with no join, so they count unattributed
+spend and always did — measured at 1.4M of 1.5M reported. That is correct for what those figures
+measure, which is transcripts rather than tasks. The number was never wrong; the sentence about
+it was, and it appeared in the comment, the commit message and this file. Now the report names
+which figures include the cost and which do not.
+
+Also fixed: the `meta` writes discarded their status, so a failed DELETE on a locked database
+would leave a stale withheld count reading as current — the exact failure the paragraph above it
+argued against; and "this number is a floor" had no stated referent, which left the deletion
+reading it had just been rewritten to avoid.
+
+Audited and found sound, independently: `UNATT` is correct and cannot double-count, `unblocks[]`
+after withholding cannot under-count a placed task, the deleted INSERT really was dead (49
+identical task rows, re-derived), and the event-kind and path escaping hold.
+
 ## A closed task whose file is deleted
 
 Decided: **the drop stands, and is made visible.** The row goes for the same reason as any
