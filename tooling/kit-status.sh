@@ -84,21 +84,41 @@ printf -- '- %s done, %s abandoned\n' \
 # passes HTML through. A report that its own input can silence is not a control. CHAR(96) rather
 # than a literal backtick: this SQL sits in a double-quoted shell string, where a backtick opens
 # a command substitution.
+# EVERY field on the line is stripped and wrapped, not just the id. The id was hardened first
+# because it was the one a review had already broken the section with; `kind` comes from a
+# `Task-Status:` trailer that nothing checks against a vocabulary -- unlike `Via:`, which is
+# checked -- and the path comes from a filename. Hardening one field of three and leaving the
+# rest to the accident that the id happens to sit at the start of the line is a fix that holds
+# until someone reorders the fields. Same treatment everywhere, no line-position argument.
+#
+# `n.id IS NOT NULL` is not decoration either. The row is a concatenation, and a NULL anywhere
+# in it makes the WHOLE row NULL: one NULL id would print a blank bullet, put the count out of
+# step with the rows, and -- if it were the only unresolved id -- empty the section entirely
+# while the escape residue below still fired. SQLite does not enforce NOT NULL on a TEXT PRIMARY
+# KEY, which this file already hardened the residue query against and which the same commit then
+# failed to apply to the query it was adding.
 UNRES=$(q "SELECT CHAR(96)||REPLACE(REPLACE(REPLACE(n.id,CHAR(96),''),CHAR(10),' '),CHAR(13),' ')||CHAR(96)||'  '||
                   CASE WHEN EXISTS (SELECT 1 FROM event e WHERE e.task_id=n.id)
                     THEN COALESCE((SELECT SUBSTR(e.commit_sha,1,7) FROM event e
                                     WHERE e.task_id=n.id AND e.commit_sha IS NOT NULL AND e.commit_sha<>''
                                     ORDER BY e.at, e.seq LIMIT 1),'(no commit)')
-                         ||'  seen as: '||
-                         (SELECT GROUP_CONCAT(DISTINCT e.kind) FROM event e WHERE e.task_id=n.id)
-                    ELSE 'declared by '||
-                         COALESCE((SELECT n2.path FROM edge d JOIN node n2 ON n2.id=d.src
-                                    WHERE d.rel='depends_on' AND d.dst=n.id
-                                      AND n2.path IS NOT NULL AND n2.path<>''
-                                    ORDER BY n2.path LIMIT 1),'(unknown source)')
+                         ||'  seen as: '||CHAR(96)||
+                         REPLACE(REPLACE(REPLACE(
+                           (SELECT GROUP_CONCAT(k) FROM
+                              (SELECT DISTINCT e.kind AS k FROM event e
+                                WHERE e.task_id=n.id AND e.kind IS NOT NULL ORDER BY e.kind))
+                           ,CHAR(96),''),CHAR(10),' '),CHAR(13),' ')||CHAR(96)
+                    ELSE 'declared by '||CHAR(96)||
+                         REPLACE(REPLACE(REPLACE(
+                           COALESCE((SELECT n2.path FROM edge d JOIN node n2 ON n2.id=d.src
+                                      WHERE d.rel='depends_on' AND d.dst=n.id
+                                        AND n2.path IS NOT NULL AND n2.path<>''
+                                      ORDER BY n2.path LIMIT 1),'(unknown source)')
+                           ,CHAR(96),''),CHAR(10),' '),CHAR(13),' ')||CHAR(96)
                   END
              FROM node n
             WHERE n.type='task'
+              AND n.id IS NOT NULL
               AND NOT EXISTS (SELECT 1 FROM task t WHERE t.id=n.id)
             ORDER BY n.id;")
 if [ -n "$UNRES" ]; then
@@ -111,23 +131,31 @@ if [ -n "$UNRES" ]; then
   printf '> came from that file’s `blocked_by:`, and is also withheld from the plan by `kit-plan`,\n'
   printf '> along with anything behind it. Either way it is named, not assumed.\n'
 
-  # The case that costs something to drop, said out loud rather than left to be inferred from
-  # `seen as: done`. An id that COMPLETED and then lost its file takes its closed history with
-  # it -- out of the done count, out of the escape-rate denominator for its tier. Dropping it is
-  # deliberate: the file is what makes a task and everything here is derived from text, so
-  # deleting one is a statement. Being unable to tell that it happened is not part of that
-  # statement, and a total that shrinks with no explanation is the failure this whole report
-  # exists to refuse.
+  # Dropping a completed task's history is deliberate; being unable to tell it happened is not.
+  # This counts EVIDENCE and says so, rather than telling a story about a deleted file. The
+  # earlier wording asserted "finished before the file went missing", which is wrong in both
+  # directions and was caught in both: an id that was only ever a typo in a `Task-Status: done`
+  # commit never had a file to lose, and a task closed in its frontmatter with no `Task-Status:`
+  # trailer leaves no event here at all -- so the line claimed a deletion that never happened
+  # while staying silent about one that did. Three lines above, this file concedes the evidence
+  # is not reliable enough to interpret. It is not more reliable here.
+  #
+  # What can be said without inventing anything: these ids carry a recorded completion and back
+  # no file, so whatever they closed is not in the counts above. Detecting a task file that was
+  # genuinely DELETED needs git history in the indexer and is
+  # T-20260809-a-deleted-task-file-is-indistinguishable.
   GONE=$(q "SELECT COUNT(*) FROM node n
              WHERE n.type='task'
+               AND n.id IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM task t WHERE t.id=n.id)
                AND EXISTS (SELECT 1 FROM event e
                             WHERE e.task_id=n.id AND e.kind IN ('done','abandoned'));")
   if [ "${GONE:-0}" -gt 0 ]; then
-    printf '\n> **%s of them finished before the file went missing.** Their closed history — the\n' "$GONE"
-    printf '> state, the tier, any escape recorded against them — left the counts above with the\n'
-    printf '> file. Restore or re-point it to bring that back; delete it deliberately and this\n'
-    printf '> line is the record of what the deletion cost.\n'
+    printf '\n> **%s id(s) carry a recorded `done` or `abandoned`.** Whatever those closed is\n' "$GONE"
+    printf '> not in the counts above — not in the done total, not in the escape-rate denominator\n'
+    printf '> for their tier. If one had a task file, restoring it brings that history back. This\n'
+    printf '> counts what is recorded, not what was deleted: a task closed only in its frontmatter\n'
+    printf '> leaves no event to count, so this number is a floor.\n'
   fi
 fi
 
@@ -194,13 +222,14 @@ fi
 # so it is the one way the report could still read zero while the database does not -- which
 # makes saying it out loud the last piece of the guarantee, not a nicety.
 #
-# It cannot fire TODAY, and that is measured rather than assumed: `kit-index.sh` materialises a
-# task row for any id it sees in a trailer, `Fixes-Escape-Of:` included, so the escape target
-# always exists as a row -- as an untiered `unknown` phantom, which is its own filed defect
-# (T-20260808-a-task-id-matching-no-task-file-is-count). Fixing that defect is what makes this
-# branch live: stop inventing the row and the escape pointing at it becomes invisible in both
-# columns. So this is written now, with the metric it protects, rather than left as a trap for
-# whoever removes phantom tasks and has no reason to look here. Conformance covers it directly.
+# IT FIRES NOW. It could not when it was written: `kit-index.sh` invented a task row for any id
+# it saw in a trailer, `Fixes-Escape-Of:` included, so the escape target always existed as an
+# untiered `unknown` phantom and this branch was dead code covered by a seeded fixture. That
+# invention was the filed defect T-20260808-a-task-id-matching-no-task-file-is-count, and
+# removing it is exactly what brought this to life -- a guard written before the failure it
+# guards against was reachable, which is the only order in which anyone actually writes one.
+# Reproduced since: a commit carrying `Fixes-Escape-Of:` for an id with no task file now prints
+# the line below. Conformance covers both the seeded state and the real one.
 #
 # `WHERE id IS NOT NULL` in the subquery is load-bearing and is not defensive habit. SQLite does
 # not enforce NOT NULL on a TEXT PRIMARY KEY -- a documented deviation it keeps for backward
@@ -297,11 +326,23 @@ if [ "${SPENT:-0}" -gt 0 ]; then
     printf '%s\n' "$EST" | sed 's/^/- /'
   fi
 
-  UNATT=$(q "SELECT COUNT(*) FROM spend WHERE task_id IS NULL OR task_id='';")
+  # An UNSET task_id is not the only way spend can belong to nothing. A row naming an id that
+  # has no task row is dropped by every figure above -- all of them join `task` -- while a test
+  # for NULL alone never mentions it: neither attributed nor reported, which is the third
+  # category this warning exists to prevent, arriving by the other door. The indexer's own
+  # derivation cannot produce it since the id must resolve to a task before it is bound, but an
+  # ingest adapter writes `spend` directly and section 4 deliberately preserves a pre-set value.
+  # That is the same standing this file gave the escape residue guard -- unreachable through
+  # shipped code today, written and counted anyway, because the reader is where the claim is
+  # made. Counted together because the remedy is identical: the cost is real and belongs to no
+  # task here.
+  UNATT=$(q "SELECT COUNT(*) FROM spend
+              WHERE task_id IS NULL OR task_id=''
+                 OR task_id NOT IN (SELECT id FROM task WHERE id IS NOT NULL);")
   if [ "${UNATT:-0}" -gt 0 ]; then
-    printf '\n> **%s spend record(s) unattributed.** No task-status transition followed them,\n' "$UNATT"
-    printf '> so they belong to no task here — the work happened, the cost is real, and it is\n'
-    printf '> excluded from every figure above.\n'
+    printf '\n> **%s spend record(s) unattributed.** Either no task-status transition followed\n' "$UNATT"
+    printf '> them, or the task they name has no file here — so they belong to no task, and the\n'
+    printf '> work happened, the cost is real, and it is excluded from every figure above.\n'
   fi
 
   # Rows from before 0.8.0. Their numbers came from the session transcript while their label

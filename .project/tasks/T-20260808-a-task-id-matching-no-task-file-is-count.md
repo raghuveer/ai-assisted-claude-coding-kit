@@ -114,6 +114,64 @@ guessing a cause: a trailer id carries its commit and its event kinds, a `blocke
 the file that declared it, where "correct the trailer" was advice about a trailer that does not
 exist. Two comments this change falsified were corrected.
 
+## The second T3 review
+
+Both reviewers ran again on the fixed change, blind to each other. Security REJECTED,
+implementation APPROVED — not a contradiction: the approving reviewer's findings were all minor,
+while the rejecting one built fixtures the other did not and reproduced two majors in them.
+Fourteen more findings, twenty-four on this task in total. Everything below was reproduced.
+
+**The withhold blast radius, measured at last.** 22 open tasks, one mistyped `blocked_by`, 20
+tasks behind it: **one task planned, twenty-one withheld**, reported by a single stderr line
+naming the root, with no count and exit 0. Both reviewers independently said keep withholding —
+sequencing around an unknown blocker asserts something unevidenced — and both said the defect is
+visibility, not policy. So the magnitude is now reported and persisted to the index, because
+stderr is not a record: this repository's own fixtures run `kit-plan.sh` with stderr redirected
+away, which is exactly how an orchestrator would run it.
+
+**The `GONE` line was wrong in both directions**, and neither reviewer saw both. It missed a task
+closed in frontmatter with no `Task-Status:` trailer — measured, a `done` T3 task deleted, and
+the done count and its whole escape-rate row vanished in silence — while claiming "finished
+before the file went missing" about ids that never had a file. It now counts recorded evidence,
+calls itself a floor, and asserts no narrative. Doing this properly needs git history in the
+indexer and is `T-20260809-a-deleted-task-file-is-indistinguishable`.
+
+**Spend could still be attributed to nothing and reported as nothing** — the reader side of the
+defect fixed on the writer side last round. Every spend figure joins `task`; the unattributed
+warning counted only NULL. A row naming an unfiled id fell between them.
+
+**A NULL `node.id` emptied the new section** — the same SQLite deviation this file hardened the
+residue query against, not applied to the query added beside it in the same commit.
+
+**Only one of three fields was escaped.** The id was hardened; the event kinds and the declaring
+path were not, and `Task-Status:` is checked against no vocabulary where `Via:` is. The reviewer
+was careful here: it could not reproduce actual silencing, since the id sits first on the line
+and CommonMark needs a closing `-->`, and declined to call it live. A latent trap that becomes a
+hole the moment someone reorders the fields — which is an accident of layout, not a property of
+the fix.
+
+**And the line presented as the gate was dead code.** The guarded `INSERT OR IGNORE INTO task …
+path IS NOT NULL` could never add a row, because section 2 has already inserted one per file.
+Verified by indexing with and without it: identical task rows. Deleted, and the comment now says
+where the rule actually lives — a phantom is stopped by an ABSENCE, which has to be stated or the
+next reader restores the invention.
+
+Also fixed: `unblocks[]` counted withheld descendants into a surviving task's priority;
+`GROUP_CONCAT` had no ordering; and comments in two files still claimed the residue branch could
+not fire "because kit-index materialises a task row" — which this very change made false.
+
+**Twelve mutations across three rounds**, each red only in the steps asserting it. Two needed
+re-running: one missed its pattern, and one targeted a line since rewritten, so its guard asked
+"is the old text still present?", concluded a mutation had applied when the pattern had simply
+never matched, and ran an unmutated suite to a green 34/0. A mutation that does not mutate is
+indistinguishable from a passing control in a summary; both guards now assert the mutated text is
+present and count occurrences before and after.
+
+Persisting the withheld count on every run, including the clean one, moved the fixture index
+fingerprint. Deterministic, so nothing failed — but the fingerprint is the drift signal, and a
+control that emits false drift on every run teaches people to ignore it. It now writes only when
+tasks are actually withheld, and the fingerprint is back to `d923228d…`.
+
 ## A closed task whose file is deleted
 
 Decided: **the drop stands, and is made visible.** The row goes for the same reason as any

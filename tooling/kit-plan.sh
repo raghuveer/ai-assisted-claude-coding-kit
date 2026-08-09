@@ -190,20 +190,33 @@ END {
       }
     }
   }
+  nheld=0
   for (i=1; i<=n; i++) {
     id=ids[i]
     if (!(id in withheld)) continue
     placed[id]=0                        # the one gate the emission below already honours
+    nheld++
     if (id in unresdep) printf "UNRESOLVED %s%s\n", id, unresdep[id] > "/dev/stderr"
   }
+  # The MAGNITUDE, not just the trigger. Measured: 22 open tasks, one mistyped blocked_by, 20
+  # tasks behind it -- one task planned, twenty-one gone, and the only thing said about it was
+  # a single line naming the root. A plan that lost most of the backlog reads exactly like a
+  # backlog that was mostly finished. Three sections of kit-status.sh set the standard this
+  # missed: "Tier floors unverified for N of M open task(s)".
+  if (nheld > 0) printf "WITHHELDCOUNT %d %d\n", nheld, n > "/dev/stderr"
 
   # ---- transitive dependents: how much finishing this releases ------------------
+  # AFTER withholding, and that ordering is the point: `unblocks` feeds the priority score, and
+  # counting descendants that cannot be scheduled inflates the score of a survivor with work
+  # that finishing it would not release. Withheld nodes are skipped as roots and never entered.
   for (i=1; i<=n; i++) {
-    root=ids[i]; delete vis; qh=0; qt=0; q2[qt++]=root; cnt=-1
+    root=ids[i]
+    if (root in withheld) { unblocks[root]=0; continue }
+    delete vis; qh=0; qt=0; q2[qt++]=root; cnt=-1
     while (qh<qt) {
       u=q2[qh++]; if (u in vis) continue; vis[u]=1; cnt++
       m=split(adj[u], out, " ")
-      for (j=1;j<=m;j++) if (out[j]!="" && !(out[j] in vis)) q2[qt++]=out[j]
+      for (j=1;j<=m;j++) if (out[j]!="" && !(out[j] in vis) && !(out[j] in withheld)) q2[qt++]=out[j]
     }
     unblocks[root]=cnt
   }
@@ -254,13 +267,31 @@ fi
 
 # Said out loud for the same reason as the cycle above: a task quietly missing from the plan
 # is indistinguishable from a task the plan judged unimportant, and this one is neither.
+#
+# The count goes to the plan table as well as to stderr. stderr alone is not a record -- this
+# repository's own fixtures invoke this script with stderr redirected away, which is exactly how
+# an orchestrator would run it, and a plan that came back a fifth of its size would arrive with
+# no explanation attached to it. `--show` reads it back from the index, where the plan is.
 if grep -q '^UNRESOLVED' "$ERR" 2>/dev/null; then
-  kit_warn "blocked by an id with no task file — withheld from the plan, with anything behind them:"
+  HELD=$(grep '^WITHHELDCOUNT' "$ERR" | head -1 | awk '{print $2"/"$3}')
+  kit_warn "blocked by an id with no task file — ${HELD:-some} open task(s) withheld from the plan:"
   grep '^UNRESOLVED' "$ERR" | sed 's/^UNRESOLVED \([^ ]*\)  */  \1 blocked by /' >&2
+  kit_warn "each root is named above; anything behind one is withheld with it."
   kit_warn "file the blocking task, or correct blocked_by; an unknown blocker is not a satisfied one."
 fi
 
 sqlite3 "$DB" < "$SQL" || { kit_warn "plan write failed"; exit 1; }
+
+# Persisted beside the plan, not only shouted at a terminal that may not exist. DELETE first and
+# write only when the condition holds: a stale count must not outlive its cause -- a warning that
+# survives what caused it is worse than no warning -- but a `0 0` row on every clean run is index
+# churn for nothing. Measured: writing it unconditionally moved the fixture index fingerprint,
+# which is the signal this repository uses to detect drift. A control that costs a false drift
+# signal on every run teaches people to ignore the signal.
+HELDN=$(grep '^WITHHELDCOUNT' "$ERR" 2>/dev/null | head -1 | awk '{print $2" "$3}')
+sqlite3 "$DB" "DELETE FROM meta WHERE key='plan_withheld:$GOAL_SQL';" 2>/dev/null
+[ -n "$HELDN" ] &&
+  sqlite3 "$DB" "INSERT INTO meta VALUES('plan_withheld:$GOAL_SQL','$HELDN');" 2>/dev/null
 
 # ---- frozen context packs, one per cluster ------------------------------------------
 # What every session in a cluster needs and none of them should re-derive: which tasks are
@@ -365,3 +396,12 @@ else
       LEFT JOIN node n ON n.id=p.task_id
      WHERE p.goal_id='$GOAL_SQL' ORDER BY p.layer, p.rank LIMIT $NEXT;"
 fi
+
+# Read back from the index rather than from this run, so it reaches a caller that reruns --show
+# later or that dropped stderr on the run that computed it. A short plan and the reason for it
+# arrive together or the reason may as well not exist.
+HELDBACK=$(sqlite3 "$DB" "SELECT value FROM meta WHERE key='plan_withheld:$GOAL_SQL';" 2>/dev/null | tr -d '\r')
+case "${HELDBACK:-0 0}" in
+  ''|'0 0') ;;
+  *) kit_warn "$(printf '%s of %s open task(s) withheld: blocked by an id with no task file. Rerun to list the roots.' ${HELDBACK})" ;;
+esac

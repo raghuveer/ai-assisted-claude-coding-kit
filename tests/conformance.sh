@@ -719,14 +719,15 @@ Via: manual"
   [ "$dbesc" = 1 ] || exit 1
   [ "$shown" = "$dbesc" ] || exit 1
 
-  # The residue, covered directly because it cannot be reached through the front door. Every id
-  # in a trailer -- `Fixes-Escape-Of:` included -- currently gets a task row invented for it, so
-  # an escape belonging to no task is unreachable while that phantom behaviour stands. It is a
-  # filed defect and removing it makes this the only thing standing between a real escape and
-  # silence, so the row is seeded straight into the index and the report is made to say it.
+  # The residue. This was written when it could NOT be reached through the front door: every id
+  # in a trailer got a task row invented for it, so an escape belonging to no task was
+  # unreachable and only a seeded row could exercise the branch. That invention has since been
+  # removed, and the reachable version of this case is now covered end to end by the ghost step
+  # below. The seeded form is kept rather than replaced, because it pins the reader --
+  # kit-status.sh -- against a state regardless of which producer creates it, and an adapter is
+  # a producer this suite does not run.
   #
-  # The index is derived and disposable, which is what makes writing to it legitimate here: the
-  # unit under test is kit-status.sh reading a state kit-index.sh does not yet produce.
+  # The index is derived and disposable, which is what makes writing to it legitimate here.
   sqlite3 .project/index.db "INSERT INTO event(task_id,kind,at) VALUES('T-vanished','escaped','2026-01-01T00:00:00Z');"
   bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
   grep -q 'belong to no task in this index' STATUS.generated.md || exit 1
@@ -865,7 +866,9 @@ ub="$WORK.unblock"; rm -rf "$ub"; mkdir -p "$ub/src"
   git config user.email a@b.c; git config user.name T
   bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
   printf -- '---\nid: T-A\ntitle: a\ntier: T2\nblocked_by: T-B-unfiled\n---\nb\n' > .project/tasks/T-A.md
-  printf -- '---\nid: T-C\ntitle: c\ntier: T1\nblocked_by: T-A\n---\nb\n'          > .project/tasks/T-C.md
+  # T-C depends on T-D as well as on T-A, which is what makes the scoring assertion below
+  # possible: T-C is withheld through T-A, while T-D survives and has a withheld dependent.
+  printf -- '---\nid: T-C\ntitle: c\ntier: T1\nblocked_by: T-A,T-D\n---\nb\n'      > .project/tasks/T-C.md
   printf -- '---\nid: T-D\ntitle: d\ntier: T1\n---\nb\n'                           > .project/tasks/T-D.md
   git add -A && git commit -q --no-verify -m "chore: seed"
   echo x > src/a; git add -A
@@ -900,10 +903,44 @@ Task-Status: done"
   grep -qE '^> \*\*3 task id\(s\) are referenced' STATUS.generated.md || exit 1
   # Origin is shown rather than guessed: a trailer id carries its commit, a blocked_by id names
   # the file that declared it -- where "correct the trailer" would be advice about no trailer.
-  grep -qF 'declared by .project/tasks/T-A.md' STATUS.generated.md || exit 1
+  grep -qF 'declared by `.project/tasks/T-A.md`' STATUS.generated.md || exit 1
   # Dropping a finished task's history is deliberate; being unable to tell it happened is not.
   # T-zzz-sorts-after completed and has no file, so the cost of that drop is stated.
-  grep -qE '^> \*\*1 of them finished before the file went missing' STATUS.generated.md || exit 1 )
+  grep -qE '^> \*\*1 id\(s\) carry a recorded ' STATUS.generated.md || exit 1
+
+  # EVERY field is escaped, not only the id -- the assertion above pins the path, this one pins
+  # the event kinds. `Task-Status:` is checked against no vocabulary, so a trailer puts arbitrary
+  # text into `seen as:`; hardening the id alone held only while the id sat first on the line,
+  # which is an accident of field order rather than a property of the fix.
+  grep -qE 'seen as: `[a-z,]+`$' STATUS.generated.md || exit 1
+
+  # The magnitude, not just the trigger, and in the index rather than only on a stderr this
+  # very fixture redirects away. Measured before it existed: 22 open tasks, one mistyped
+  # blocked_by, one task planned and twenty-one gone, reported by a single line naming a root.
+  grep -qE 'open task\(s\) withheld' plan.err || exit 1
+  [ "$(Q "SELECT value FROM meta WHERE key='plan_withheld:default';")" = "2 3" ] || exit 1
+
+  # Priority must not be inflated by work that cannot be released. T-D survives and its only
+  # dependent, T-C, is withheld; scoring it over the raw graph counts that dependent anyway.
+  # w_unblocks=3, w_tier=1, T-D is T1, so the score is 3*0 + 1 = 1 when withheld descendants
+  # are excluded and 3*1 + 1 = 4 when they are not. Pinned exactly, because "not zero" would
+  # pass either way.
+  [ "$(Q "SELECT printf('%.1f',score) FROM plan_item WHERE task_id='T-D';")" = "1.0" ] || exit 1
+
+  # A NULL id cannot empty the section. Same SQLite deviation the residue query was hardened
+  # against; the query added alongside it was not, and one NULL row blanked a bullet, put the
+  # count out of step with the rows, and could remove the section outright.
+  sqlite3 .project/index.db "INSERT INTO node(id,type,path,title) VALUES(NULL,'task',NULL,NULL);"
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -qE '^> \*\*3 task id\(s\) are referenced' STATUS.generated.md || exit 1
+  grep -qE '^- $' STATUS.generated.md && exit 1
+
+  # Spend naming an id with no task row is in a figure or in the warning, never neither: every
+  # spend figure joins `task`, and a test for NULL alone would never mention this row.
+  sqlite3 .project/index.db "INSERT INTO spend(transcript,scope,at,turns,tok_in,tok_out,cache_read,cache_write,context,task_id)
+                             VALUES('tr-x','main','2026-01-01T00:00:00Z',1,10,10,0,0,0,'T-B-unfiled');"
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -q 'spend record(s) unattributed' STATUS.generated.md || exit 1 )
 check $? "an unfiled blocker withholds its dependents and is reported; a hostile id cannot suppress the section"
 rm -rf "$ub"
 

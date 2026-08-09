@@ -797,15 +797,20 @@ cat <<'DERIVE'
 -- could not be resolved is reported rather than silently discarded. Silently INVENTED is worse
 -- than either, because it reads as work.
 --
--- An id that later gains a file needs no reconciliation step, and that is a property of the
--- ordering rather than a promise: section 2 emits the task row from the file with its
--- frontmatter, this runs afterwards and only ever adds what is missing, so the id becomes a
--- real task on the next index with nothing to migrate. A task filed after the commit that
+-- WHERE THE RULE ACTUALLY LIVES, since this is the third thing a reader looks at and the first
+-- two were misleading: `task` rows come from section 2 and from nowhere else -- one INSERT per
+-- parsed FILE. There is no statement here that admits a task, so a file is the only way in. An
+-- earlier version of this change added a guarded INSERT here, `path IS NOT NULL`, which read
+-- like the gate implementing all of it and was dead code: section 2 has already inserted a row
+-- for every file, so it could never find one to add. Measured, then deleted -- indexing with and
+-- without it produced identical task rows. What stops a phantom is the ABSENCE below, not a
+-- guard, and an absence needs saying out loud or the next reader restores the invention.
+--
+-- An id that later gains a file therefore needs no reconciliation step: the file starts
+-- producing the row, and nothing here has to notice. A task filed after the commit that
 -- referenced it is a normal sequence, not an error.
 INSERT OR IGNORE INTO node
   SELECT DISTINCT task_id,'task',NULL,task_id FROM event WHERE task_id IS NOT NULL AND task_id<>'';
-INSERT OR IGNORE INTO task(id)
-  SELECT id FROM node WHERE type='task' AND path IS NOT NULL AND path<>'';
 
 -- git records what tier was actually used; frontmatter only declares an intent.
 UPDATE task SET tier = COALESCE((
