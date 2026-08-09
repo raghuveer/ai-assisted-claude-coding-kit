@@ -139,7 +139,45 @@ tools, vocabulary and exec bits, and has now shipped this shape three times.
 
 ---
 
-## 8. Push early — the gate you cannot run locally is the one that catches you
+## 8. What the development loop costs, measured
+
+One session, 2026-08-09: **$161.57, 4h of API time, 16.5h of wall time, 2,648 lines added.**
+Opus $138.82, Sonnet $22.75. 67% of spend came from subagent-heavy work, 79% at >150k context,
+97% from a session running 8+ hours.
+
+**What it bought:** one task closed, two built and correctly rejected, six defects filed with
+reproductions, an adoption rewrite, this document, and capability evidence from two external
+repositories.
+
+**Where it leaked, in order of size:**
+
+**Rework from unverified claims.** Rounds 2, 3 and 4 of one task existed largely because
+sentences in the previous round were false (§3). Each round costs several subagents plus a fix
+pass. The expensive instrument — adversarial review — was spending its budget on prose a cheap
+pass could have caught, instead of on what only it finds: a forged `commit_sha` reaching the
+report, a spend row swallowing 5.4M token-equivalents. This is what
+`T-20260809-a-claim-audit-before-a-task-closes-names` exists to stop.
+
+**One context across many tasks.** Four distinct tasks and two dry runs shared a single session,
+so every later request paid for all the earlier context. The task files and memory already carry
+enough to resume cold — that is what they are for — so the split costs nothing but discipline.
+
+**Polling.** Repeatedly checking background jobs, each check a full request at high context.
+Fewer, longer waits are strictly better.
+
+**Wall time is not money, but it is still a cost.** 16.5h wall against 4h API is mostly waiting on
+local suites, which burn no tokens. It still shapes behaviour: at 8-10 minutes a run, mutation
+proofs get batched instead of taken one at a time, and two mutation guards were written carelessly
+on exactly that pressure — one skipped silently, one ran an unmutated suite to a green result.
+Filed as `T-20260809-conformance-cannot-run-one-step-so-every`.
+
+**What was NOT waste:** the reviewers. 24 real defects including two criticals, each reproduced in
+a purpose-built fixture, found after a 35-step suite, twelve red mutations and three-platform CI
+had all passed. Cutting that spend would have shipped the defects instead.
+
+---
+
+## 9. Push early — the gate you cannot run locally is the one that catches you
 
 A new script landed in the index as `100644` while every sibling was `100755`, and three CI jobs
 went red. The local suite had passed 35/0 on the same tree, and that was **true and incomplete**:
