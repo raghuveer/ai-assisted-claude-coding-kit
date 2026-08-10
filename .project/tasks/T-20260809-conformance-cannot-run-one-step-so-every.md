@@ -101,6 +101,17 @@ The mutation harness itself reported all six as SURVIVED on its first run, becau
 resolved to the Windows built-in and no mutant ever started. It now treats "no check ran" as a
 harness error rather than a survival — the same lesson as §1, one level up.
 
+**Every step was then run alone**, all 32, anchored to its exact name: **32 ok, 0 failed**.
+Criterion 4 said steps must "still work under filtering, or be named as unfilterable", and until
+this ran, the claim that they do rested on reading which directories each step builds — which is
+§3's shape exactly, an author's confident sentence with no test behind it. It is now measured.
+Two steps report zero checks because they assert nothing by design (`environment` prints
+versions, `deterministic fixture` builds the tree); both are honest, not vacuous.
+
+Cost of the sweep: ~12 min for all 32 individually, against 241 s for the suite. The per-step
+premium is process startup plus each chain member re-running its prefix, which is the intended
+trade — the filter is for running ONE step, not all of them one at a time.
+
 ## Notes
 
 Filed 2026-08-09 from the session cost review. Not a correctness defect — the suite is right, it
