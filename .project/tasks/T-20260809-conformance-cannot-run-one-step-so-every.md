@@ -5,7 +5,7 @@ epic: validation
 tier: T1
 lang: bash
 paths: tests/conformance.sh
-state: open
+state: done
 ---
 
 ## Intent
