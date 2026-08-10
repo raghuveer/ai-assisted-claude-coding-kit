@@ -122,3 +122,97 @@ data that cannot be interpreted afterwards.
 Recorded T3, not the T2 it was proposed at: it touches `tooling/kit-index.sh`, which carries a
 T3 floor, and the kit reported `recorded T2, floor T3` on the next reindex. Raised before the
 work rather than after, which is the only order in which a tier is a control.
+
+---
+
+## T3 review round (2026-08-10) — REJECTED, do not close
+
+Two reviewers, read-only (`Read, Grep, Glob` enforced by `--allowedTools`, not requested in
+prose), launched as separate processes at the same moment so the second was blind to the first.
+`implementation-reviewer` (sonnet) returned **REJECT** with 5 findings; `security-reviewer`
+(opus) returned **REVISE** with 7, explicitly excluding everything already filed. 12 findings
+recorded. **Both may not be closed over: the working agreement forbids approving with major
+findings pending.**
+
+**Both agree the headline property holds.** An escape cannot be hidden by relabelling
+provenance: `all` carries no `WHERE`, excluded values are counted under `Other provenance`, and
+the residue guard is NULL-hardened. The second reviewer tried the trailer, the frontmatter, the
+derivation and the residue and could not break it. That half is sound and should not be
+re-litigated.
+
+Every claim below was re-verified by hand before being written here.
+
+### Must fix before this task closes — these are this task's own defects
+
+**1. `Via: unknown` is accepted by the hook and silently discarded by the indexer** (major).
+`kit-index.sh:518` guards on `viaok(via) != "unknown"`, but `unknown` **is in the vocabulary**
+(`kit-lib.sh:88`), so no `via` event is written and the derivation's `COALESCE` falls back to
+the frontmatter. Consequences: a task whose frontmatter says `via: kit` — the one value the
+design says nobody should take on trust — **cannot be demoted by a human's trailer**, and a task
+promoted by an earlier `Via: kit` can never be retracted. Movement into the measured population
+is one-way. The only working retraction is `Via: manual`, which this task's own design forbids
+conflating with `unknown` ("one says nobody recorded it, the other is a claim about what
+happened"). The tool forces exactly the conflation the design prohibits. The comment at
+`kit-index.sh:515-517` — "A value outside the vocabulary is DROPPED" — is also false: an
+in-vocabulary value is dropped too.
+
+**2. The fail-closed derivation filter has no test; deleting it leaves the suite green** (major).
+`kit-index.sh:904-906` (`AND e.payload IN (…)`) is the entire content of commit `a4a51a0`, added
+because `kit-event.sh <task> via` wrote a whole JSON line into `task.via` and dropped a task
+carrying a recorded escape out of the report. **`kit-event.sh` appears zero times in
+`tests/conformance.sh`** (verified: `grep -c` returns 0), and both provenance steps use only
+vocabulary-valid values, so every fixture already satisfies the `IN` clause. Remove the hardening
+and the suite stays 100% green. This is §1 exactly — the check prints PASS when the thing under
+test is absent — and the three mutations this task cites do not touch it.
+
+**3. `0 / 0 via:kit` is a rate with an empty denominator, printed like a measurement** (major).
+Live in this repo right now, `STATUS.generated.md:65-68`: all four tiers read `0 / 0 via:kit`
+against 58 tasks, and nothing on the page says the column is empty. The honest fallback string
+at `kit-status.sh:213` is now unreachable, because `ESC` is grouped over every task and so is
+never empty merely because the kit population is. This is this task's own stated defect
+reintroduced in the new column: *"a metric that cannot distinguish 'reviewed and nothing escaped'
+from 'never reviewed' is the same open-circuit failure the findings loop had."* It is the day-one
+state of every adopter and the permanent state of this repo.
+
+**4. `INSTALL.md` gives adopters the wrong frontmatter key** (major). `INSTALL.md:173` says to
+set `Via:` in task frontmatter; the indexer reads lowercase `v["via"]` (`kit-index.sh:335`).
+`Via: manual` in a task file lands in `v["Via"]`, is never read, and indexes as `unknown` with no
+warning. Back-fill is the **only** route for work finished before adoption — you cannot add a
+trailer to a commit already written — so this silently breaks the exact population the design
+calls load-bearing. The correct spelling appears in one user-visible place, a line printed only
+when `Other provenance` is already non-empty.
+
+**5. The human gate is prose, and the prose is addressed to the agent it means to exclude**
+(major). **Found independently by both reviewers** — the only convergent finding, and the
+strongest signal in the round. Nothing checks *who* wrote the trailer: `kit-trailers.sh:123-128`
+validates vocabulary membership only, so any actor with commit access — including a coder agent
+this kit spawns with git access — can write `Via: kit` into its own commit and have it indexed as
+legitimate. Worse, `.claude/CLAUDE.md:19` and `templates/CLAUDE.kit.md:17` say *"**You** set it,
+not the agent that did the work"* in the two files loaded into **the agent's** context every
+session; read by its actual audience, "you" is the agent. `INSTALL.md:176` states it correctly to
+a human. Acceptance criterion 5 was closed on the narrower claim that no kit *script* writes the
+value, which is true and does not establish that a person typed it — §3.
+
+### Pre-existing, and NOT to be folded into this task
+
+Filed separately or already filed; recorded here so the round's output is complete.
+
+- Folded trailer drops its continuation (`T-20260809-a-folded-git-trailer-loses-its-continuat`,
+  open). Names `Via` as sharing the broken record parse — worth re-verifying when that lands.
+- The single-definition vocabulary check is blind to reformatting: `grep -F "kit agent manual
+  unknown"` cannot see `schema.sql:25`'s `kit | agent | manual | unknown`, which is a live second
+  copy inside the searched tree that the guard reports PASS on.
+- `KITVIA=kit` hardcoded at `kit-status.sh:206`; no `CHECK` constraint behind the residue guard's
+  NULL precondition.
+- `WHERE t.via<>'kit'` drops a NULL `via` from **Other provenance** while `all` still counts its
+  escapes, falsifying the claim that nothing is excluded from the report. Unreachable today
+  (`NOT NULL DEFAULT 'unknown'`), and that is precisely the standing of the two NULL guards this
+  same file already writes and tests — third instance of the same SQL-NULL miss.
+- `t.via` is interpolated into the report unescaped (`kit-status.sh:219`) on a rationale that the
+  same comment block contradicts; a `via` of `<!--` can silence the sections beneath it.
+
+### What the reviewers said they did not check
+
+Neither ran anything — read-only by design. Neither checked the adapter path end to end, and the
+second noted the `kit-index.sh:518` sibling guard is untested for its stated threat model
+("a commit that skipped the hook") but masked by the derivation filter.
