@@ -2,6 +2,8 @@
 # Cross-platform conformance run.
 #
 #   KIT=/path/to/kit WORK=/path/to/empty/scratch bash tests/conformance.sh
+#   ... bash tests/conformance.sh --only 'escape'      one step, in seconds
+#   ... bash tests/conformance.sh --list               the step names to match on
 #
 # Builds a deterministic fixture -- fixed author AND committer dates, so every commit SHA
 # is identical on every machine -- then exercises the pipeline end to end and prints a
@@ -13,10 +15,124 @@
 # hub. A fixture that only exercises the happy path proves the happy path.
 set -uo pipefail
 
+# --- step selection --------------------------------------------------------
+# `--only PATTERN` (repeatable, case-insensitive ERE, OR-ed) runs just the steps
+# whose names match. It exists to make ONE mutation proof cheap: proving a single
+# control can fail is the discipline this suite is for, and paying a whole run for
+# it got that discipline batched into overnight runs instead of used.
+#
+# The full run is the only thing that proves conformance, and it is what CI runs.
+# A filtered run is therefore built to be impossible to mistake for a whole one:
+# the tally says PARTIAL and names how many steps did not run, the fingerprint is
+# labelled as covering the chain rather than the suite, and a pattern matching no
+# step exits 2 instead of reporting a clean zero-step pass. "Nothing ran" reading
+# as green is the exact defect shape this repository keeps shipping -- see
+# docs/LESSONS.md S1.
+#
+# Steps are not all independent. Most build and destroy their own fixture, but two
+# groups share one, and those carry a chain name as `step`'s second argument.
+# Selecting a chain member runs that chain from its start through the selected
+# step, and says so. No step ever runs without the fixture it reads.
+# Absolute, because a step below re-invokes this file to check the filter's own
+# guarantees, and by then the fixture steps may have changed directory.
+SELF=${BASH_SOURCE[0]:-$0}
+SELF=$(cd "$(dirname "$SELF")" && pwd)/$(basename "$SELF")
+ONLY=''; LIST=0
+add_only() { if [ -z "$ONLY" ]; then ONLY=$1; else ONLY="$ONLY|$1"; fi; }
+while [ $# -gt 0 ]; do
+  case $1 in
+    --only)   [ $# -ge 2 ] || { printf 'conformance: --only needs a pattern\n' >&2; exit 2; }
+              add_only "$2"; shift 2 ;;
+    --only=*) add_only "${1#--only=}"; shift ;;
+    --list)   LIST=1; shift ;;
+    -h|--help)
+      printf 'usage: KIT=<kit> WORK=<scratch> bash %s [--only PATTERN]... [--list]\n' "$SELF"
+      exit 0 ;;
+    *) printf 'conformance: unknown argument %s\n' "$1" >&2; exit 2 ;;
+  esac
+done
+
+# The step list is read back out of this file rather than kept in a table beside it.
+# A second copy is a copy that drifts, and this repository has already paid for that
+# once with the finding vocabulary.
+STEP_TABLE=$(
+  sed -n 's/^if step "\([^"]*\)"\(.*\); then$/\1|\2/p' "$SELF" |
+  { n=0; while IFS='|' read -r _nm _ch; do
+      n=$((n+1))
+      printf '%s|%s|%s\n' "$n" "$_nm" "$(printf '%s' "$_ch" | tr -d '[:space:]')"
+    done; }
+)
+STEP_COUNT=$(printf '%s\n' "$STEP_TABLE" | grep -c '^[0-9]')
+# The parser is checked against a looser count of the same lines. A step written in a
+# shape the strict pattern misses would otherwise vanish from the table silently: it
+# would still RUN on a full run, but `--only` could never name it and the "N of M"
+# figure above would be wrong. Counting zero is the same defect at full size.
+STEP_DECLARED=$(grep -c '^if step ' "$SELF")
+if [ "${STEP_COUNT:-0}" -eq 0 ] || [ "$STEP_COUNT" != "$STEP_DECLARED" ]; then
+  printf 'conformance: internal error -- the step self-parser read %s of %s step lines in %s.\n' \
+    "${STEP_COUNT:-0}" "$STEP_DECLARED" "$SELF" >&2
+  printf '  Steps must be written exactly `if step "name" [chain]; then` ... `fi`.\n' >&2
+  exit 2
+fi
+# Selection is by name and de-duplicated by name, so two steps sharing one would be
+# announced as a single step and could never be told apart by `--only`. They are unique
+# today; this is what keeps that true rather than assumed.
+STEP_UNIQUE=$(printf '%s\n' "$STEP_TABLE" | cut -d'|' -f2 | sort -u | grep -c '^.')
+if [ "$STEP_UNIQUE" != "$STEP_COUNT" ]; then
+  printf 'conformance: internal error -- %s step names for %s steps; these are duplicated:\n' \
+    "$STEP_UNIQUE" "$STEP_COUNT" >&2
+  printf '%s\n' "$STEP_TABLE" | cut -d'|' -f2 | sort | uniq -d | sed 's/^/  /' >&2
+  exit 2
+fi
+
+if [ "$LIST" = 1 ]; then
+  printf '%s\n' "$STEP_TABLE" | while IFS='|' read -r _i _nm _ch; do
+    if [ -n "$_ch" ]; then printf '%3s  %s  [chain: %s]\n' "$_i" "$_nm" "$_ch"
+    else                   printf '%3s  %s\n' "$_i" "$_nm"; fi
+  done
+  exit 0
+fi
+
 KIT=${KIT:?set KIT to the kit checkout}
 WORK=${WORK:?set WORK to an empty scratch dir}
-ok=0; bad=0; skipped=0
-step() { printf '\n=== %s\n' "$*"; }
+
+SELECTED=''; PULLED=0
+if [ -n "$ONLY" ]; then
+  _hit=$(printf '%s\n' "$STEP_TABLE" | while IFS='|' read -r _i _nm _ch; do
+           printf '%s' "$_nm" | grep -Eiq -- "$ONLY" && printf '%s|%s|%s\n' "$_i" "$_nm" "$_ch"
+         done)
+  if [ -z "$_hit" ]; then
+    printf 'conformance: --only %s matched no step, so nothing would run.\n' "$ONLY" >&2
+    printf '  A run of zero steps is not a pass. `--list` shows the names.\n' >&2
+    exit 2
+  fi
+  SELECTED=$(printf '%s\n' "$_hit" | cut -d'|' -f2)
+  # Pull in each selected step's chain, from the chain's start up to that step.
+  for _c in $(printf '%s\n' "$_hit" | cut -d'|' -f3 | grep -v '^$' | sort -u); do
+    _max=$(printf '%s\n' "$_hit" |
+           while IFS='|' read -r _i _nm _ch; do [ "$_ch" = "$_c" ] && printf '%s\n' "$_i"; done |
+           sort -n | tail -1)
+    _pre=$(printf '%s\n' "$STEP_TABLE" |
+           while IFS='|' read -r _i _nm _ch; do
+             [ "$_ch" = "$_c" ] && [ "$_i" -le "$_max" ] && printf '%s\n' "$_nm"
+           done)
+    SELECTED=$(printf '%s\n%s' "$SELECTED" "$_pre")
+  done
+  SELECTED=$(printf '%s\n' "$SELECTED" | grep -v '^$' | sort -u)
+  _nsel=$(printf '%s\n' "$SELECTED" | grep -c '^.')
+  PULLED=$((_nsel - $(printf '%s\n' "$_hit" | grep -c '^.')))
+  printf '=== FILTERED RUN --only %s\n' "$ONLY"
+  printf '    %s of %s steps will run' "$_nsel" "$STEP_COUNT"
+  [ "$PULLED" -gt 0 ] && printf ', %s of them pulled in to build a shared fixture' "$PULLED"
+  printf '.\n'
+fi
+
+ok=0; bad=0; skipped=0; ran=0; filtered=0
+step_selected() { [ -z "$ONLY" ] || printf '%s\n' "$SELECTED" | grep -qxF -- "$1"; }
+step() {
+  if step_selected "$1"; then ran=$((ran+1)); printf '\n=== %s\n' "$1"; return 0; fi
+  filtered=$((filtered+1)); return 1
+}
 check() { if [ "$1" = 0 ]; then ok=$((ok+1)); printf '  PASS  %s\n' "$2"
           else bad=$((bad+1)); printf '  FAIL  %s\n' "$2"; fi; }
 # A control that could not run is not a control that passed. It does not fail the suite --
@@ -25,12 +141,13 @@ check() { if [ "$1" = 0 ]; then ok=$((ok+1)); printf '  PASS  %s\n' "$2"
 # never executed is the same green-that-means-nothing this suite exists to refuse.
 skip()  { skipped=$((skipped+1)); printf '  SKIP  %s — %s\n' "$2" "$1"; }
 
-step "environment"
+if step "environment"; then
 uname -srm 2>/dev/null || echo "(no uname)"
 bash --version | head -1; git --version; sqlite3 --version | awk '{print "sqlite3 "$1}'
 (awk --version 2>/dev/null || awk -W version 2>&1) | head -1
+fi
 
-step "scripts are executable in the git index"
+if step "scripts are executable in the git index"; then
 # Not on disk: git on Windows cannot read the msys exec bit, so a chmod there never reaches
 # the index and the file lands non-executable on Linux. The index is the shared truth.
 nx=0
@@ -39,8 +156,9 @@ for f in $(git -C "$KIT" ls-files tooling templates | grep -E '\.sh$|commit-msg'
   [ "$m" = 100755 ] || { echo "  $m $f"; nx=1; }
 done
 check $nx "every script is 100755"
+fi
 
-step "finding vocabulary has not drifted"
+if step "finding vocabulary has not drifted"; then
 # The reviewers have no Bash, so they cannot run `kit-finding.sh --vocab` and the lists are
 # inlined in their instructions. That is the only form they can use, and it is exactly the
 # duplication the script's own header warns about -- the vocabulary already diverged across
@@ -77,8 +195,9 @@ for a in "$KIT"/agents/*.md; do
   esac
 done
 check $drift "every agent's inlined vocabulary matches kit-finding.sh --vocab"
+fi
 
-step "no agent is told to run a tool it does not have"
+if step "no agent is told to run a tool it does not have"; then
 # implementation-reviewer was told to run kit-finding.sh --vocab with tools: Read, Grep,
 # Glob. It guessed the classes instead, and 3 of its 4 would have been rejected.
 ungranted=0
@@ -94,8 +213,9 @@ for a in "$KIT"/agents/*.md; do
   fi
 done
 check $ungranted "no Bash-less agent is instructed to execute a script"
+fi
 
-step "a script broken by an apostrophe names the apostrophe"
+if step "a script broken by an apostrophe names the apostrophe"; then
 # Every awk program here is a multi-line single-quoted shell string, so an apostrophe typed
 # inside one -- almost always an English possessive in a comment -- closes it and everything
 # after is reinterpreted as shell. It happened twice on 2026-08-08 in the same file.
@@ -149,8 +269,9 @@ ap="$WORK.apos"; rm -rf "$ap"; mkdir -p "$ap"
   apos_suspect "$ap/broken.sh" "$ln" | grep -q ':5:' )   # and line 5 is the apostrophe
 check $? "the diagnosis points at the apostrophe, not at where parsing broke"
 rm -rf "$ap"
+fi
 
-step "a domain outside the declared industries is dropped, not stored"
+if step "a domain outside the declared industries is dropped, not stored"; then
 # An unknown class is rejected loudly. A wrong domain was accepted SILENTLY and polluted the
 # industry accelerator it feeds -- reviewers put the finding's subject there (`caching`,
 # `cache-adapter-design`) because nothing said what a domain was. The `pattern` axis is where
@@ -169,8 +290,9 @@ BATCH
   grep -q '"domain":""' .project/events.ndjson && grep -q '"pattern":"cache-port"' .project/events.ndjson )
 check $? "undeclared domain dropped, pattern retained"
 rm -rf "$step_dir"
+fi
 
-step "a trivial commit still has its trailers checked"
+if step "a trivial commit still has its trailers checked"; then
 # git.trivial_pattern means trailers are not REQUIRED, not that they are not CHECKED. The
 # early return let a `docs:` commit carry a typo'd Task-Id, which then indexed as a titleless
 # phantom task -- and a pushed commit message cannot be corrected.
@@ -201,8 +323,9 @@ Tier: T9
   [ -z "$(bash "$KIT/tooling/kit-trailers.sh" message ok.txt 2>&1)" ] || exit 1 )
 check $? "exempt commit: absence allowed, wrong values still reported"
 rm -rf "$tx"
+fi
 
-step "pre-push blocks a wrong trailer while it can still be amended"
+if step "pre-push blocks a wrong trailer while it can still be amended"; then
 # commit-msg is skippable and absent for anyone who never ran kit-init; CI catches correctly
 # but only after the push, when a commit message can no longer be changed. This repository
 # carries a permanent phantom task from exactly that gap.
@@ -237,8 +360,9 @@ Tier: T2"
   git push origin main >/dev/null 2>&1 || exit 1 )        # must now succeed
 check $? "refuses a typo'd Task-Id, accepts it once amended"
 rm -rf "$pp"
+fi
 
-step "spend is measured per agent, from that agent's own transcript"
+if step "spend is measured per agent, from that agent's own transcript" spend; then
 # The defect this replaced: every SubagentStop received the SESSION transcript, which holds
 # no subagent records at all, so each row was main-loop cost wearing an agent's name. The
 # fixture therefore puts DIFFERENT numbers in the two transcripts -- a reader that fell back
@@ -288,8 +412,9 @@ Task-Status: done"
   [ "$rows" = 2 ] && [ "$att" = 2 ] && [ "$w" = 4115 ] &&
   [ "$sub" = "security-reviewer/A1/m-sub/200/405" ] && [ "$main" = "[]/m-main/500" ] )
 check $? "one row per transcript, agent rows from agent files, main loop unlabelled"
+fi
 
-step "a reviewer's findings reach the table without anyone remembering"
+if step "a reviewer's findings reach the table without anyone remembering"; then
 # The defect: reviewers emitted correctly formatted blocks and NOTHING consumed them. A real
 # project that had run a T2 and a T3 review held zero finding rows, and every escape-rate number
 # in the README was computed from that empty table -- `T3 0/13` reading as "nothing escaped"
@@ -342,8 +467,9 @@ Task-Status: progress"
   [ "$(Q "SELECT COUNT(*) FROM finding WHERE task_id='T-r' AND tier='T2';")" = 2 ] || exit 1 )
 check $? "findings are harvested once, rejections are counted, and attribution follows the task"
 rm -rf "$fl"
+fi
 
-step "a subagent whose transcript cannot be found is reported, not costed"
+if step "a subagent whose transcript cannot be found is reported, not costed" spend; then
 # The alternative -- writing the row anyway from whatever transcript is at hand -- is the
 # defect. Nothing is recorded, and the fact that nothing was recorded is.
 ( cd "$sx"
@@ -355,8 +481,9 @@ step "a subagent whose transcript cannot be found is reported, not costed"
   [ "$rows" = 2 ] && [ "$gaps" = 1 ] )
 check $? "no spend row, one spend-gap, and not one gap per firing"
 rm -rf "$sx"
+fi
 
-step "a CRLF profile and CRLF task files parse identically to LF"
+if step "a CRLF profile and CRLF task files parse identically to LF"; then
 # A Windows checkout of a repo without `*.md text eol=lf` puts CR on the end of every line of
 # the profile and of every task file. The readers trimmed space and tab, so `paths.tasks`
 # became `.project/tasks<CR>` -- naming no directory, finding no tasks, and reporting an empty
@@ -436,8 +563,9 @@ else
   check $? "CRLF input yields the same values as LF (kit_cfg_all + frontmatter)"
 fi
 rm -rf "$cx"
+fi
 
-step "a broken tier.rule cannot empty the index, and a lost task file fails closed"
+if step "a broken tier.rule cannot empty the index, and a lost task file fails closed"; then
 # `globre` left `[`, `]` and `\` unescaped, so `tier.rule: src/[ab T3` compiled to an invalid
 # regex and awk took a FATAL mid-pass: three of four tasks vanished, the survivor lost its
 # tier and its floor, and kit-index.sh exited 0 having printed the DB path. A typo in a
@@ -498,8 +626,9 @@ gx="$WORK.glob"; rm -rf "$gx"; mkdir -p "$gx/.claude" "$gx/.project/tasks"
   [ "$(sqlite3 .project/index.db 'SELECT COUNT(*) FROM task;' | tr -d '\015')" = 4 ] )
 check $? "bad rule refused and recorded, lost file fails closed, empty file does not"
 rm -rf "$gx"
+fi
 
-step "a failed build leaves the previous index alone and keeps saying so"
+if step "a failed build leaves the previous index alone and keeps saying so"; then
 # Two halves of one defect. `fl` was the only value on the task INSERT not passed through
 # q(), so `tier.rule: src/** T3','x` ended the SQL literal early: the statement failed, the
 # surrounding transaction still committed, and every task landed with tier NULL. Then the
@@ -578,8 +707,9 @@ ax="$WORK.apos"; rm -rf "$ax"; mkdir -p "$ax/.claude" "$ax/.project/tasks"
   [ "$(sqlite3 .project/index.db "SELECT tier FROM task WHERE id='T-1';" | tr -d '\015')" = T1 ] )
 check $? "apostrophe refused before the SQL, failed build preserves the index and stays loud"
 rm -rf "$ax"
+fi
 
-step "the two floor sources agree on a non-ASCII path, and ? is refused"
+if step "the two floor sources agree on a non-ASCII path, and ? is refused"; then
 # A tier floor is derived twice and the two derivations must agree. `globre` turns the glob
 # into an awk regex for the DECLARED-paths source; the same glob goes to SQLite GLOB for the
 # TOUCHED-files source. Two ways they diverged on a non-ASCII name, both measured:
@@ -664,8 +794,9 @@ else
        "same floor from both sources on a non-ASCII path"
 fi
 rm -rf "$nx"
+fi
 
-step "provenance is recorded, defaulted and split out of the rate it would dilute"
+if step "provenance is recorded, defaulted and split out of the rate it would dilute"; then
 # Escape rate was computed over EVERY task regardless of whether this pipeline had ever run on
 # one. On a brownfield adoption most of the backlog is pre-existing or hand-done, so the
 # denominator filled with work the kit never reviewed and the headline metric was diluted from
@@ -714,8 +845,9 @@ Via: agent"
   [ -z "$(bash "$KIT/tooling/kit-trailers.sh" message m2.txt 2>&1)" ] || exit 1 )
 check $? "via: vocabulary honoured, unknown by default, trailer wins, rate splits and names"
 rm -rf "$vx"
+fi
 
-step "a recorded escape cannot be filtered out of the report"
+if step "a recorded escape cannot be filtered out of the report"; then
 # The failure this exists to make impossible: an escape is recorded, the task is then moved out
 # of `via='kit'`, and the metric reads clean while the database says otherwise. It is not
 # hypothetical -- one documented command wrote the column and dropped a task carrying a
@@ -814,8 +946,9 @@ Via: manual"
   [ $((shown + ${orph:-0})) = "$dbesc" ] || exit 1 )
 check $? "escape survives a relabel out of via:kit; nothing stored is missing from the report, and a NULL id cannot silence the residue"
 rm -rf "$ex"
+fi
 
-step "a Task-Id matching no task file is named, not counted as work"
+if step "a Task-Id matching no task file is named, not counted as work"; then
 # One character in a pushed commit -- T-20260801 where T-20260731 was meant -- became a
 # permanent open T1 task with no title and no epic: in the Open list, in the backlog count, and
 # in the escape-rate denominator of a tier nobody ever assigned it. kit-trailers.sh warns at
@@ -902,8 +1035,9 @@ Task-Status: done"
   [ "$(Q "SELECT COUNT(*) FROM spend WHERE task_id='T-ghost';")" = 1 ] || exit 1 )
 check $? "a ghost id is out of the backlog and every metric, named with its commit, and reconciles when filed"
 rm -rf "$gh"
+fi
 
-step "an unknown blocker still blocks, and an id cannot hide itself from the report"
+if step "an unknown blocker still blocks, and an id cannot hide itself from the report"; then
 # Two failures found by review of the change above, both of which it introduced.
 #
 # 1. TOPOLOGY BEATS PRIORITY is kit-plan.sh's first stated rule, and not inventing a task row
@@ -1034,8 +1168,9 @@ Task-Status: done"
   grep -q 'spend record(s) unattributed' STATUS.generated.md || exit 1 )
 check $? "an unfiled blocker withholds its dependents and is reported; a hostile id cannot suppress the section"
 rm -rf "$ub"
+fi
 
-step "the via vocabulary is defined in exactly one place"
+if step "the via vocabulary is defined in exactly one place"; then
 # The finding vocabulary was restated in four locations once, and the agents then emitted
 # values the recorder threw away. This one has a single definition in kit-lib.sh and every
 # consumer reads it from there; a literal copy anywhere else is the drift starting again.
@@ -1051,8 +1186,9 @@ step "the via vocabulary is defined in exactly one place"
                          grep -rlF "$VOCAB" "$KIT/tooling" "$KIT/tests" 2>/dev/null | sed 's/^/    /'; }
   [ "$copies" = 1 ] )
 check $? "one definition of the via vocabulary, read by every consumer"
+fi
 
-step "a tier below its floor is reported"
+if step "a tier below its floor is reported"; then
 # Under-tiering is silent and it is the dangerous direction. Two of three recorded tiers in a
 # real backlog were below their floor -- and a floor computed only from touched files would
 # have caught NONE of them, because 7 of 8 open tasks had no commits yet. Hence the declared
@@ -1101,12 +1237,61 @@ b
   [ "$u" = T3 ] && [ "$a" = T2 ] && [ "$n" = null ] && [ "$b" = 1 ] )
 check $? "floor from declared paths; below flagged, above not, no-basis distinguished"
 rm -rf "$tf"
+fi
 
-step "validate.py"
+if step "the step filter cannot report a vacuous pass"; then
+# `--only` is a development-loop convenience, but two of its failure modes are the exact
+# shape this suite exists to refuse: a pattern that matches nothing reporting a clean run,
+# and a filtered run reading like a whole one. Neither is visible by inspection and both
+# are cheap to assert, so they are asserted rather than trusted.
+#
+# Every nested run is marked, and a marked run skips this step. Relying on the patterns
+# below never naming this step is not enough: the `--bogus` case is a full run the moment
+# its guard stops working, and that full run re-enters this step. Mutating that guard away
+# turned the suite into a fork bomb, which is why the sentinel is here and not the comment
+# that used to be.
+if [ -n "${KIT_CONFORMANCE_NESTED:-}" ]; then
+  skip "this run is itself one of those nested checks" "the step filter's own guarantees"
+else
+fx="$WORK.filter"; rm -rf "$fx"; mkdir -p "$fx"
+export KIT_CONFORMANCE_NESTED=1
+KIT="$KIT" WORK="$fx" bash "$SELF" --only 'zz-no-step-is-called-this' >"$fx/vac.out" 2>&1; rc=$?
+[ "$rc" = 2 ]; check $? "a pattern matching no step exits 2 rather than passing with nothing run"
+grep -q 'matched no step' "$fx/vac.out"; check $? "and names the pattern that matched nothing"
+
+KIT="$KIT" WORK="$fx" bash "$SELF" --list >"$fx/list.out" 2>&1; rc=$?
+nl=$(grep -c '^ *[0-9]' "$fx/list.out")
+[ "$rc" = 0 ] && [ "${nl:-0}" -ge 2 ]; check $? "--list names the steps ($nl found) so a pattern can be chosen"
+
+KIT="$KIT" WORK="$fx" bash "$SELF" --only 'environment' >"$fx/part.out" 2>&1
+grep -q '^=== PARTIAL RUN' "$fx/part.out"; check $? "a filtered run announces itself as partial"
+# The full run's tally is this line and nothing else on it. A filtered run that ever
+# printed it would be indistinguishable from conformance in a pasted terminal.
+grep -Eq '^=== [0-9]+ passed, [0-9]+ failed$' "$fx/part.out"; rc=$?
+[ "$rc" -ne 0 ]; check $? "and never prints the full run's tally line"
+
+KIT="$KIT" WORK="$fx" bash "$SELF" --only 'environment' --only 'validate' >"$fx/two.out" 2>&1
+# Asserted on the selection line rather than by counting `=== ` headers, because the
+# banners are `=== ` lines too and counting them passed this at four.
+grep -qE '^ +2 of [0-9]+ steps will run\.$' "$fx/two.out"
+check $? "two --only patterns select two steps, not one and not all"
+
+# Paired with --only so that a build which stops refusing unknown arguments runs one cheap
+# step rather than the whole suite. The discrimination is the same -- refused is exit 2,
+# ignored is a clean exit 0 -- and the cost when it is ignored is bounded.
+KIT="$KIT" WORK="$fx" bash "$SELF" --only 'environment' --bogus >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ]; check $? "an unknown argument exits 2 rather than being ignored"
+unset KIT_CONFORMANCE_NESTED
+rm -rf "$fx"
+fi
+fi
+
+if step "validate.py"; then
 (cd "$KIT" && { python3 validate.py >/dev/null 2>&1 || python validate.py >/dev/null 2>&1; })
 check $? "validate.py exits 0"
+fi
 
-step "deterministic fixture"
+if step "deterministic fixture" fixture; then
 rm -rf "$WORK"; mkdir -p "$WORK/src" "$WORK/lib"; cd "$WORK" || exit 1
 export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.com
 export GIT_COMMITTER_NAME=Fixture GIT_COMMITTER_EMAIL=fixture@example.com
@@ -1168,8 +1353,9 @@ EXPECT_HEAD=ff40e675370db48da64177309438fdae84eca5ec
 # The seed alone, so a mismatch says WHICH half moved: seed intact means this script changed,
 # seed moved means a file kit-init.sh commits did.
 EXPECT_SEED=df86de1fe6afabc9ae1b501764f9341bd55c1dd0
+fi
 
-step "trailer hook"
+if step "trailer hook" fixture; then
 sed -i.bak 's|^git.trailer_enforcement:.*|git.trailer_enforcement:  enforce|' .claude/project-profile.md
 rm -f .claude/project-profile.md.bak
 printf 'z\n' > src/c.go; git add -A
@@ -1187,8 +1373,9 @@ git commit -q -m "feat: trailered
 Task-Id: T-a
 Tier: T2" >/dev/null 2>&1
 check $? "accepts a well-formed one"
+fi
 
-step "pipeline"
+if step "pipeline" fixture; then
 bash "$KIT/tooling/kit-index.sh" > idx.log 2>&1
 rc=$?; check $rc "kit-index.sh"
 # Show why. Swallowing this cost a full CI round trip to diagnose a one-character fix.
@@ -1196,39 +1383,49 @@ rc=$?; check $rc "kit-index.sh"
 grep -q "recovered by full-message scan" idx.log; check $? "recovers the squash-stranded trailers"
 bash "$KIT/tooling/kit-plan.sh" --next 5 >/dev/null 2>&1; check $? "kit-plan.sh"
 bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1; check $? "kit-status.sh"
+fi
 
-step "derived state"
+if step "derived state" fixture; then
 sqlite3 -header .project/index.db "SELECT id,state,tier,lang,epic FROM task ORDER BY id;" | tr -d '\r'
 sqlite3 .project/index.db "SELECT key,value FROM meta ORDER BY key;" | tr -d '\r'
+fi
 
-step "timestamps are canonical UTC"
+if step "timestamps are canonical UTC" fixture; then
 # %aI would carry the author local offset and render differently across git versions, so
 # the same history produced different indexes on different machines and ORDER BY compared
 # offsets lexically. Everything must be ...Z.
 n=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM event WHERE at NOT LIKE '%Z';" | tr -d '\r')
 [ "${n:-1}" = 0 ]; check $? "every event.at ends in Z"
+fi
 
-step "co-change"
+if step "co-change" fixture; then
 CC=$(sqlite3 .project/index.db "SELECT COUNT(*) FROM cochange;" | tr -d '\r')
 [ "${CC:-0}" -gt 0 ]; check $? "co-change graph was built ($CC rows)"
 sqlite3 .project/index.db "SELECT COUNT(*) FROM cochange WHERE src LIKE '%README%';" | tr -d '\r' | grep -qx 0
 check $? "README excluded as a hub"
+fi
 
-step "delete and rebuild is lossless"
+if step "delete and rebuild is lossless" fixture; then
 sqlite3 .project/index.db ".dump" | grep -v "INSERT INTO goal" | tr -d '\r' | LC_ALL=C sort > b.dump
 rm -f .project/index.db
 bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
 bash "$KIT/tooling/kit-plan.sh" --next 5 >/dev/null 2>&1
 sqlite3 .project/index.db ".dump" | grep -v "INSERT INTO goal" | tr -d '\r' | LC_ALL=C sort > a.dump
 cmp -s b.dump a.dump; check $? "rebuild is byte-identical"
+fi
 
-step "CI gate"
+if step "CI gate" fixture; then
 bash "$KIT/tooling/kit-trailers.sh" range "HEAD~1..HEAD" --enforce >/dev/null 2>&1
 check $? "passes on a well-formed commit"
+fi
 
-step "FINGERPRINT"
+if step "FINGERPRINT" fixture; then
 H=$(git rev-parse HEAD)
 printf '  head    %s\n' "$H"
+# The fixture chain is fully determined, so under `--only` these two values are the
+# same ones a full run prints -- but they cover the chain, not the suite, and an
+# unlabelled fingerprint pasted out of a filtered run would claim otherwise.
+[ -n "$ONLY" ] && printf '  (partial run: covers the fixture chain, not conformance)\n'
 # sqlite .dump emits sqlite_sequence and PRAGMA writable_schema differently by version, so
 # they are excluded: they are dump formatting, not kit state.
 printf '  index   %s\n' \
@@ -1247,8 +1444,21 @@ if [ "$H" != "$EXPECT_HEAD" ]; then
 fi
 [ "$H" = "$EXPECT_HEAD" ]
 check $? "fixture is reproducible (HEAD == $EXPECT_HEAD)"
+fi
 
-printf '\n=== %d passed, %d failed' "$ok" "$bad"
-[ "$skipped" -gt 0 ] && printf ', %d NOT EXERCISED on this platform' "$skipped"
-printf '\n'
+if [ -n "$ONLY" ]; then
+  # Deliberately not the same sentence as a full run. `35 passed, 0 failed` over a
+  # filtered run would be a worse defect than the slowness the filter cures, so the
+  # word PARTIAL, the pattern, and the number of steps that did not run all appear
+  # before the counts anyone reads.
+  printf '\n=== PARTIAL RUN --only %s\n' "$ONLY"
+  printf '=== %d passed, %d failed' "$ok" "$bad"
+  [ "$skipped" -gt 0 ] && printf ', %d NOT EXERCISED on this platform' "$skipped"
+  printf ' over %d of %d steps; %d did not run\n' "$ran" "$STEP_COUNT" "$filtered"
+  printf '=== NOT a conformance pass. Only the full run is, and only CI runs it on every platform.\n'
+else
+  printf '\n=== %d passed, %d failed' "$ok" "$bad"
+  [ "$skipped" -gt 0 ] && printf ', %d NOT EXERCISED on this platform' "$skipped"
+  printf '\n'
+fi
 exit $bad
