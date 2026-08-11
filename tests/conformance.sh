@@ -1355,15 +1355,73 @@ BRK
   brc=$?
   tries3=$(cat "$STATE")
 
+  # A MISSING prompt is a usage error before the first attempt. Ignoring it handed the reviewer
+  # an empty prompt, whose empty reply recorded as reason=empty -- "a review found nothing" --
+  # and exited 0. A review that never happened, reported clean. Critical, round 5.
+  STATE="$PWD/calls4"; export STATE; rm -f "$STATE"
+  bash "$KIT/tooling/kit-review-record.sh" --task T-r --agent tester \
+    --cmd "bash $PWD/rev.sh" --prompt-file no-such-file.txt --max-attempts 3 >/dev/null 2>&1
+  nofile=$?
+  bash "$KIT/tooling/kit-review-record.sh" --task T-r --agent tester \
+    --cmd "bash $PWD/rev.sh" --max-attempts 3 >/dev/null 2>&1
+  noflag=$?
+  # Neither may have called the reviewer at all.
+  called=$([ -f "$STATE" ] && cat "$STATE" || printf '0')
+
+  # A reviewer that does not read its stdin must not look like a broken command: piped, SIGPIPE
+  # killed printf and pipefail reported the whole pipeline as failed.
+  printf '#!/usr/bin/env bash\nprintf %%s "{\\"findings\\":[{\\"class\\":\\"race\\",\\"severity\\":\\"nit\\",\\"summary\\":\\"this reviewer never read its stdin at all\\"}]}"\n' > nodrain.sh
+  # The prompt must EXCEED the pipe buffer, or this control cannot fail. A short prompt fits in
+  # the buffer, `printf` completes before the non-draining reader exits, and no SIGPIPE ever
+  # happens -- so the mutation that pipes the prompt again passed this check until the prompt
+  # got big. Real review prompts are briefs, not one-liners.
+  awk 'BEGIN{while(i++<200000)printf "x"}' > big.txt
+  bash "$KIT/tooling/kit-review-record.sh" --task T-r --agent documenter \
+    --cmd "bash $PWD/nodrain.sh" --prompt-file big.txt --max-attempts 2 >/dev/null 2>&1
+  nodrain=$?
+
+  # A validator that FAILS is not a reviewer that was refused. Read as a refusal, the empty
+  # correction became the next prompt and every remaining attempt reviewed nothing.
+  bt="$PWD/brokenval"; mkdir -p "$bt"
+  cp "$KIT/tooling/kit-review-record.sh" "$KIT/tooling/kit-finding.sh" "$KIT/tooling/kit-lib.sh" "$bt/"
+  printf 'import sys\nsys.exit(1)\n' > "$bt/kit_findings.py"
+  STATE="$PWD/calls5"; export STATE; rm -f "$STATE"
+  bash "$bt/kit-review-record.sh" --task T-r --agent tester \
+    --cmd "bash $PWD/never.sh" --prompt-file p.txt --max-attempts 4 >/dev/null 2>&1
+  badval=$?
+  tries5=$(cat "$STATE" 2>/dev/null || printf '0')
+
   bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
   rows=$(Q "SELECT COUNT(*) FROM finding;")
-  summ=$(Q "SELECT summary FROM finding;")
+  summ=$(Q "SELECT summary FROM finding WHERE agent='implementation-reviewer';")
   gaps=$(Q "SELECT COUNT(*) FROM event WHERE kind='finding-gap';")
+  # The gap must say WHICH review and WHY, not merely exist -- asserting the count alone was
+  # the round-5 finding against this very fixture.
+  gtask=$(Q "SELECT COUNT(*) FROM event WHERE kind='finding-gap' AND task_id='T-r' AND payload LIKE '%\"agent\":\"tester\"%' AND payload LIKE '%\"reason\":\"rejected\"%';")
 
-  [ "$ok" = 0 ] && [ "$tries" = 2 ] &&
-  [ "$gave" = 1 ] && [ "$tries2" = 2 ] && [ "$brc" = 1 ] && [ "$tries3" = 1 ] &&
-  [ "$rows" = 1 ] && [ "$gaps" = 2 ] &&
-  [ "$summ" = "the diagnostics came back and this reply is the correction" ] )
+  # Named one at a time. Ten conditions in a single `&&` chain report only "false", and a
+  # fixture that cannot say WHICH guarantee broke costs a debugging session every time it goes
+  # red. `check` cannot be used in here -- its counters would not survive the subshell -- so
+  # the subshell names the failure and exits, and the one check outside reports it.
+  want() { [ "$2" = "$3" ] || { printf '    ^ %s: got %s, wanted %s\n' "$1" "$2" "$3" >&2; exit 1; }; }
+  want "corrected reply accepted"        "$ok"      0
+  want "  ...on the second attempt"      "$tries"   2
+  want "incorrigible reviewer gives up"  "$gave"    1
+  want "  ...after exactly max attempts" "$tries2"  2
+  want "broken command not retried"      "$brc"     1
+  want "  ...called exactly once"        "$tries3"  1
+  want "unreadable prompt refused"       "$nofile"  2
+  want "missing prompt flag refused"     "$noflag"  2
+  want "  ...reviewer never called"      "$called"  0
+  want "non-draining reviewer accepted"  "$nodrain" 0
+  want "  ...validator failure attempts" "$tries5"  1
+  want "findings recorded"               "$rows"    2
+  want "summary survived"                "$summ"    "the diagnostics came back and this reply is the correction"
+  # Two tester gaps are expected here -- the incorrigible reviewer and the broken command --
+  # so this asserts the SHAPE (task and reason are present and right), not an exact count.
+  [ "$gtask" -ge 1 ] || { printf '    ^ no gap names both its task and reason=rejected\n' >&2; exit 1; }
+  [ "$badval" != 0 ] || { printf '    ^ a validator failure exited 0\n' >&2; exit 1; }
+  [ "$gaps" -ge 2 ] )
 check $? "a refused reply is corrected and recorded; an incorrigible one stops and leaves a gap"
 rm -rf "$rr"
 fi

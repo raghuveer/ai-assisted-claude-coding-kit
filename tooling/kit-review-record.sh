@@ -56,8 +56,26 @@ ATTR=""
 [ -n "$ATTR" ] || { kit_warn "missing --task (or --unattributed)"; exit 2; }
 
 # The first prompt is the caller's. Subsequent ones are the validator's, verbatim.
-prompt=""
-[ -n "$prompt_file" ] && prompt=$(cat "$prompt_file")
+#
+# A MISSING prompt is a usage error, refused before the first attempt. This was written as
+# `[ -n "$f" ] && prompt=$(cat "$f")`, which ignored both a failing `cat` and an omitted flag:
+# the reviewer was handed an empty prompt, replied with nothing, and that recorded as
+# `reason=empty` -- the value meaning "a review looked and found nothing" -- and the loop exited
+# 0. A review that never happened, reported as a clean one, inside the mechanism built to stop
+# exactly that. Found critical in round 5.
+[ -n "$prompt_file" ] || {
+  kit_warn "missing --prompt-file: there is nothing to ask the reviewer"
+  kit_warn "  refusing before the first attempt rather than reviewing an empty prompt"
+  exit 2
+}
+prompt=$(cat "$prompt_file") || {
+  kit_warn "could not read --prompt-file '$prompt_file'"
+  exit 2
+}
+[ -n "$prompt" ] || {
+  kit_warn "--prompt-file '$prompt_file' is empty; refusing to review nothing"
+  exit 2
+}
 
 WORKDIR=$(mktemp -d 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}/kitrev.$$")
 mkdir -p "$WORKDIR"
@@ -66,7 +84,12 @@ trap "rm -rf '$WORKDIR'" EXIT INT TERM
 
 attempt=1
 while :; do
-  printf '%s' "$prompt" | sh -c "$cmd" > "$WORKDIR/reply" 2> "$WORKDIR/err"
+  # The prompt goes in as a FILE, not down a pipe. Piped, a reviewer that does not read all of
+  # stdin kills `printf` with SIGPIPE, and under `set -o pipefail` the pipeline reports failure
+  # -- so a perfectly good review was discarded as a broken command and a false gap recorded.
+  # Nothing obliges a caller's command to drain stdin, so nothing may depend on it.
+  printf '%s' "$prompt" > "$WORKDIR/prompt"
+  sh -c "$cmd" < "$WORKDIR/prompt" > "$WORKDIR/reply" 2> "$WORKDIR/err"
   rc=$?
   if [ "$rc" != 0 ]; then
     # The reviewer command itself failed. That is not a contract violation and retrying a
@@ -76,7 +99,16 @@ while :; do
     break
   fi
 
-  if correction=$(python3 "$PY" --correction < "$WORKDIR/reply"); then
+  # Exit 3 means REFUSED-and-here-is-the-correction. Anything else non-zero is the validator
+  # itself failing -- missing python3, an undecodable reply -- and must not be read as a
+  # refusal: `correction` is empty in that case, so the loop would resend an EMPTY prompt for
+  # every remaining attempt and burn the budget reviewing nothing.
+  correction=$(python3 "$PY" --correction < "$WORKDIR/reply"); crc=$?
+  if [ "$crc" != 0 ] && [ "$crc" != 3 ]; then
+    kit_warn "the validator failed with exit $crc, which is not a refusal; not retrying"
+    break
+  fi
+  if [ "$crc" = 0 ]; then
     # Accepted. Record through the one door, which validates again on its own account.
     # shellcheck disable=SC2086
     if bash "$FIND" $ATTR --agent "$agent" --agent-id "$agent_id" --model "$model" \
