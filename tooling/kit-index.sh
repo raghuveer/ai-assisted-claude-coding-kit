@@ -837,17 +837,28 @@ INSERT OR IGNORE INTO node
   SELECT DISTINCT task_id,'task',NULL,task_id FROM event WHERE task_id IS NOT NULL AND task_id<>'';
 
 -- git records what tier was actually used; frontmatter only declares an intent.
+-- LAST WINS, ordered by `seq` and not by `at`, at every one of these derivations.
+--
+-- `at` is `%ad`, the AUTHOR date, which is whatever `GIT_AUTHOR_DATE` said -- so ordering by it
+-- let a future-dated commit pin a value permanently: no later commit could ever be "after" it,
+-- and a `Via: kit` so dated could never be retracted. Found against the via derivation in the
+-- review of 2026-08-12 and swept to all four, because it is one shape in four places and
+-- fixing only the instance that was reported is the mistake this repository keeps making
+-- (docs/LESSONS.md S4).
+--
+-- `seq` is AUTOINCREMENT and the log is walked with `--reverse`, oldest commit first, so it is
+-- the order the history actually happened in and nothing in a commit message can reorder it.
 UPDATE task SET tier = COALESCE((
   SELECT e.payload FROM event e
    WHERE e.task_id = task.id AND e.kind = 'tiered'
-   ORDER BY e.at DESC, e.seq DESC LIMIT 1), tier);
+   ORDER BY e.seq DESC LIMIT 1), tier);
 
 
 UPDATE task SET state = COALESCE((
   SELECT e.kind FROM event e
    WHERE e.task_id = task.id
      AND e.kind IN ('started','progress','blocked','unblocked','done','abandoned')
-   ORDER BY e.at DESC, e.seq DESC LIMIT 1), state, 'open');
+   ORDER BY e.seq DESC LIMIT 1), state, 'open');
 
 -- A finding harvested from a reviewer carries no task: the hook that harvests it fires when
 -- the reviewer stops, and nothing in this kit tracks a current task. Bound the same way spend
@@ -876,7 +887,7 @@ UPDATE task SET owner = (
   SELECT e.actor FROM event e
    WHERE e.task_id = task.id AND e.actor IS NOT NULL AND e.actor <> ''
      AND e.kind IN ('started','progress','blocked')
-   ORDER BY e.at DESC, e.seq DESC LIMIT 1)
+   ORDER BY e.seq DESC LIMIT 1)
   WHERE state NOT IN ('done','abandoned');
 
 UPDATE task SET closed_at = (
@@ -926,7 +937,7 @@ DERIVE
 # and silently drop a task carrying a recorded escape out of the headline metric. Measured,
 # not theorised. Fail closed at the join, and every writer is covered at once.
 VIA_SQL=$(for _w in $(kit_via_vocab); do printf "'%s'," "$_w"; done | sed 's/,$//')
-printf "UPDATE task SET via = COALESCE((SELECT e.payload FROM event e WHERE e.task_id = task.id AND e.kind = 'via' AND e.payload IN (%s) ORDER BY e.at DESC, e.seq DESC LIMIT 1), via);
+printf "UPDATE task SET via = COALESCE((SELECT e.payload FROM event e WHERE e.task_id = task.id AND e.kind = 'via' AND e.payload IN (%s) ORDER BY e.seq DESC LIMIT 1), via);
 " "$VIA_SQL"
 
 # Raise the floor from files the task has actually touched. This is the second of the two

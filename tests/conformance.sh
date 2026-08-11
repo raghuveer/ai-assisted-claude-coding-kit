@@ -857,11 +857,32 @@ Via: agent"
   # The `payload IN (vocabulary)` clause on the derivation is what closes it, and NOTHING
   # exercised it: `kit-event.sh` appeared zero times in this suite, so deleting the clause left
   # every step green. Found in the T3 review of 2026-08-10.
-  bash "$KIT/tooling/kit-event.sh" T-kit via >/dev/null 2>&1
+  bash "$KIT/tooling/kit-event.sh" T-kit via >/dev/null 2>&1 ||
+    { printf '    ^ kit-event.sh failed; the filter was never exercised\n' >&2; exit 1; }
+  # The EVENT MUST EXIST before its absence can be mistaken for the filter working. Asserting
+  # only `via = kit` afterwards passes identically when kit-event.sh wrote nothing at all -- a
+  # vacuous check, inside the test added because the filter had no test. Found 2026-08-12.
+  ev=$(grep -c '"kind":"via"' .project/events.ndjson)
+  [ "${ev:-0}" -ge 1 ] ||
+    { printf '    ^ no via event was written, so this proves nothing\n' >&2; exit 1; }
   bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
   # The blob must NOT become the provenance, and the honest earlier value must survive.
   blob=$(sqlite3 .project/index.db "SELECT via FROM task WHERE id='T-kit';" | tr -d '\015')
   [ "$blob" = "kit" ] || { printf '    ^ a kit-event payload reached task.via: %s\n' "$blob" >&2; exit 1; }
+
+  # A FUTURE-DATED trailer must not pin provenance. `at` is the AUTHOR date, which is whatever
+  # GIT_AUTHOR_DATE said, so ordering the derivation by it let one commit declare itself last
+  # forever and no later retraction could reach it. Ordering by `seq` -- AUTOINCREMENT over a
+  # `--reverse` walk -- is the order history actually happened in.
+  #
+  # Without this commit the fixture cannot tell the two orderings apart: every other commit here
+  # shares one fixed date, so `at DESC, seq DESC` and `seq DESC` agree and the mutation survives.
+  echo f > src/f; git add -A
+  GIT_AUTHOR_DATE="2099-01-01T00:00:00+00:00" git commit -q --no-verify -m "feat: dated ahead
+
+Task-Id: T-kit
+Tier: T2
+Via: kit"
 
   # A human RETRACTS an earlier Via: kit with Via: unknown. `unknown` is in the vocabulary, so
   # the guard used to discard it and promotion into via:kit was one-way -- the design forbids
@@ -876,10 +897,14 @@ Via: unknown"
   back=$(sqlite3 .project/index.db "SELECT via FROM task WHERE id='T-kit';" | tr -d '\015')
   [ "$back" = "unknown" ] || { printf '    ^ Via: unknown did not retract; via is %s\n' "$back" >&2; exit 1; }
 
-  # And with no task left in the kit population, the report must SAY the column is empty rather
-  # than print 0 / 0 in the shape of a measurement.
+  # And with no task left in the kit population, the report must SAY so and NAME the tier,
+  # rather than print 0 / 0 in the shape of a measurement. Named per tier because a global
+  # gate let one via:kit task anywhere silence the notice for every other tier.
   bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
-  grep -q 'column is empty' STATUS.generated.md )
+  grep -q 'absent denominator' STATUS.generated.md ||
+    { printf '    ^ no empty-denominator notice after the retraction\n' >&2; exit 1; }
+  grep -qE '^> \*\*No task in [^*]*T2[^*]*records having been run' STATUS.generated.md ||
+    { printf '    ^ the notice does not name the tier it is about\n' >&2; exit 1; } )
 check $? "via: vocabulary honoured, unknown by default, trailer wins, rate splits and names"
 rm -rf "$vx"
 fi

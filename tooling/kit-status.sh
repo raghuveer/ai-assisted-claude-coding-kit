@@ -221,11 +221,23 @@ ESC=$(q "SELECT printf('%-11s', COALESCE(NULLIF(t.tier,''),'untiered'))||
 #
 # Said once, under the table, rather than per row: a reader who takes in four zeroes has already
 # formed the impression this sentence exists to prevent.
-KITN=$(q "SELECT COUNT(*) FROM task WHERE via='$KITVIA';")
-if [ "${KITN:-0}" = 0 ]; then
-  printf '\n> **The `via:%s` column is empty: no task records having been run by this pipeline.**\n' "$KITVIA"
-  printf '> Those zeroes are an absent denominator, not a clean result. Until some task carries\n'
-  printf '> `Via: %s`, only the `all` column is a measurement.\n' "$KITVIA"
+#
+# Gated PER TIER, not globally. A global count meant one `via:kit` task anywhere silenced the
+# notice for every tier, so a tier with none went on printing `0 / 0` unexplained -- the defect
+# surviving one level down, found in the review of 2026-08-12.
+#
+# Named tiers rather than a blanket sentence, because "some column somewhere is empty" is not
+# something a reader can act on.
+EMPTY_TIERS=$(q "SELECT group_concat(tier, ', ') FROM (
+    SELECT COALESCE(NULLIF(t.tier,''),'untiered') AS tier
+      FROM task t GROUP BY 1
+    HAVING COUNT(DISTINCT CASE WHEN t.via='$KITVIA' THEN t.id END) = 0
+     ORDER BY 1);")
+if [ -n "$EMPTY_TIERS" ]; then
+  printf '\n> **No task in %s records having been run by this pipeline.** The `0 / 0 via:%s`\n' \
+    "$EMPTY_TIERS" "$KITVIA"
+  printf '> against those tiers is an absent denominator, not a clean result: for them only the\n'
+  printf '> `all` column is a measurement.\n'
 fi
 
 # The rest of the population, by value, WITH its escapes. Counting tasks alone was the older
