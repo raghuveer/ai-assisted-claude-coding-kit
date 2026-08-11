@@ -22,3 +22,20 @@ chosen before any escape data existed. Recalibrate once the findings table has e
 vindicated escapes to test whether the ordering it produces beats the alternatives --
 including the null hypothesis that a simpler weighting does as well.
 
+
+---
+
+## Folded in 2026-08-11: a second routing axis (R-15)
+
+Recalibrating the weights is one half. The other is that a single axis is currently doing two
+jobs, which is why T3 gets over-selected.
+
+Split them: **blast radius decides how much process** (which tier), **change type decides which
+reviewers** (user-facing, developer-facing, architectural). `skills/tier-classify` implements the
+first axis only.
+
+Acceptance to add: the tier distribution shifts toward T1/T2 without a rise in findings escaping
+to T3-worthy incidents. Both halves must be measured — a shift alone is just under-tiering.
+
+Depends on the same evidence this task already waits for: enough vindicated escapes in the
+finding table to tell calibration from wishful thinking.

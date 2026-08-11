@@ -51,3 +51,29 @@ measuring rather than rebuilding.
 
 Related: T-20260731-accelerator-line-budget-and-eviction is the same economics question one
 layer up, on what an accelerator is allowed to cost.
+
+---
+
+## Folded in 2026-08-11: context economics is now the ROI case (R-13)
+
+This task was housekeeping. It is now the kit's central ROI experiment, and should be treated as
+the highest-value item on the register's list.
+
+The claim to test, from an external account of enterprise context layers: giving an agent a map
+instead of an open problem cut token usage sharply, because a high-agency model handed an
+open-ended task *"will spawn a thousand subagents to go explore the entire world"* — and the
+more capable the model, the worse the guzzling. A figure of ~75% was quoted. **Treat it as a
+vendor number about a different product: a hypothesis to test, never a figure to repeat.**
+
+The kit already has the mechanism. `kit-plan.sh` writes cluster packs from the co-change graph —
+four exist in `.project/packs/default/` — and nothing measures whether they help.
+
+The experiment: the same task, with and without the pack, measured against the `baseline/`
+capture of 2026-07-29. Metrics that matter here are tokens per merged change and the
+cache-read : cache-creation ratio.
+
+Folded in from R-13, which also asked for an audit of the five documentation layers against four
+behaviours — skills load on demand, agents isolate context, rules are always loaded so install
+selectively, hooks run outside model context. Anything always-loaded that does not earn its
+place should move. That audit belongs here because it is the same question: what is context
+costing, and what is it buying.
