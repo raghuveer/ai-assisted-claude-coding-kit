@@ -31,9 +31,17 @@ the second reader rather than the first.
 - [ ] A finding records its source, from a closed vocabulary defined in ONE place, following
       exactly the shape `via` already set: `accelerator | reviewer | second-reviewer |
       tier-floor | unknown`, defaulting to unknown, with unknown reported as itself.
-- [ ] `kit-finding.sh --batch` accepts it without breaking the existing field order, since the
-      reviewer agents emit that format verbatim and the vocabulary is inlined in eight agent
-      files. Adding a field they do not emit must not silently shift the ones they do.
+- [ ] The field is added to the CONTRACT in `kit_findings.py` and appears in
+      `kit-finding.sh --contract`; the reviewer agents are updated to emit it, and a reviewer
+      that omits it still validates, since it defaults to unknown.
+
+      *Rewritten 2026-08-11.* This criterion used to require `kit-finding.sh --batch` to accept
+      the new field "without breaking the existing field order, since the reviewer agents emit
+      that format verbatim". **`--batch` and its positional format no longer exist** — reviewers
+      return a JSON object and order carries no meaning, so the whole hazard this criterion
+      guarded against is gone. Found by a round-4 reviewer as an unswept consequence of deleting
+      it, which is the same §4 lesson one layer out: deleting a component means sweeping the
+      backlog that still expects it.
 - [ ] `kit-status.sh` reports yield by source: findings per source, and — the number that
       settles the second-reviewer question — how many findings came ONLY from the second
       reader on tasks where both ran.

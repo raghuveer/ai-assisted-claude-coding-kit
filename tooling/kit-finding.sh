@@ -42,7 +42,18 @@ case "${1:-}" in
 esac
 
 ROOT=$(kit_root) || exit 0
-kit_active "$ROOT" || exit 0
+# Instrumentation exits 0 in a repo that has not adopted the kit -- a hook must never fail a
+# session. But `--json` is not instrumentation: it is a caller HANDING OVER a review it is
+# about to discard, and exiting 0 there consumed the reviewer's whole reply, printed nothing,
+# and reported success. Reproduced from /tmp by a round-4 reviewer. Refuse loudly instead.
+kit_active "$ROOT" || {
+  case " $* " in *" --json "*)
+    kit_warn "this repository has not adopted the kit (no .claude/project-profile.md)"
+    kit_warn "  REFUSING rather than swallowing the review on stdin -- it is not recorded"
+    exit 2 ;;
+  esac
+  exit 0
+}
 
 task=""; agent=""; class=""; sev=""; lang=""; model=""; domain=""; pattern=""; json=0
 agent_id=""; unattributed=0; summary=""
@@ -63,6 +74,11 @@ while [ $# -gt 0 ]; do
     --summary) summary=${2:-}; shift; shift ;;
     --model) model=${2:-}; shift; shift ;;
     --json) json=1; shift ;;
+    # Also here, not only as the first argument. Moving them to early dispatch made
+    # `kit-finding.sh --task T --vocab` exit 2 as an unknown argument -- a regression a
+    # round-4 reviewer caught. Both spellings work from either position now.
+    --vocab) printf 'class:    %s\nseverity: %s\n' "$CLASSES" "$SEVERITIES"; exit 0 ;;
+    --contract) exec python3 "$(dirname "$0")/kit_findings.py" --contract ;;
     -h|--help) sed -n '2,6p' "$0"; exit 0 ;;
     *) kit_warn "unknown argument: $1"; exit 2 ;;
   esac
@@ -103,14 +119,31 @@ emit() {  # emit <stdin: reviewer JSON object>
   set --
   [ -n "$task" ] && set -- "$@" --task "$task"
   [ "$unattributed" = 1 ] && set -- "$@" --unattributed
+  _ids="$*"
   _out=$(python3 "$PY" --emit-events "$@" \
            --agent "$agent" --agent-id "$agent_id" --model "$model" \
-           --industries "$(declared_industries)") || return 2
+           --industries "$(declared_industries)") || {
+    # A REJECTED batch is the one case where findings genuinely exist and are lost, so it must
+    # leave a row rather than a stderr line. Emitting only on the empty case -- which is what
+    # the first version did -- recorded the harmless half and dropped the harmful one.
+    _gap=$(python3 "$PY" --gap-event rejected $_ids \
+             --agent "$agent" --agent-id "$agent_id") &&
+      printf '%s\n' "$_gap" >> "$EV"
+    return 2
+  }
   # One append. The validator emits nothing at all unless every finding passed, so there is no
   # arrangement in which some rows land and others do not -- which was true of the validator
   # before and NOT true of the writer, because the old loop appended per finding and could
-  # exit partway. Both T3 reviewers found that; this is the fix.
-  printf '%s\n' "$_out" >> "$EV"
+  # exit partway. Both round-3 reviewers found that.
+  #
+  # The append is CHECKED. Unchecked, a full or unwritable events.ndjson still printed
+  # "recorded N finding(s)" and exited 0 -- success reported over a write that never happened,
+  # which is the shape this whole file exists to refuse. Found by both round-4 reviewers.
+  if ! printf '%s\n' "$_out" >> "$EV"; then
+    kit_warn "could not append to $EV -- NOTHING was recorded"
+    kit_warn "  the findings still exist in the reviewer's reply; do not discard it"
+    return 2
+  fi
   _n=$(printf '%s\n' "$_out" | grep -c '"kind":"finding"')
   _g=$(printf '%s\n' "$_out" | grep -c '"kind":"finding-gap"')
   if [ "${_g:-0}" -gt 0 ]; then

@@ -267,7 +267,10 @@ def build_events(rows, opts):
                 "  (a domain is an industry; put the reusable design in `pattern`)\n" % domain)
             domain = ""
         event = {
-            "task": opts["task"], "kind": "finding", "at": at,
+            # `task` is sanitised like every other string. It was NOT, for one round: it sat
+            # raw beside sanitise(agent) on this very line while the docstring claimed the
+            # sanitiser covered everything reaching the log. Both round-4 reviewers found it.
+            "task": sanitise(opts["task"]), "kind": "finding", "at": at,
             "agent": sanitise(opts["agent"]), "agent_id": sanitise(opts["agent_id"]),
             "class": row["class"], "severity": row["severity"],
             "lang": row.get("lang", ""), "pattern": row.get("pattern", ""),
@@ -284,14 +287,24 @@ def build_events(rows, opts):
     return lines
 
 
+# Why a gap carries a REASON rather than only a count: the two cases mean opposite things. A
+# review that looked and found nothing is evidence; a review whose findings were REJECTED is a
+# measurement hole, and the findings still exist in the reviewer nobody kept. Reporting them as
+# one number is how `T3 0/13` came to read as "nothing escaped" when it meant "nothing was
+# recorded". `empty` and `rejected` are the whole vocabulary.
+GAP_REASONS = ("empty", "rejected")
+
+
 def gap_event(opts, reason):
     """Absence is a measurement. A review that recorded nothing must be visible as a fact, not
-    as the silence that let `T3 0/13` read as 'nothing escaped' when it meant 'nothing was
-    recorded'."""
+    as silence."""
+    if reason not in GAP_REASONS:
+        raise Rejected("internal: unknown gap reason %r (one of: %s)"
+                       % (reason, " ".join(GAP_REASONS)))
     at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    event = {"task": opts["task"], "kind": "finding-gap", "at": at,
+    event = {"task": sanitise(opts["task"]), "kind": "finding-gap", "at": at,
              "agent": sanitise(opts["agent"]), "agent_id": sanitise(opts["agent_id"]),
-             "reason": sanitise(reason)}
+             "reason": reason}
     line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
     _assert_flat(line)
     return line
@@ -347,15 +360,21 @@ def main():
     if mode == "--contract":
         print_contract()
         return 0
-    if mode not in ("--validate", "--emit-events"):
+    if mode not in ("--validate", "--emit-events", "--gap-event"):
         sys.stderr.write("kit-findings: unknown mode %s\n" % mode)
         return 2
     try:
+        # `--gap-event` reads no stdin: it is called AFTER a rejection has already consumed it,
+        # so that the one case where findings are genuinely lost leaves a row rather than a
+        # stderr line nobody will find again.
+        if mode == "--gap-event":
+            opts = parse_opts(sys.argv[3:])
+            sys.stdout.buffer.write((gap_event(opts, sys.argv[2]) + "\n").encode("utf-8"))
+            return 0
         opts = parse_opts(sys.argv[2:]) if mode == "--emit-events" else None
         rows = validate(sys.stdin.read())
         if mode == "--emit-events":
-            lines = (build_events(rows, opts) if rows
-                     else [gap_event(opts, "the reviewer returned zero findings")])
+            lines = build_events(rows, opts) if rows else [gap_event(opts, "empty")]
             # One write. Nothing partial reaches the caller, so nothing partial reaches the log.
             sys.stdout.buffer.write(("\n".join(lines) + "\n").encode("utf-8"))
     except Rejected as exc:

@@ -277,7 +277,8 @@ if step "a domain outside the declared industries is dropped, not stored"; then
 # `cache-adapter-design`) because nothing said what a domain was. The `pattern` axis is where
 # that belongs now, and a domain the project never declared must not survive.
 step_dir="$WORK.dom"; rm -rf "$step_dir"; mkdir -p "$step_dir/.claude" "$step_dir/.project"
-( cd "$step_dir" && git init -q -b main 2>/dev/null
+( cd "$step_dir" || exit 1
+  git init -q -b main 2>/dev/null
   printf -- '---
 paths.state: .project
 accelerator.industry: .claude/bfsi.md
@@ -296,7 +297,8 @@ if step "a trivial commit still has its trailers checked"; then
 # early return let a `docs:` commit carry a typo'd Task-Id, which then indexed as a titleless
 # phantom task -- and a pushed commit message cannot be corrected.
 tx="$WORK.exempt"; rm -rf "$tx"; mkdir -p "$tx"
-( cd "$tx" && git init -q -b main 2>/dev/null
+( cd "$tx" || exit 1
+  git init -q -b main 2>/dev/null
   mkdir -p .claude .project/tasks
   printf -- '---
 paths.tasks:  .project/tasks
@@ -329,7 +331,8 @@ if step "pre-push blocks a wrong trailer while it can still be amended"; then
 # but only after the push, when a commit message can no longer be changed. This repository
 # carries a permanent phantom task from exactly that gap.
 pp="$WORK.push"; rm -rf "$pp"; mkdir -p "$pp/remote" "$pp/work"
-( cd "$pp/remote" && git init -q --bare -b main 2>/dev/null
+( cd "$pp/remote" || exit 1
+  git init -q --bare -b main 2>/dev/null
   cd "$pp/work" && git init -q -b main 2>/dev/null
   git config user.email a@b.c; git config user.name T
   git remote add origin "$pp/remote"
@@ -371,7 +374,8 @@ if step "spend is measured per agent, from that agent's own transcript" spend; t
 # Totals are cumulative per transcript, so recording twice must not double the cost, and
 # Stop's sweep must not re-record what SubagentStop already wrote.
 sx="$WORK.spend"; rm -rf "$sx"; mkdir -p "$sx/src" "$sx/sess/subagents"
-( cd "$sx" && git init -q -b main 2>/dev/null
+( cd "$sx" || exit 1
+  git init -q -b main 2>/dev/null
   git config user.email a@b.c; git config user.name T
   bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
   printf -- '---
@@ -425,7 +429,8 @@ if step "a reviewer's findings reach the table, and an unrecorded review is visi
 # old step is everything that was never about scraping -- attribution after the fact, tier
 # resolution, and the requirement that a review recording nothing SAYS so.
 fl="$WORK.floop"; rm -rf "$fl"; mkdir -p "$fl/src"
-( cd "$fl" && git init -q -b main 2>/dev/null
+( cd "$fl" || exit 1
+  git init -q -b main 2>/dev/null
   git config user.email a@b.c; git config user.name T
   bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
   printf -- '---
@@ -471,7 +476,7 @@ fi
 if step "a subagent whose transcript cannot be found is reported, not costed" spend; then
 # The alternative -- writing the row anyway from whatever transcript is at hand -- is the
 # defect. Nothing is recorded, and the fact that nothing was recorded is.
-( cd "$sx"
+( cd "$sx" || exit 1
   bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/sess.jsonl" --agent-id GHOST --agent coder
   bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/sess.jsonl" --agent-id GHOST --agent coder
   bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
@@ -576,7 +581,8 @@ if step "a broken tier.rule cannot empty the index, and a lost task file fails c
 # files it READ. The count is what catches the general case -- awk exits 0 after skipping an
 # argument it could not read, so status alone never notices a task going missing.
 gx="$WORK.glob"; rm -rf "$gx"; mkdir -p "$gx/.claude" "$gx/.project/tasks"
-( cd "$gx" && git init -q -b main 2>/dev/null
+( cd "$gx" || exit 1
+  git init -q -b main 2>/dev/null
   { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
     echo "tier.default: T1"; echo "tier.rule: src/[ab T3"; echo "tier.rule: src/** T2"
     echo "---"; } > .claude/project-profile.md
@@ -635,7 +641,8 @@ if step "a failed build leaves the previous index alone and keeps saying so"; th
 # fires at session start -- declared it fresh and said nothing. One announcement, then silence,
 # over a backlog with no tiers.
 ax="$WORK.apos"; rm -rf "$ax"; mkdir -p "$ax/.claude" "$ax/.project/tasks"
-( cd "$ax" && git init -q -b main 2>/dev/null
+( cd "$ax" || exit 1
+  git init -q -b main 2>/dev/null
   { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
     echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"
     echo "tier.rule: src/** T3','x"; echo "---"; } > .claude/project-profile.md
@@ -806,7 +813,8 @@ if step "provenance is recorded, defaulted and split out of the rate it would di
 # must beat the frontmatter the way tier already does, and the rate must report the kit-run
 # population SEPARATELY while NAMING the rest by value.
 vx="$WORK.via"; rm -rf "$vx"; mkdir -p "$vx/.claude" "$vx/.project/tasks" "$vx/src"
-( cd "$vx" && git init -q -b main 2>/dev/null
+( cd "$vx" || exit 1
+  git init -q -b main 2>/dev/null
   git config user.email a@b.c; git config user.name T
   { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
     echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"; echo "---"; } > .claude/project-profile.md
@@ -857,7 +865,8 @@ if step "a recorded escape cannot be filtered out of the report"; then
 # column is ALLOWED to drop the task -- that is the column's job. The `all` column and the
 # provenance breakdown are not.
 ex="$WORK.esc"; rm -rf "$ex"; mkdir -p "$ex/.claude" "$ex/.project/tasks" "$ex/src"
-( cd "$ex" && git init -q -b main 2>/dev/null
+( cd "$ex" || exit 1
+  git init -q -b main 2>/dev/null
   git config user.email a@b.c; git config user.name T
   { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
     echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"; echo "---"; } > .claude/project-profile.md
@@ -959,7 +968,8 @@ if step "a Task-Id matching no task file is named, not counted as work"; then
 # report with the commit that introduced it, and reconciled with no migration when the file
 # turns up later.
 gh="$WORK.ghost"; rm -rf "$gh"; mkdir -p "$gh/src"
-( cd "$gh" && git init -q -b main 2>/dev/null
+( cd "$gh" || exit 1
+  git init -q -b main 2>/dev/null
   git config user.email a@b.c; git config user.name T
   bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
   printf -- '---\nid: T-real\ntitle: r\ntier: T2\n---\nb\n' > .project/tasks/T-real.md
@@ -1049,7 +1059,8 @@ if step "an unknown blocker still blocks, and an id cannot hide itself from the 
 #    under BINARY collation and comments out every row below it AND the count. A report its own
 #    input can silence is not a control.
 ub="$WORK.unblock"; rm -rf "$ub"; mkdir -p "$ub/src"
-( cd "$ub" && git init -q -b main 2>/dev/null
+( cd "$ub" || exit 1
+  git init -q -b main 2>/dev/null
   git config user.email a@b.c; git config user.name T
   bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
   printf -- '---\nid: T-A\ntitle: a\ntier: T2\nblocked_by: T-B-unfiled\n---\nb\n' > .project/tasks/T-A.md
@@ -1186,13 +1197,17 @@ sj="$WORK.sjson"; rm -rf "$sj"; mkdir -p "$sj/src"
   printf -- '---\nid: T-j\ntitle: j\ntier: T2\n---\nb\n' > .project/tasks/T-j.md
   git add -A && git commit -q --no-verify -m "chore: seed"
   F="$KIT/tooling/kit-finding.sh"
-  before=$(grep -c '"kind":"finding"' .project/events.ndjson 2>/dev/null || echo 0)
+  # NOT `grep -c ... || echo 0`: grep prints 0 AND exits 1 when it matches nothing, so that
+  # idiom yields the two-line string "0\n0" and every later comparison against it is false.
+  # It is in LESSONS as a known trap and it bit here anyway, silently, until the counts differed.
+  nfind() { _c=$(grep -c '"kind":"finding"' .project/events.ndjson 2>/dev/null); printf '%s' "${_c:-0}"; }
+  before=$(nfind)
 
   # One good finding and one with an unknown class. All-or-nothing means NEITHER is stored.
   printf '%s' '{"findings":[{"class":"fail-open","severity":"major","summary":"a real one that must not be stored either"},{"class":"invented","severity":"major","summary":"the one that poisons the batch"}]}' \
     | bash "$F" --task T-j --agent implementation-reviewer --json >/dev/null 2>&1
   rej=$?
-  after=$(grep -c '"kind":"finding"' .project/events.ndjson 2>/dev/null || echo 0)
+  after=$(nfind)
 
   # Hostile input in EVERY string field, not only `summary`. The first version of this case put
   # the quote in `summary` alone, and that is precisely why the critical stayed invisible to CI:
@@ -1215,6 +1230,13 @@ HOSTILE
   printf '%s' '{}' | bash "$F" --task T-j --agent tester --json >/dev/null 2>&1
   nokey=$?
 
+  # The two gap reasons mean opposite things: `empty` is evidence, `rejected` is a hole where
+  # findings existed and were refused. Recording only the first -- which is what the first
+  # version did -- kept the harmless half and dropped the harmful one.
+  ge=$(grep -c '"kind":"finding-gap","at":"[^"]*","agent":"tester"' .project/events.ndjson)
+  gr=$(grep -c '"reason":"rejected"' .project/events.ndjson)
+  gm=$(grep -c '"reason":"empty"' .project/events.ndjson)
+
   bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
   Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
   rows=$(Q "SELECT COUNT(*) FROM finding;")
@@ -1236,8 +1258,21 @@ print(bad)" 2>/dev/null || echo 99)
   [ "$rej" = 2 ] && [ "$before" = "$after" ] && [ "$good" = 0 ] &&
   [ "$empty" = 0 ] && [ "$nokey" = 2 ] && [ "$rows" = 1 ] && [ "$pyok" = 0 ] &&
   [ "$loc" = "a'b.sh:42" ] && [ "$oth" = "ba'sh|a'b" ] &&
+  [ "${gr:-0}" -ge 1 ] && [ "${gm:-0}" -ge 1 ] &&
   [ "$summ" = "the guard reads 'x' and a ' breaks it" ] )
 check $? "one bad finding records none, hostile input in every field round-trips, empty differs from absent"
+
+# A caller handing over a review must never have it swallowed. Outside an adopted project the
+# recorder used to exit 0 having consumed stdin and written nothing -- success reported over a
+# destroyed review.
+nj="$WORK.notadopted"; rm -rf "$nj"; mkdir -p "$nj"
+( cd "$nj" || exit 1
+  git init -q -b main 2>/dev/null
+  printf '%s' '{"findings":[{"class":"fail-open","severity":"major","summary":"this review must not be swallowed"}]}' \
+    | bash "$KIT/tooling/kit-finding.sh" --task T --agent x --json >/dev/null 2>&1
+  [ $? -ne 0 ] )
+check $? "a piped review is refused, not silently discarded, outside an adopted project"
+rm -rf "$nj"
 rm -rf "$sj"
 fi
 
@@ -1251,6 +1286,20 @@ printf '%s' "$C" | grep -q 'summary   required' &&
 printf '%s' "$C" | grep -q 'class     required' &&
 printf '%s' "$C" | grep -q 'severity  required'
 check $? "--contract names the three required fields"
+
+# Both accessors answer "what may I send you", which is asked while READING, from wherever the
+# reader happens to be standing. Run from a directory that is not an adopted project -- which
+# is where the docs are read -- they must still answer. `--contract` did not, and the fix for
+# that had no test, so moving it back inside the arg loop would have gone unnoticed. Run from a
+# scratch dir with no profile, and also as a NON-first argument, which was a second regression.
+nc="$WORK.nocontract"; rm -rf "$nc"; mkdir -p "$nc"
+( cd "$nc" || exit 1
+  bash "$KIT/tooling/kit-finding.sh" --contract 2>/dev/null | grep -q 'summary   required' || exit 1
+  bash "$KIT/tooling/kit-finding.sh" --vocab 2>/dev/null | grep -q '^class:' || exit 1 )
+check $? "--contract and --vocab answer outside an adopted project"
+bash "$KIT/tooling/kit-finding.sh" --task T --vocab 2>/dev/null | grep -q '^class:'
+check $? "and answer when they are not the first argument"
+rm -rf "$nc"
 # The validator must not carry its own copy of the vocabulary: it has to ASK for it, or the two
 # drift the moment a class is added. Proved by narrowing the vocabulary at its one source and
 # watching a previously-valid class be refused.
@@ -1300,7 +1349,8 @@ if step "a tier below its floor is reported"; then
 # Its own directory: an earlier version of this check mutated the shared fixture and broke
 # the losslessness comparison three steps later.
 tf="$WORK.floor"; rm -rf "$tf"; mkdir -p "$tf"
-( cd "$tf" && git init -q -b main 2>/dev/null
+( cd "$tf" || exit 1
+  git init -q -b main 2>/dev/null
   mkdir -p .claude .project/tasks
   { echo "---"
     echo "paths.tasks:  .project/tasks"

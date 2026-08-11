@@ -393,12 +393,30 @@ fi
 # emitted/recorded numbers are inside a string rather than in columns. Extracting them here
 # would mean parsing json in SQL to print a number this line does not need -- the count is the
 # signal, and the detail is in events.ndjson where it was written.
-FGAPN=$(q "SELECT COUNT(*) FROM event WHERE kind='finding-gap';")
-if [ "${FGAPN:-0}" -gt 0 ]; then
-  printf '\n> **%s review(s) emitted findings that were not all recorded.** A finding rejected\n' "$FGAPN"
-  printf '> for an unrecognised class or severity is discarded, not stored — so a review can\n'
-  printf '> look complete while contributing nothing. See the vocabulary in `kit-finding.sh\n'
-  printf '> --vocab`, which is the one authoritative list.\n'
+# Split by reason, because the two mean opposite things and reporting them as one number is
+# how "nothing was recorded" came to read as "nothing escaped". `empty` is EVIDENCE -- a review
+# looked and found nothing. `rejected` is a HOLE -- findings existed and were refused, and they
+# are now only in a reviewer nobody kept. The old single sentence described every gap as the
+# second kind, which was wrong for the common case.
+FGAPE=$(q "SELECT COUNT(*) FROM event WHERE kind='finding-gap' AND payload LIKE '%\"reason\":\"empty\"%';")
+FGAPR=$(q "SELECT COUNT(*) FROM event WHERE kind='finding-gap' AND payload LIKE '%\"reason\":\"rejected\"%';")
+FGAPO=$(q "SELECT COUNT(*) FROM event WHERE kind='finding-gap';")
+FGAPU=$(( ${FGAPO:-0} - ${FGAPE:-0} - ${FGAPR:-0} ))
+if [ "${FGAPR:-0}" -gt 0 ]; then
+  printf '\n> **%s review(s) had findings REFUSED and therefore recorded none.** A batch is\n' "$FGAPR"
+  printf '> rejected whole — for an unrecognised class or severity, or a malformed field — so\n'
+  printf '> those findings exist only in the reply they came in. See `kit-finding.sh --vocab`\n'
+  printf '> and `--contract`, which are the authoritative lists.\n'
+fi
+if [ "${FGAPE:-0}" -gt 0 ]; then
+  printf '\n> **%s review(s) reported finding nothing.** That is a measurement, not a gap in\n' "$FGAPE"
+  printf '> the record — it is counted here so an empty review stays distinguishable from a\n'
+  printf '> review that never ran.\n'
+fi
+# Gaps written before the reason existed, named rather than folded into either meaning.
+if [ "$FGAPU" -gt 0 ]; then
+  printf '\n> **%s finding-gap event(s) carry no reason** and predate the split; they are\n' "$FGAPU"
+  printf '> counted separately because guessing which kind they were would invent the number.\n'
 fi
 
 # Findings the attribution heuristic could not bind to a task. Same standing as unattributed
