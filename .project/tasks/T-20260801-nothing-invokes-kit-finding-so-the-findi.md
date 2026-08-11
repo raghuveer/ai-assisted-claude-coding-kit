@@ -236,6 +236,66 @@ Both reviewers accepted the settled decisions and attacked the execution, which 
 asked. Neither found a reason to revisit the no-schema-file decision, the shared taxonomy, or
 the read-only reviewer constraint.
 
+## T3 round 4 on `d907522` (2026-08-11) — REJECTED by both, but no criticals
+
+13 findings (security 8, implementation 5). **The three criticals of round 3 are gone and
+neither reviewer found a new one** — the one-writer move held. What remains are consequences of
+the fix and two sweeps I did not do. Every claim below reproduced by hand.
+
+### Convergent — both reviewers, independently
+
+**`task` is written raw while its neighbours are sanitised.** `kit_findings.py:270` and `:292`
+insert `opts["task"]` unsanitised into both event kinds, beside `sanitise(opts["agent"])` and
+`sanitise(opts["agent_id"])` on the same line. The docstring claiming sanitisation covers
+"every string that reaches the log, not only `summary`" is therefore false — §3 again, in the
+comment written to explain the §3 fix. It fails closed via `_assert_flat()` rather than
+corrupting, but as an internal error rather than a diagnosis.
+
+**The single append is unchecked.** `kit-finding.sh:113` runs `printf '%s\n' "$_out" >> "$EV"`
+and never tests it. An unwritable or full `events.ndjson` still prints "recorded N finding(s)"
+and exits 0. The comment above it claims one atomic append settles all-or-nothing; it settles
+ordering, not success.
+
+### The sweep I did not do — and it is the lesson I quoted in the brief
+
+`docs/LESSONS.md` §4 says filing a defect class is not sweeping for it, and the sweep is the
+cheap half. Round 3 found one subshell chaining only `cd`; I fixed that one. **There are 14
+subshells of that shape in `tests/conformance.sh` and exactly 1 now carries the guard.** I
+quoted §4 in the round-4 brief while leaving 13 instances of the shape I had just been shown.
+
+### New, from the fixes
+
+- **A rejected batch still emits no `finding-gap`** (`kit_findings.py:361`). The gap covers zero
+  findings only; the case where findings genuinely are lost remains a stderr line. Principle 5
+  is half implemented.
+- **`kit-status.sh:398` misreads the gap it now gets.** The only gap this writer emits means
+  "zero findings", but the report words it as reviews that emitted findings none of which were
+  recorded. The number will be right and the sentence wrong.
+- **Outside an active project the recorder destroys a piped review silently.** `kit_active ||
+  exit 0` runs before stdin is read, so the review is consumed and discarded with exit 0 and no
+  output. Reproduced from `/tmp`. This is the fail-open shape at the CLI door.
+- **The `--contract` reachability fix has no test** — the step runs inside the kit repo, which
+  has a profile, so moving it back into the arg loop would stay green.
+- **Deleting `--batch` was not swept through the backlog.** `T-20260808-record-which-mechanism-produced-a-findin`
+  still carries an acceptance criterion requiring `--batch` to accept a new field.
+- **`--vocab` and `--contract` now work only as the FIRST argument**, so
+  `kit-finding.sh --task T --vocab` exits 2. A regression from moving them to early dispatch.
+
+### Triage confirmed
+
+The reviewers were asked to judge my sweep of the other printf-JSON writers rather than
+rediscover it, and neither escalated it into this task: `kit-event.sh`'s raw `payload`,
+`kit-vindicate.sh`'s unescaped `task`/`class`, and the rest stay a neighbouring task.
+
+### The contract's enforceability, four rounds in
+
+`security-reviewer` (opus) conformed; `implementation-reviewer` (sonnet) did not, this time with
+a 208-character summary, and recording it needed a hand truncation — the intervention AC1
+forbids. Across four live runs: **opus 2/2 compliant, sonnet 0/3** (a reporting tool, a preamble,
+an over-long summary). That is a small sample and worth stating as one, but it points the same
+way each time, and it bears directly on the register's R-10 idea of running a compliance pass at
+a cheaper capability.
+
 ## The approach, and why each piece is shaped that way
 
 Six principles, because patching seven symptoms would leave the eighth.
