@@ -147,6 +147,92 @@ shown:
 After those, a real reviewer's output went into the recorder untouched by a human and produced
 rows carrying class, severity, `pattern`, `file:line` and a readable summary.
 
+## T3 review round on the contract (2026-08-11) — REJECTED by both, do not close
+
+Two reviewers, read-only enforced by `--allowedTools`, launched together so the second was
+blind. **`security-reviewer` (opus): REJECT, 17 findings, 3 critical. `implementation-reviewer`
+(sonnet): REJECT, 7 findings, 1 critical.** All 24 recorded through `--json`, and this is the
+first round in this repository whose finding rows carry a `summary` — the contract earning its
+keep while being rejected by it.
+
+Every claim below was reproduced by hand before being written here.
+
+### Three convergent findings — both reviewers, independently
+
+**C1. `record()` escapes only `summary`; `lang`, `pattern`, `domain` and `file` reach the
+append-only log raw** (`kit-finding.sh:100`, critical in both reports). The validator
+length-caps those fields but normalises none of them. A quote or backslash in any one writes a
+permanently malformed line into `events.ndjson`, which is **committed and append-only** — and
+that is precisely the harvester's critical defect this change was written to replace. Worse
+(`sec:13`): `jf()`/`jn()` take the FIRST match, so 40 characters of reviewer-controlled `lang`
+can inject a `summary`, `model` or `line` key that the indexer then prefers over the real one,
+while the line still parses. Verified: the printf interpolates `$3 $4 $5 $6` unquoted and
+`validate()` normalises only `row["summary"]`.
+
+**C2. All-or-nothing is true of validation, not of writing** (`kit-finding.sh:157` / `:146`).
+`record` appends inside the `while` loop and the loop contains a reachable `exit 2` on the
+vocabulary re-check, so a batch can write rows and then fail. The claim in the commit message
+and in the agent contracts — "one bad value and the whole batch records nothing" — is false for
+anything the validator lets through. Verified by inspection.
+
+**C3. The loop this task exists to close is STILL OPEN** (`skills/checkpoint/SKILL.md:47`,
+`skills/verify-ladder/SKILL.md:50`, critical in `sec`). Both skills still instruct the operator
+to pipe a `Findings (recordable)` block into `--batch` — a format **none of the four rewritten
+reviewer contracts now produces**. The agents were rewritten and the skills were not, so the
+documented recording path cannot work. Nothing anywhere invokes `--json`. Verified by grep.
+
+### Also confirmed by hand
+
+- **A control I wrote today that cannot fail** (`sec:8`, `conformance.sh:1246`). The
+  "validator reads the vocabulary rather than restating it" step asserts only a non-zero exit,
+  so it passes on a failed `cp`, a missing `python3`, or a syntax error. Reproduced: pointing it
+  at a non-existent interpreter makes the assertion evaluate to PASS. This is `docs/LESSONS.md`
+  §1 in a check written **to guard against exactly that class**, on the same day.
+- **`--contract` is unreachable outside an active project** (`sec:9`). It sits in the second arg
+  loop, after `kit_root`/`kit_active`, unlike `--vocab` which is dispatched at line 28. Run from
+  `/tmp` it prints nothing and exits 0. Verified.
+- **`--batch` and the single-flag path still create bare counters** (`sec:11`). Both call
+  `record` with five arguments, so `summary` is empty — the row this change exists to abolish is
+  still creatable at both documented doors.
+- **No `finding-gap` event** (`sec:7`). A zero-finding review or a rejected batch emits stderr
+  only, so principle 5 ("absence is a measurement") is unimplemented and the gap count in
+  `kit-status.sh` will sit pinned at zero once the harvester is deleted.
+- **The step named "the finding contract is defined in exactly one place" never compares the
+  agents against `--contract`** (`sec:10`), while all four agents restate the field list. The
+  name overpromises what the check does.
+- **A subshell hazard I introduced** (`sec:15`, `conformance.sh:1180`): `( cd "$sj" && git init`
+  chains only `git init`. With no `set -e`, a failed `cd` would run `kit-init.sh` and commit
+  `T-j.md` **inside the kit's own repository**. Verified by inspection.
+- **The task's own wiring-proof narrative is a false claim** (`sec:12`). It says the fix was
+  "disallowing that tool and stating the output rule as overriding" — neither string exists in
+  `agents/`, `skills/` or `hooks/`. Both were flags in an ad-hoc CLI invocation, not in the kit.
+  §3 again, and mine.
+- **`kit-review-findings.sh` still exists on disk** (`impl:5`) with its five defects, while the
+  record says it is being deleted.
+- **`summary`, `file_path`, `line_no` have no reader** (`sec:14`). No report or query selects
+  them, so the benefit needs hand-written SQL to reach.
+- **The hostile-input conformance case only sends a hostile character in `summary`**
+  (`impl:6`), so C1 is invisible to CI by construction.
+
+### The contract's own enforceability failed, measurably
+
+Two reviewers, same instruction, one round: **one complied, one did not.** `sonnet` prefixed its
+object with a sentence of prose, and `unfence()` correctly refused it — prose around an object
+fails loudly, as designed and asserted. But the review then needed a human to trim the preamble
+before it could be recorded, which is the very intervention acceptance criterion 1 forbids.
+
+Both prior live runs failed the same way before passing (a reporting tool, then a fence). The
+honest reading after three attempts: **a system-prompt instruction is not an enforcement
+mechanism**, and the contract needs either a retry that feeds the validator's own diagnostics
+back to the reviewer, or a tool-call whose arguments the API validates. That belongs in the fix
+list, not in a footnote.
+
+### Not to be re-litigated
+
+Both reviewers accepted the settled decisions and attacked the execution, which is what was
+asked. Neither found a reason to revisit the no-schema-file decision, the shared taxonomy, or
+the read-only reviewer constraint.
+
 ## The approach, and why each piece is shaped that way
 
 Six principles, because patching seven symptoms would leave the eighth.
