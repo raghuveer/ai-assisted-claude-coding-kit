@@ -730,7 +730,13 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
         if (cls == "") { dropped++ }
         else {
           n++
-          printf "INSERT OR REPLACE INTO finding(id,task_id,agent,model,tier,lang,domain,pattern,class,severity,at) VALUES(\047%s:%d\047,\047%s\047,\047%s\047,\047%s\047,NULL,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047);\n", q(a), n, q(t), q(jf($0,"agent")), q(jf($0,"model")), q(jf($0,"lang")), q(jf($0,"domain")), q(jf($0,"pattern")), q(cls), q(jf($0,"severity")), q(a)
+          # summary/file/line are absent on every finding recorded before the structured
+          # contract existed, and jf() returns "" for a key that is not there -- so old rows
+          # keep working and simply carry no summary. line_no is written via jn(), which
+          # returns 0 for a missing key; 0 is stored as NULL rather than as line zero, because
+          # a line number nobody supplied must not read as a location somebody did.
+          ln = jn($0,"line")
+          printf "INSERT OR REPLACE INTO finding(id,task_id,agent,model,tier,lang,domain,pattern,class,severity,at,summary,file_path,line_no) VALUES(\047%s:%d\047,\047%s\047,\047%s\047,\047%s\047,NULL,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,%s);\n", q(a), n, q(t), q(jf($0,"agent")), q(jf($0,"model")), q(jf($0,"lang")), q(jf($0,"domain")), q(jf($0,"pattern")), q(cls), q(jf($0,"severity")), q(a), q(jf($0,"summary")), q(jf($0,"file")), (ln>0 ? ln : "NULL")
         }
       }
       # Spend totals are CUMULATIVE for a transcript, so OR REPLACE keeps the last -- and

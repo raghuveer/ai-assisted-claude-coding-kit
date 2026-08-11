@@ -92,7 +92,16 @@ CREATE TABLE finding (
                                     -- reviewers being careless.
   severity   TEXT,
   at         TEXT,
-  vindicated INTEGER                -- NULL unknown | 1 real | 0 false positive
+  vindicated INTEGER,               -- NULL unknown | 1 real | 0 false positive
+  summary    TEXT,                  -- one line naming the defect. Until this column existed a
+                                    -- row was a bare counter: seven findings recorded on
+                                    -- 2026-08-10 all read `fail-open|major|bash` and could not
+                                    -- be told apart, which is most of what a finding is for.
+                                    -- Normalised by kit_findings.py: one line, no quote, no
+                                    -- backslash, because the awk reader that fills this column
+                                    -- matches "[^"]*" and cannot see past an escaped quote.
+  file_path  TEXT,                  -- where the finding is anchored, so it can be re-checked
+  line_no    INTEGER                -- 1-indexed line in that file
 );
 
 -- What a unit of work actually cost. One row per transcript -- the session's for the main

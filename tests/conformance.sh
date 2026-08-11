@@ -1170,6 +1170,84 @@ check $? "an unfiled blocker withholds its dependents and is reported; a hostile
 rm -rf "$ub"
 fi
 
+if step "a reviewer returns findings as data, and a bad batch records nothing"; then
+# The structured contract that replaced the prose block. Three properties matter and none is
+# visible by inspection: a rejected batch must record NOTHING (a half-stored review is a
+# finding table that disagrees with the review it came from), a summary must survive the trip
+# through the append-only log intact, and an empty review must be distinguishable from a
+# review that never happened.
+sj="$WORK.sjson"; rm -rf "$sj"; mkdir -p "$sj/src"
+( cd "$sj" && git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  printf -- '---\nid: T-j\ntitle: j\ntier: T2\n---\nb\n' > .project/tasks/T-j.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  F="$KIT/tooling/kit-finding.sh"
+  before=$(grep -c '"kind":"finding"' .project/events.ndjson 2>/dev/null || echo 0)
+
+  # One good finding and one with an unknown class. All-or-nothing means NEITHER is stored.
+  printf '%s' '{"findings":[{"class":"fail-open","severity":"major","summary":"a real one that must not be stored either"},{"class":"invented","severity":"major","summary":"the one that poisons the batch"}]}' \
+    | bash "$F" --task T-j --agent implementation-reviewer --json >/dev/null 2>&1
+  rej=$?
+  after=$(grep -c '"kind":"finding"' .project/events.ndjson 2>/dev/null || echo 0)
+
+  # A hostile summary: a quote and a backslash are exactly what the awk reader in kit-index.sh
+  # cannot see past, and a CR inside the JSON string splits one event into two malformed lines.
+  printf '%s' '{"findings":[{"class":"correctness","severity":"nit","lang":"bash","file":"a/b.sh","line":42,"summary":"the guard reads \"x\" and a \\ breaks it"}]}' \
+    | bash "$F" --task T-j --agent implementation-reviewer --json >/dev/null 2>&1
+  good=$?
+
+  # Empty is a measurement; a missing key is not the same statement.
+  printf '%s' '{"findings":[]}' | bash "$F" --task T-j --agent tester --json >/dev/null 2>&1
+  empty=$?
+  printf '%s' '{}' | bash "$F" --task T-j --agent tester --json >/dev/null 2>&1
+  nokey=$?
+
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+  rows=$(Q "SELECT COUNT(*) FROM finding;")
+  summ=$(Q "SELECT summary FROM finding;")
+  loc=$(Q "SELECT file_path||':'||line_no FROM finding;")
+  # Every line of the append-only log must still be one parseable JSON object.
+  pyok=$(python3 -c "
+import json,sys
+bad=0
+for l in open('.project/events.ndjson','rb').read().decode('utf-8').split(chr(10)):
+    if l.strip():
+        try: json.loads(l)
+        except Exception: bad+=1
+print(bad)" 2>/dev/null || echo 99)
+
+  [ "$rej" = 2 ] && [ "$before" = "$after" ] && [ "$good" = 0 ] &&
+  [ "$empty" = 0 ] && [ "$nokey" = 2 ] && [ "$rows" = 1 ] && [ "$pyok" = 0 ] &&
+  [ "$loc" = "a/b.sh:42" ] &&
+  [ "$summ" = "the guard reads 'x' and a ' breaks it" ] )
+check $? "one bad finding records none, a hostile summary round-trips, empty differs from absent"
+rm -rf "$sj"
+fi
+
+if step "the finding contract is defined in exactly one place"; then
+# The vocabulary was restated in four files once and they all drifted. The FIELD LIST is the
+# same hazard: an agent that lists the fields from memory will list them wrongly the day one
+# changes. `kit-finding.sh --contract` is the single home, and this asserts the recorder and
+# the validator still agree about what a finding is.
+C=$(bash "$KIT/tooling/kit-finding.sh" --contract 2>/dev/null)
+printf '%s' "$C" | grep -q 'summary   required' &&
+printf '%s' "$C" | grep -q 'class     required' &&
+printf '%s' "$C" | grep -q 'severity  required'
+check $? "--contract names the three required fields"
+# The validator must not carry its own copy of the vocabulary: it has to ASK for it, or the
+# two drift the moment a class is added. Proved by asking with the vocabulary source broken.
+vb="$WORK.vocabbreak"; rm -rf "$vb"; mkdir -p "$vb"
+sed 's/^CLASSES=.*/CLASSES="only-this-one"/' "$KIT/tooling/kit-finding.sh" > "$vb/kit-finding.sh"
+cp "$KIT/tooling/kit_findings.py" "$KIT/tooling/kit-lib.sh" "$vb/" 2>/dev/null
+printf '%s' '{"findings":[{"class":"fail-open","severity":"major","summary":"valid under the real vocabulary"}]}' \
+  | python3 "$vb/kit_findings.py" --validate >/dev/null 2>&1
+[ $? -ne 0 ]
+check $? "the validator reads the vocabulary rather than restating it"
+rm -rf "$vb"
+fi
+
 if step "the via vocabulary is defined in exactly one place"; then
 # The finding vocabulary was restated in four locations once, and the agents then emitted
 # values the recorder threw away. This one has a single definition in kit-lib.sh and every

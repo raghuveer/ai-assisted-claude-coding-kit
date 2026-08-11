@@ -31,7 +31,7 @@ esac
 ROOT=$(kit_root) || exit 0
 kit_active "$ROOT" || exit 0
 
-task=""; agent=""; class=""; sev=""; lang=""; model=""; domain=""; pattern=""; batch=0
+task=""; agent=""; class=""; sev=""; lang=""; model=""; domain=""; pattern=""; batch=0; json=0
 agent_id=""; unattributed=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -49,7 +49,11 @@ while [ $# -gt 0 ]; do
     --pattern) pattern=${2:-}; shift; shift ;;
     --model) model=${2:-}; shift; shift ;;
     --batch) batch=1; shift ;;
+    --json) json=1; shift ;;
     --vocab) printf 'class:    %s\nseverity: %s\n' "$CLASSES" "$SEVERITIES"; exit 0 ;;
+    # The shape of a finding, printed rather than remembered -- the same reason --vocab
+    # exists. Agents reference this; they must never restate it.
+    --contract) exec python3 "$(dirname "$0")/kit_findings.py" --contract ;;
     -h|--help) sed -n '2,4p' "$0"; exit 0 ;;
     *) kit_warn "unknown argument: $1"; exit 2 ;;
   esac
@@ -80,12 +84,22 @@ validate() {  # validate <class> <severity>
   return 0
 }
 
-record() {  # record <class> <severity> <lang> <pattern> <domain>
+record() {  # record <class> <severity> <lang> <pattern> <domain> [file] [line] [summary]
   # agent_id is carried so the harvesting hook can tell whether THIS agent has already been
   # recorded. Without it a second firing of SubagentStop re-harvests the same block, which is
   # the defect kit-spend.sh hit with four firings for two events.
-  printf '{"task":"%s","kind":"finding","at":"%s","agent":"%s","agent_id":"%s","class":"%s","severity":"%s","lang":"%s","pattern":"%s","domain":"%s","model":"%s"}\n' \
-    "$task" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$agent" "$agent_id" "$1" "$2" "$3" "$4" "$5" "$model" >> "$EV"
+  #
+  # summary/file/line arrive only from --json, where kit_findings.py has already length-capped
+  # them and stripped every quote and backslash from the summary. That normalisation is what
+  # makes this printf safe: the awk reader in kit-index.sh matches "[^"]*" and cannot see past
+  # an escaped quote, so an un-normalised summary would corrupt the row it is read back into.
+  # `line` is emitted as a BARE integer, defaulting to 0, because the reader on the other side
+  # (jn() in kit-index.sh) matches `"line": <digits>` and would never see a quoted one -- every
+  # location would have silently stored NULL. 0 means "not supplied" and is mapped back to NULL
+  # there; it is never a real line number.
+  printf '{"task":"%s","kind":"finding","at":"%s","agent":"%s","agent_id":"%s","class":"%s","severity":"%s","lang":"%s","pattern":"%s","domain":"%s","model":"%s","file":"%s","line":%s,"summary":"%s"}\n' \
+    "$task" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$agent" "$agent_id" "$1" "$2" "$3" "$4" "$5" "$model" \
+    "${6:-}" "${7:-0}" "${8:-}" >> "$EV"
 }
 
 # A domain names an INDUSTRY and seeds the industry accelerator, so an arbitrary string
@@ -102,6 +116,53 @@ declared_domain() {
   [ -n "$_decl" ] || return 1
   printf '%s\n' "$_decl" | grep -qx "$1"
 }
+
+# The structured path: a reviewer returns DATA and this records it. No block is scraped out
+# of prose and nothing retypes fields by hand -- both of those were parsing, and every defect
+# in the old harvester came from parsing (docs/LESSONS.md S5).
+#
+# Validation lives in kit_findings.py and is ALL-OR-NOTHING on purpose: a half-stored review
+# is a finding table that disagrees with the review it came from, and afterwards nobody can
+# tell which half is missing. So the validator runs to completion before a single line is
+# appended, and its non-zero exit means this writes nothing at all.
+if [ "$json" = 1 ]; then
+  PY="$(dirname "$0")/kit_findings.py"
+  TSV=$(python3 "$PY" --emit-fields) || {
+    kit_warn "findings rejected by the contract; nothing recorded (see above)"
+    kit_warn "run \`kit-finding.sh --contract\` for the field list"
+    exit 2
+  }
+  n=0
+  # A reviewer that found nothing sends `{"findings":[]}`. That is a measurement and must be
+  # distinguishable from a reviewer that was never asked, so it is reported, not silent.
+  if [ -z "$TSV" ]; then
+    printf 'kit: reviewer %s returned zero findings (an empty review, recorded as such)\n' \
+      "$agent" >&2
+    exit 0
+  fi
+  # US (0x1f), not tab: tab is IFS whitespace and the shell collapses runs of it, so a row
+  # with several empty fields would arrive short and every later value would shift into the
+  # wrong column. Belt and braces on CR, which has reached a field on this platform before.
+  while IFS="$(printf '\037')" read -r c s l pt d f ln sum; do
+    c=$(printf '%s' "$c" | tr -d '\r'); sum=$(printf '%s' "$sum" | tr -d '\r')
+    ln=$(printf '%s' "$ln" | tr -d '\r')
+    [ -n "$c" ] || continue
+    if [ -n "$d" ] && ! declared_domain "$d"; then
+      kit_warn "domain '$d' is not declared in accelerator.industry — dropped"
+      d=""
+    fi
+    # Re-checked here even though the validator already did it. This is the recorder's own
+    # gate and it is the last one before the append-only log; a caller that learns to bypass
+    # the validator must not thereby bypass the vocabulary.
+    validate "$c" "$s" || { kit_warn "  ...on: $sum"; exit 2; }
+    record "$c" "$s" "$l" "$pt" "$d" "$f" "$ln" "$sum"
+    n=$((n + 1))
+  done <<EOF
+$TSV
+EOF
+  printf 'kit: recorded %d finding(s) from structured output\n' "$n" >&2
+  exit 0
+fi
 
 if [ "$batch" = 1 ]; then
   n=0; bad=0; line=0

@@ -34,19 +34,34 @@ from its write by an await?)** · testability · operational cost · exit criter
 
 ## Output
 
-```
-## Mode                          [A | B — justification + file paths for B]
-## Verdict                       [APPROVED | REVISE | REJECT]
-## Pass 1 / Pass 2 / Pass 3      [findings; severity critical / major / minor / nit]
-## Required changes before coding [numbered; empty if APPROVED]
-## Questions for researcher/operator
-## What I did not check
-## Decision-record recommendation [if APPROVED + non-trivial: title + key Decision/Alternatives points]
-## Findings (recordable)   [one per line: class|severity|lang|pattern|domain — empty if none]
+Return ONE JSON object and nothing else — no prose before or after it, no code fence. Your
+review is DATA. It used to be a prose block that something had to parse back into fields, and
+every defect in that path came from the parsing. Do not make anything parse you.
+
+```json
+{
+  "verdict": "APPROVED | REVISE | REJECT",
+  "narrative": "## Mode [A | B — justification + file paths for B]\n## Pass 1 / Pass 2 / Pass 3 ...\n## Required changes before coding ...\n## Questions for researcher/operator ...\n## What I did not check ...\n## Decision-record recommendation [if APPROVED + non-trivial: title + key Decision/Alternatives points]",
+  "findings": [
+    {"class": "false-rationale", "severity": "major", "lang": "bash",
+     "pattern": "", "domain": "", "file": "docs/DESIGN-NOTES.md", "line": 44,
+     "summary": "The stated alternative was never costed"}
+  ]
+}
 ```
 
-The `Findings (recordable)` lines are piped straight into `kit-finding.sh --task <id> --agent <you> --batch`, so emit them even when the verdict is
-APPROVED — a finding you raised and the operator overruled still teaches the accelerators.
+`narrative` is everything a human reads, as markdown inside the string — including Mode and the
+decision-record recommendation. Nothing is lost by it being a field.
+
+`findings` is the recordable list. Emit findings even when the verdict is APPROVED — a finding
+you raised and the operator overruled still teaches the accelerators. A review that found
+nothing sends `"findings": []`; that is a measurement, and omitting the key is a different
+statement and is rejected.
+
+`class`, `severity` and `summary` are REQUIRED on every finding. `summary` is one line naming
+the defect, **at most 200 characters** — without it the row is a bare counter that cannot be
+told from any other. The explanation goes in `narrative`; a summary over the limit rejects the
+WHOLE batch. `file` and `line` anchor it so it can be re-checked.
 `pattern` is the reusable DESIGN the finding is about, independent of language and of
 industry -- `cache-port`, `retry-budget`, `idempotent-consumer`. Leave it blank rather than
 guessing. `domain` is an INDUSTRY (bfsi, govtech) and is dropped unless this project

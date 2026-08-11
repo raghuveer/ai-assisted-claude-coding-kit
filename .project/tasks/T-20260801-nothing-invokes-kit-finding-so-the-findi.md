@@ -85,6 +85,68 @@ that then exits, the status is swallowed by command substitution, and the gap ev
 counts. Also `\n`-unescaping corrupts any field containing a literal backslash, and there is no
 Stop-hook sweep for a reviewer that dies before SubagentStop.
 
+## RE-SCOPED 2026-08-10: the harvester is replaced, not repaired
+
+The six principles below were written to harden `kit-review-findings.sh`, which scrapes a
+reviewer's prose out of its transcript. That component is now being **deleted rather than
+hardened** — `docs/LESSONS.md` §5, whose whole subject is this file. The reviewer returns
+structured data and the orchestrator records it, so principles 2, 3 and 6 (pattern injection on
+`agent_id`, transcript JSON extraction, forward-search attribution) cease to have a subject.
+Principles 1, 4 and 5 survive and are implemented: one owner for validation, escape at the
+writer, absence is a measurement.
+
+**Built (2026-08-10):**
+
+- `tooling/kit_findings.py` — the reader. Validates a reviewer's JSON against one contract and
+  is the only thing with an opinion about a finding's shape. Rejection is **all-or-nothing**: a
+  half-stored review is a finding table that disagrees with the review it came from.
+- `kit-finding.sh --json` — records what the validator accepted. `--contract` prints the field
+  list, exactly as `--vocab` prints the vocabulary, so agents reference and never restate it.
+- `finding.summary`, `.file_path`, `.line_no` — the table could not previously hold what a
+  finding WAS. Twelve rows recorded that morning read `fail-open|major|bash` and could not be
+  told apart; `summary` is required for that reason.
+- The four reviewer contracts in `agents/` now return one JSON object carrying `verdict`,
+  `narrative` and `findings`, so nothing has to pull a fenced block out of markdown.
+
+**No JSON Schema file.** One was written and deleted the same day. `jsonschema` is not
+installed and the kit promises no runtime dependencies, so a schema file meant hand-writing a
+subset interpreter of a standard — a second implementation, and a THIRD way to declare config
+beside the project profile and the `--vocab` accessor. Reconsider only when something other
+than this validator needs to consume it.
+
+**What is NOT configurable, deliberately.** `class` and `severity` are a shared taxonomy: the
+accelerators aggregate findings across projects and a per-project class list would make that
+meaningless. `domain` is the axis that IS project-specific and is already declared in the
+profile. That split is the answer to "why is this not external config".
+
+**Not wired to the SubagentStop hook, and must not be.** `kit-review-findings.sh` stays
+unwired: its worst failure appends malformed JSON to an append-only committed log, and its 15
+findings are unfixed. The wiring is the orchestrator path, which is the decided design.
+
+### Verified
+
+Five mutations, each red in its own check, each restore verified clean by `git diff`:
+all-or-nothing rejection, summary normalisation, absent-vs-empty, the validator asking for the
+vocabulary rather than restating it, and `summary` being required.
+
+**Wiring proof — a live reviewer, not a fixture.** Fixtures prove the recorder; only this
+proves the loop, and it failed twice before it passed, both times in ways no fixture would have
+shown:
+
+1. The reviewer ignored the contract and called the harness's own `ReportFindings` tool,
+   returning prose. Fixed by disallowing that tool and stating the output rule as overriding.
+2. It then returned correct JSON **wrapped in a ```json fence**, having been told in capitals
+   not to. `unfence()` strips exactly one surrounding fence — the single concession to how
+   models reply. It is not prose-scraping: every field still comes from a JSON parse, and a
+   wrong unwrap fails as invalid JSON rather than producing a quietly wrong row. Prose around
+   an object still fails loudly, asserted.
+3. It then produced a **294-character summary** against the 200 cap and the whole batch was
+   correctly rejected — the contract working, but the agents had never been told the limit.
+   Now stated in all four.
+
+After those, a real reviewer's output went into the recorder untouched by a human and produced
+rows carrying class, severity, `pattern`, `file:line` and a readable summary.
+
 ## The approach, and why each piece is shaped that way
 
 Six principles, because patching seven symptoms would leave the eighth.

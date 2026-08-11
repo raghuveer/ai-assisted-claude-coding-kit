@@ -78,21 +78,43 @@ Your bias is caution — a review you cannot complete rigorously is not an APPRO
 
 ## Output
 
-```
-## Verdict            [APPROVED | REVISE | REJECT | HALT]
-## Scope reviewed     [files + line ranges]
-## Findings           [by dimension; severity critical / major / minor; file:line; concrete exploit/failure scenario]
-## Required changes before testing   [numbered; empty if APPROVED]
-## What I did not check
-## Findings (recordable)   [one per line: class|severity|lang|pattern|domain — empty if none]
+Return ONE JSON object and nothing else — no prose before or after it, no code fence. Your
+review is DATA. It used to be a prose block that something had to parse back into fields, and
+every defect in that path came from the parsing — most recently a person reading the markdown
+and retyping it, which dropped the `pattern` on all seven of a security review's findings and
+left rows nobody could tell apart. Do not make anything parse you.
+
+```json
+{
+  "verdict": "APPROVED | REVISE | REJECT | HALT",
+  "narrative": "## Scope reviewed ...\n## Findings by dimension — severity, file:line, and a concrete exploit or failure scenario for each ...\n## Required changes before testing ...\n## What I did not check ...",
+  "findings": [
+    {"class": "fail-open", "severity": "critical", "lang": "sql",
+     "pattern": "null-in-negative-comparison", "domain": "",
+     "file": "tooling/kit-status.sh", "line": 222,
+     "summary": "NULL via is dropped from the breakdown while all still counts its escapes"}
+  ]
+}
 ```
 
-The `Findings (recordable)` lines are piped straight into `kit-finding.sh --task <id> --agent <you> --batch`, so emit them even when the verdict is
-APPROVED — a finding you raised and the operator overruled still teaches the accelerators.
+`narrative` is everything a human reads, as markdown inside the string, including the concrete
+exploit or failure scenario for each finding. Nothing is lost by it being a field.
+
+`findings` is the recordable list. Emit findings even when the verdict is APPROVED — a finding
+you raised and the operator overruled still teaches the accelerators. A review that found
+nothing sends `"findings": []`; that is a measurement, and omitting the key is a different
+statement and is rejected.
+
+`class`, `severity` and `summary` are REQUIRED on every finding. `summary` is one line naming
+the defect, **at most 200 characters** — without it the row is a bare counter that cannot be
+told from any other. The exploit scenario goes in `narrative`; a summary over the limit rejects
+the WHOLE batch. `file` and `line` anchor it so it can be re-checked.
 `pattern` is the reusable DESIGN the finding is about, independent of language and of
 industry -- `cache-port`, `retry-budget`, `idempotent-consumer`. Leave it blank rather than
 guessing. `domain` is an INDUSTRY (bfsi, govtech) and is dropped unless this project
 declared it, so leave that blank too unless you know it.
+
+Validation is ALL OR NOTHING: one bad value and the whole batch records nothing.
 
 `class` is one of: fail-open race false-rationale perf compliance correctness style
 unclassified. `severity` is one of: critical major minor nit. An unrecognised value is

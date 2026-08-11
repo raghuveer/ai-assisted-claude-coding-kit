@@ -51,22 +51,47 @@ The project overlay adds the ones this repo has actually shipped, with citations
 
 ## Output
 
-```
-## Verdict          [APPROVED | REVISE | REJECT]
-## Scope reviewed   [files + line ranges]
-## Pass 1 / 2 / 3   [findings; severity critical / major / minor / nit; file:line refs]
-## Required changes before testing   [numbered; empty if APPROVED]
-## Questions for the coder
-## What I did not check
-## Findings (recordable)   [one per line: class|severity|lang|pattern|domain — empty if none]
+Return ONE JSON object and nothing else — no prose before or after it, no code fence. Your
+review is DATA. It used to be a prose block that something had to parse back into fields, and
+every defect in that path came from the parsing: an envelope leaking into the log, backslash
+corruption, and — most recently — a person reading the markdown and retyping it, which dropped
+the `pattern` on every finding and left seven rows nobody could tell apart. Do not make anything
+parse you.
+
+```json
+{
+  "verdict": "APPROVED | REVISE | REJECT",
+  "narrative": "## Scope reviewed ...\n## Pass 1 / 2 / 3 ...\n## Required changes before testing ...\n## Questions for the coder ...\n## What I did not check ...",
+  "findings": [
+    {"class": "fail-open", "severity": "major", "lang": "bash",
+     "pattern": "human-gate-unenforced", "domain": "",
+     "file": "tooling/kit-trailers.sh", "line": 123,
+     "summary": "Nothing checks who wrote the Via trailer"}
+  ]
+}
 ```
 
-The `Findings (recordable)` lines are piped straight into `kit-finding.sh --task <id> --agent <you> --batch`, so emit them even when the verdict is
-APPROVED — a finding you raised and the operator overruled still teaches the accelerators.
-`pattern` is the reusable DESIGN the finding is about, independent of language and of
-industry -- `cache-port`, `retry-budget`, `idempotent-consumer`. Leave it blank rather than
+`narrative` is everything a human reads, as markdown inside the string: scope reviewed, the
+three passes with `file:line` refs, required changes numbered, questions, and what you did not
+check. Nothing is lost by it being a field.
+
+`findings` is the recordable list. Emit findings even when the verdict is APPROVED — a finding
+you raised and the operator overruled still teaches the accelerators. A review that found
+nothing sends `"findings": []`; that is a measurement, and omitting the key is a different
+statement and is rejected.
+
+`class`, `severity` and `summary` are REQUIRED on every finding. `summary` is one line naming
+the defect, **at most 200 characters** — without it the row is a bare counter that cannot be
+told from any other, which is exactly what happened to seven findings on 2026-08-10. The
+explanation goes in `narrative`; a summary over the limit rejects the WHOLE batch, and the
+first live reviewer under this contract lost its review to a 294-character one. `file` and
+`line` anchor it so it can be re-checked. `pattern` is the reusable DESIGN the finding is about, independent of language and
+of industry -- `cache-port`, `retry-budget`, `idempotent-consumer`. Leave it blank rather than
 guessing. `domain` is an INDUSTRY (bfsi, govtech) and is dropped unless this project
 declared it, so leave that blank too unless you know it.
+
+Validation is ALL OR NOTHING: one bad value and the whole batch records nothing, because a
+half-stored review is a finding table that disagrees with the review it came from.
 
 `class` is one of: fail-open race false-rationale perf compliance correctness style
 unclassified. `severity` is one of: critical major minor nit. An unrecognised value is
