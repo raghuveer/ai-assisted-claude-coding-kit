@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
-# kit-finding.sh --task ID --agent NAME --class CLASS --severity SEV [--lang L] [--domain D]
-#                [--pattern P] [--model M]
-# kit-finding.sh --task ID --agent NAME --batch    < lines of  class|severity|lang|pattern[|domain]
+# kit-finding.sh --task ID --agent NAME --json     < one reviewer JSON object   [the main door]
+# kit-finding.sh --task ID --agent NAME --class CLASS --severity SEV --summary TEXT
+#                [--lang L] [--domain D] [--pattern P] [--model M]
 # kit-finding.sh --vocab                           prints the accepted vocabularies
+# kit-finding.sh --contract                        prints the shape of a finding
 #
 # Records review findings. This table is what the technology and industry accelerators are
 # later derived from, so a silently mis-filled row is worse than a missing one: named
 # flags, and vocabularies are validated.
 #
-# --batch exists because a review produces many findings at once, and re-typing a flag line
-# per finding is where class and lang get dropped. Those two are the only fields that make
-# a finding teach anything, and they are the first casualties of tedium.
+# THIS SCRIPT DOES NOT SERIALISE. Every event line is built by kit_findings.py with json.dumps.
+# It used to be built here with printf, and both T3 reviewers found the same critical: only
+# `summary` was normalised, so `lang`, `pattern`, `domain` and `file` reached an append-only
+# COMMITTED log raw. One quote corrupts the line permanently, and because the awk reader takes
+# the first match, a crafted `lang` could inject a key the indexer would then prefer over the
+# real one. Keep serialisation in one place with one writer.
+#
+# `--batch` was DELETED with that printf. It carried no `summary`, so it could only produce the
+# bare-counter rows the contract exists to abolish, and its pipe-delimited format is one no
+# reviewer emits any more. Deleting a component beats hardening it -- docs/LESSONS.md S5.
 #
 # --vocab exists because these lists were restated in the schema comment, in two skills and
 # in the agent output contracts, and all four had drifted -- the agents emitted severities
@@ -24,15 +32,20 @@ set -uo pipefail
 CLASSES="fail-open race false-rationale perf compliance correctness style unclassified"
 SEVERITIES="critical major minor nit"
 
+# Dispatched BEFORE the repository checks, because both answer "what may I send you" and that
+# question is asked while reading the docs, not while standing in an adopted project. `--vocab`
+# was already here; `--contract` was not, and outside a project it printed nothing and exited 0
+# -- a T3 reviewer found the inconsistency.
 case "${1:-}" in
   --vocab) printf 'class:    %s\nseverity: %s\n' "$CLASSES" "$SEVERITIES"; exit 0 ;;
+  --contract) exec python3 "$(dirname "$0")/kit_findings.py" --contract ;;
 esac
 
 ROOT=$(kit_root) || exit 0
 kit_active "$ROOT" || exit 0
 
-task=""; agent=""; class=""; sev=""; lang=""; model=""; domain=""; pattern=""; batch=0; json=0
-agent_id=""; unattributed=0
+task=""; agent=""; class=""; sev=""; lang=""; model=""; domain=""; pattern=""; json=0
+agent_id=""; unattributed=0; summary=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --task) task=${2:-}; shift; shift ;;
@@ -47,14 +60,10 @@ while [ $# -gt 0 ]; do
     --lang) lang=${2:-}; shift; shift ;;
     --domain) domain=${2:-}; shift; shift ;;
     --pattern) pattern=${2:-}; shift; shift ;;
+    --summary) summary=${2:-}; shift; shift ;;
     --model) model=${2:-}; shift; shift ;;
-    --batch) batch=1; shift ;;
     --json) json=1; shift ;;
-    --vocab) printf 'class:    %s\nseverity: %s\n' "$CLASSES" "$SEVERITIES"; exit 0 ;;
-    # The shape of a finding, printed rather than remembered -- the same reason --vocab
-    # exists. Agents reference this; they must never restate it.
-    --contract) exec python3 "$(dirname "$0")/kit_findings.py" --contract ;;
-    -h|--help) sed -n '2,4p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,6p' "$0"; exit 0 ;;
     *) kit_warn "unknown argument: $1"; exit 2 ;;
   esac
 done
@@ -84,22 +93,32 @@ validate() {  # validate <class> <severity>
   return 0
 }
 
-record() {  # record <class> <severity> <lang> <pattern> <domain> [file] [line] [summary]
-  # agent_id is carried so the harvesting hook can tell whether THIS agent has already been
-  # recorded. Without it a second firing of SubagentStop re-harvests the same block, which is
-  # the defect kit-spend.sh hit with four firings for two events.
-  #
-  # summary/file/line arrive only from --json, where kit_findings.py has already length-capped
-  # them and stripped every quote and backslash from the summary. That normalisation is what
-  # makes this printf safe: the awk reader in kit-index.sh matches "[^"]*" and cannot see past
-  # an escaped quote, so an un-normalised summary would corrupt the row it is read back into.
-  # `line` is emitted as a BARE integer, defaulting to 0, because the reader on the other side
-  # (jn() in kit-index.sh) matches `"line": <digits>` and would never see a quoted one -- every
-  # location would have silently stored NULL. 0 means "not supplied" and is mapped back to NULL
-  # there; it is never a real line number.
-  printf '{"task":"%s","kind":"finding","at":"%s","agent":"%s","agent_id":"%s","class":"%s","severity":"%s","lang":"%s","pattern":"%s","domain":"%s","model":"%s","file":"%s","line":%s,"summary":"%s"}\n' \
-    "$task" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$agent" "$agent_id" "$1" "$2" "$3" "$4" "$5" "$model" \
-    "${6:-}" "${7:-0}" "${8:-}" >> "$EV"
+# No `record()` here any more. Every event line is serialised by kit_findings.py with
+# json.dumps and appended by `emit` below in ONE operation. agent_id is still carried, so a
+# second firing of a hook can tell whether THIS agent was already recorded.
+emit() {  # emit <stdin: reviewer JSON object>
+  # Built as a list rather than with `${unattributed:+...}`, because that variable holds 0 or 1
+  # and 0 is NON-EMPTY -- the `:+` form passed --unattributed on every call and every recording
+  # died as "contradictory with --task". Caught on the first run after the rewrite.
+  set --
+  [ -n "$task" ] && set -- "$@" --task "$task"
+  [ "$unattributed" = 1 ] && set -- "$@" --unattributed
+  _out=$(python3 "$PY" --emit-events "$@" \
+           --agent "$agent" --agent-id "$agent_id" --model "$model" \
+           --industries "$(declared_industries)") || return 2
+  # One append. The validator emits nothing at all unless every finding passed, so there is no
+  # arrangement in which some rows land and others do not -- which was true of the validator
+  # before and NOT true of the writer, because the old loop appended per finding and could
+  # exit partway. Both T3 reviewers found that; this is the fix.
+  printf '%s\n' "$_out" >> "$EV"
+  _n=$(printf '%s\n' "$_out" | grep -c '"kind":"finding"')
+  _g=$(printf '%s\n' "$_out" | grep -c '"kind":"finding-gap"')
+  if [ "${_g:-0}" -gt 0 ]; then
+    printf 'kit: %s returned zero findings; recorded a finding-gap, not silence\n' "$agent" >&2
+  else
+    printf 'kit: recorded %s finding(s) from structured output\n' "$_n" >&2
+  fi
+  return 0
 }
 
 # A domain names an INDUSTRY and seeds the industry accelerator, so an arbitrary string
@@ -109,103 +128,48 @@ record() {  # record <class> <severity> <lang> <pattern> <domain> [file] [line] 
 # Reviewers reliably put the SUBJECT of the finding here instead -- `caching`,
 # `cache-adapter-design` -- which is why `pattern` now exists: it was the axis they were
 # reaching for. Accept a domain only if this project declared it.
-declared_domain() {
-  [ -n "$1" ] || return 0
-  _decl=$(kit_cfg_all "$PROFILE" accelerator.industry |
-          sed 's/[[:space:]]*->.*//' | sed 's|.*/||' | sed 's/\.md[[:space:]]*$//' | tr -d ' ')
-  [ -n "$_decl" ] || return 1
-  printf '%s\n' "$_decl" | grep -qx "$1"
+# The declared list, passed to the writer rather than applied here, so the drop decision and
+# the serialisation live in the same place.
+declared_industries() {
+  kit_cfg_all "$PROFILE" accelerator.industry |
+    sed 's/[[:space:]]*->.*//' | sed 's|.*/||' | sed 's/\.md[[:space:]]*$//' | tr -d ' ' | tr '\n' ' '
 }
 
-# The structured path: a reviewer returns DATA and this records it. No block is scraped out
-# of prose and nothing retypes fields by hand -- both of those were parsing, and every defect
-# in the old harvester came from parsing (docs/LESSONS.md S5).
-#
-# Validation lives in kit_findings.py and is ALL-OR-NOTHING on purpose: a half-stored review
-# is a finding table that disagrees with the review it came from, and afterwards nobody can
-# tell which half is missing. So the validator runs to completion before a single line is
-# appended, and its non-zero exit means this writes nothing at all.
+PY="$(dirname "$0")/kit_findings.py"
+
+# The structured path: a reviewer returns DATA and this records it. No block is scraped out of
+# prose and nothing retypes fields by hand -- both were parsing, and every defect in the old
+# harvester came from parsing (docs/LESSONS.md S5).
 if [ "$json" = 1 ]; then
-  PY="$(dirname "$0")/kit_findings.py"
-  TSV=$(python3 "$PY" --emit-fields) || {
+  emit || {
     kit_warn "findings rejected by the contract; nothing recorded (see above)"
     kit_warn "run \`kit-finding.sh --contract\` for the field list"
     exit 2
   }
-  n=0
-  # A reviewer that found nothing sends `{"findings":[]}`. That is a measurement and must be
-  # distinguishable from a reviewer that was never asked, so it is reported, not silent.
-  if [ -z "$TSV" ]; then
-    printf 'kit: reviewer %s returned zero findings (an empty review, recorded as such)\n' \
-      "$agent" >&2
-    exit 0
-  fi
-  # US (0x1f), not tab: tab is IFS whitespace and the shell collapses runs of it, so a row
-  # with several empty fields would arrive short and every later value would shift into the
-  # wrong column. Belt and braces on CR, which has reached a field on this platform before.
-  while IFS="$(printf '\037')" read -r c s l pt d f ln sum; do
-    c=$(printf '%s' "$c" | tr -d '\r'); sum=$(printf '%s' "$sum" | tr -d '\r')
-    ln=$(printf '%s' "$ln" | tr -d '\r')
-    [ -n "$c" ] || continue
-    if [ -n "$d" ] && ! declared_domain "$d"; then
-      kit_warn "domain '$d' is not declared in accelerator.industry — dropped"
-      d=""
-    fi
-    # Re-checked here even though the validator already did it. This is the recorder's own
-    # gate and it is the last one before the append-only log; a caller that learns to bypass
-    # the validator must not thereby bypass the vocabulary.
-    validate "$c" "$s" || { kit_warn "  ...on: $sum"; exit 2; }
-    record "$c" "$s" "$l" "$pt" "$d" "$f" "$ln" "$sum"
-    n=$((n + 1))
-  done <<EOF
-$TSV
-EOF
-  printf 'kit: recorded %d finding(s) from structured output\n' "$n" >&2
   exit 0
 fi
 
-if [ "$batch" = 1 ]; then
-  n=0; bad=0; line=0
-  while IFS= read -r L || [ -n "$L" ]; do
-    line=$((line + 1))
-    L=$(printf '%s' "$L" | tr -d '\r')
-    case "$L" in ''|'#'*) continue ;; esac
-    OIFS=$IFS; IFS='|'
-    # shellcheck disable=SC2086
-    set -- $L
-    IFS=$OIFS
-    c=$(printf '%s' "${1:-}" | tr -d ' '); s=$(printf '%s' "${2:-}" | tr -d ' ')
-    l=$(printf '%s' "${3:-}" | tr -d ' '); pt=$(printf '%s' "${4:-}" | tr -d ' ')
-    d=$(printf '%s' "${5:-}" | tr -d ' ')
-    if [ -n "$d" ] && ! declared_domain "$d"; then
-      kit_warn "line $line: domain '$d' is not declared in accelerator.industry — dropped"
-      kit_warn "  (a domain is an industry; put the reusable design in the pattern field)"
-      d=""
-    fi
-    if [ -z "$c" ] || [ -z "$s" ]; then
-      kit_warn "line $line: expected class|severity|lang|domain, got: $L"; bad=$((bad + 1)); continue
-    fi
-    if validate "$c" "$s"; then
-      record "$c" "$s" "$l" "$pt" "$d"; n=$((n + 1))
-    else
-      kit_warn "  ...on line $line: $L"; bad=$((bad + 1))
-    fi
-  done
-  printf 'kit: recorded %d finding(s)' "$n" >&2
-  [ "$bad" -gt 0 ] && printf ', rejected %d' "$bad" >&2
-  printf '\n' >&2
-  # Non-zero on any rejection. A partially recorded review is a measurement gap, and the
-  # caller is the only one still holding the findings needed to fix it.
-  [ "$bad" -gt 0 ] && exit 1
-  exit 0
-fi
-
+# The single-finding door, for a human recording one thing by hand. Routed through the SAME
+# writer: a second serialiser is a second place to get escaping wrong, and this path used to be
+# exactly that. The values are handed to python as ARGV rather than interpolated into a format
+# string, so no quote an operator types can break the object.
+#
+# `--summary` is required here for the reason it is required in the contract: without one the
+# row is a bare counter, and this door could still produce them after the contract closed the
+# other one.
 [ -n "$class" ] || { kit_warn "missing --class"; exit 2; }
 [ -n "$sev" ]   || { kit_warn "missing --severity"; exit 2; }
+[ -n "$summary" ] || {
+  kit_warn "missing --summary (one line naming the defect, 8-200 characters)"
+  kit_warn "  a finding without one cannot be told from any other row; see --contract"
+  exit 2
+}
 validate "$class" "$sev" || exit 2
-if [ -n "$domain" ] && ! declared_domain "$domain"; then
-  kit_warn "domain '$domain' is not declared in accelerator.industry — dropped"
-  kit_warn "  (a domain is an industry; put the reusable design in --pattern)"
-  domain=""
-fi
-record "$class" "$sev" "$lang" "$pattern" "$domain"
+
+python3 -c 'import json,sys
+k=("class","severity","summary","lang","pattern","domain")
+print(json.dumps({"findings":[{a:b for a,b in zip(k,sys.argv[1:]) if b!=""}]}))' \
+  "$class" "$sev" "$summary" "$lang" "$pattern" "$domain" | emit || {
+    kit_warn "finding rejected by the contract; nothing recorded (see above)"
+    exit 2
+  }

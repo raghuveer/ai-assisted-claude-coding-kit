@@ -134,7 +134,10 @@ proves the loop, and it failed twice before it passed, both times in ways no fix
 shown:
 
 1. The reviewer ignored the contract and called the harness's own `ReportFindings` tool,
-   returning prose. Fixed by disallowing that tool and stating the output rule as overriding.
+   returning prose. **Worked around** — not fixed — by passing `--disallowedTools` and an
+   overriding output rule on that one CLI invocation. Neither string exists in `agents/`,
+   `skills/` or `hooks/`, so nothing in the kit carries the workaround; a T3 reviewer caught
+   this sentence claiming otherwise on 2026-08-11, and it was §3 again, and mine.
 2. It then returned correct JSON **wrapped in a ```json fence**, having been told in capitals
    not to. `unfence()` strips exactly one surrounding fence — the single concession to how
    models reply. It is not prose-scraping: every field still comes from a JSON parse, and a

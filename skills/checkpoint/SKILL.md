@@ -41,15 +41,20 @@ stack has no mutation tooling, `ladder.rung3` in the profile is empty — that m
 Every finding from this unit's reviews:
 
 ```
-kit-finding.sh --task <id> --agent <name> --class <class> --severity <sev> --lang <lang> [--pattern <p>] [--domain <d>]
+kit-finding.sh --task <id> --agent <name> --class <class> --severity <sev> --summary "<one line>" [--lang <l>] [--pattern <p>] [--domain <d>]
 ```
 
-A review produces several at once, so pipe the reviewer's `Findings (recordable)` block in
-unchanged rather than retyping it — that retyping is where `class` and `lang` get dropped:
+A review produces several at once, and a reviewer now returns **one JSON object** rather than a
+prose block. Pipe that object in **unchanged** — do not read it and retype the fields, which is
+how `pattern` was dropped from twelve rows on 2026-08-10 and seven of them became
+indistinguishable from each other:
 
 ```
-kit-finding.sh --task <id> --agent <name> --batch    < class|severity|lang|pattern|domain lines
+kit-finding.sh --task <id> --agent <name> --json    < the reviewer's whole reply
 ```
+
+Run `kit-finding.sh --contract` for the field list. Rejection is all-or-nothing and the
+diagnostics name every problem at once, so a rejected review is fixed in one pass, not six.
 
 `pattern` names the reusable DESIGN a finding is about -- `cache-port`, `retry-budget` --
 independent of language and of industry. It is the axis with the best amortisation: a

@@ -1,36 +1,49 @@
 #!/usr/bin/env python3
-"""Read and validate reviewer findings. The JSON boundary, in one place.
+"""Read, validate and WRITE reviewer findings. The JSON boundary, in one place.
 
 Reviewers used to return a prose block that something -- a hook scraping a transcript, or a
 person reading the markdown and retyping it -- had to parse back into fields. Every defect in
-that path came from the parsing: an envelope leaking into the log, backslash corruption,
-retracted drafts recorded as real. The fix is not a better parser. The reviewer returns data.
+that path came from the parsing. The fix is not a better parser. The reviewer returns data.
 
 Python rather than shell because `python3` is already a hard dependency (validate.py runs in
 CI), so the constraint that once justified hand-rolling JSON with awk and sed was never real
 -- docs/LESSONS.md S7.
 
-WHY NOT A JSON SCHEMA FILE. It was built and deleted. `jsonschema` is not installed and the
-kit promises no runtime dependencies, so a schema file meant hand-writing a subset interpreter
-of a standard -- a second implementation, and a THIRD way to declare config beside the project
-profile and the `--vocab` accessor. This kit's standard is one definition in the tool, reached
-through a command, referenced and never restated by its consumers. CONTRACT below is that one
-definition; `kit-finding.sh --contract` is the door. Reconsider a schema file only when
-something other than this validator needs to consume it.
+THIS MODULE ALSO WRITES, and that is a correction. The first version validated here and let
+`kit-finding.sh` build the event line with printf, on the principle that one module decides and
+another records. Both T3 reviewers found the same critical: that printf interpolated `lang`,
+`pattern`, `domain` and `file` unescaped into an append-only COMMITTED log, and because the awk
+reader takes the first match, a crafted `lang` could inject a key the indexer would then prefer.
+The separation of concerns was the defect. One JSON writer, here.
 
-WHAT IS NOT CONFIGURABLE, AND WHY. `class` and `severity` are a SHARED taxonomy: the
-accelerators aggregate findings across projects, and a per-project class list would make that
-aggregation meaningless. They stay in one home for every project. `domain` is the axis that IS
-project-specific, and it is already declared in the project profile. That split is deliberate.
+WHY SANITISE RATHER THAN ESCAPE. Correct JSON escaping is what a normal writer would do, and it
+would break the reader: `jf()` in kit-index.sh matches `"[^"]*"` and cannot see past a `\"`. So
+every string field is stripped of quote, backslash and control characters BEFORE serialisation,
+which makes the emitted line both valid JSON and readable by that awk. `_assert_flat()` then
+checks the invariant on the finished line rather than trusting the sanitiser.
+
+WHY NO JSON SCHEMA FILE. One was built and deleted. `jsonschema` is not installed and the kit
+promises no runtime dependencies, so a schema file meant hand-writing a subset interpreter of a
+standard -- a second implementation, and a THIRD way to declare config beside the project
+profile and the `--vocab` accessor. CONTRACT below is the one definition; `kit-finding.sh
+--contract` is the door.
+
+WHAT IS NOT CONFIGURABLE. `class` and `severity` are a SHARED taxonomy: the accelerators
+aggregate findings across projects, and a per-project class list would make that meaningless.
+`domain` is the axis that IS project-specific, and it is declared in the project profile.
 
 Usage:
-    kit_findings.py --validate      < findings.json    exit 0 accepted, 2 rejected
-    kit_findings.py --emit-fields   < findings.json    TSV of normalised fields
-    kit_findings.py --contract                         the contract, for humans and agents
+    kit_findings.py --contract                     the contract, for humans and agents
+    kit_findings.py --validate         < json      exit 0 accepted, 2 rejected
+    kit_findings.py --emit-events      < json      complete NDJSON event lines on stdout
+        --task ID | --unattributed, --agent NAME, [--agent-id X] [--model M]
+        [--industries "bfsi govtech"]  domains outside this list are dropped, as declared
 
-Nothing is written here: this module decides, `kit-finding.sh` records. A validator that could
-also write would be the second thing with an opinion about what a finding is.
+`--emit-events` prints NOTHING unless every finding passed, so the caller can append its whole
+output in one operation. A half-stored review is a finding table that disagrees with the review
+it came from, and afterwards nobody can tell which half is missing.
 """
+import datetime
 import json
 import os
 import re
@@ -65,25 +78,51 @@ CONTRACT = (
 
 ALLOWED = tuple(c[0] for c in CONTRACT)
 
-# Which fields carry a closed vocabulary. The field NAMES live here; the vocabulary itself
-# does not, and must not -- it has one home and this file asks that home for it.
+# Which fields carry a closed vocabulary. The field NAMES live here; the vocabulary itself does
+# not, and must not -- it has one home and this file asks that home for it.
 VOCAB_FIELDS = ("class", "severity")
 
 TYPE_NAME = {str: "string", int: "integer"}
+
+_UNSAFE = re.compile(r'[\\"]')
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
 
 
 class Rejected(Exception):
     pass
 
 
+def sanitise(text):
+    """One line, printable, no quote and no backslash. Applied to EVERY string that reaches the
+    log, not only `summary` -- restricting it to `summary` was the critical both reviewers
+    found. Lossy by one character class, and honest about it."""
+    return " ".join(_UNSAFE.sub("'", _CONTROL.sub(" ", text)).split())
+
+
+def _assert_flat(line):
+    """The invariant the awk reader depends on, checked on the finished line rather than
+    assumed from the sanitiser. A backslash here means some field escaped sanitisation, and the
+    row it produces would be silently truncated or mis-keyed on the way back in."""
+    if "\\" in line:
+        raise Rejected("internal: a backslash survived into the event line; refusing to write.\n"
+                       "  The awk reader cannot see past it and the row would be corrupt.")
+    if "\n" in line or "\r" in line:
+        raise Rejected("internal: a newline survived into the event line; refusing to write.")
+
+
 def vocabularies():
     """The one definition, asked for rather than restated."""
-    out = subprocess.run(
-        ["bash", os.path.join(HERE, "kit-finding.sh"), "--vocab"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    )
+    try:
+        out = subprocess.run(
+            ["bash", os.path.join(HERE, "kit-finding.sh"), "--vocab"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        # A hung or missing shell must not hang or crash the recorder. It must say so.
+        raise Rejected("could not run `kit-finding.sh --vocab`: %s" % exc)
     if out.returncode != 0:
-        raise Rejected("could not read the vocabulary from `kit-finding.sh --vocab`")
+        raise Rejected("`kit-finding.sh --vocab` failed: %s"
+                       % out.stderr.decode("utf-8", "replace").strip())
     vocab = {}
     for line in out.stdout.decode("utf-8", "replace").splitlines():
         if ":" in line:
@@ -137,32 +176,18 @@ def check_finding(finding, index, errors):
                 errors.append("%s.%s: %s is below minimum %s" % (where, name, value, low))
 
 
-# A summary is free text from a reviewer, and it is read back out of events.ndjson by an awk
-# extractor whose pattern is "[^"]*" -- it cannot see past an escaped quote, and a backslash
-# corrupted a field in this repo once already. Rather than leave that landmine for a later
-# reader, the writer normalises: one line, printable, no quote and no backslash. Lossy by one
-# character class, and honest about it, which the alternative was not.
-_UNSAFE = re.compile(r'[\\"]')
-_CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
-
-
-def normalise_summary(text):
-    return " ".join(_UNSAFE.sub("'", _CONTROL.sub(" ", text)).split())
-
-
 _FENCE = re.compile(r"\A\s*```[A-Za-z0-9_-]*\s*\n(?P<body>.*)\n\s*```\s*\Z", re.S)
 
 
 def unfence(text):
     """Strip ONE surrounding markdown code fence, if the whole payload is wrapped in it.
 
-    This is the single concession to how models actually reply, and it was earned: told in
-    capitals to emit no fence, a live reviewer wrapped its object in ```json anyway. It is not
-    the prose-scraping this design deletes, and the difference is the failure mode. Every
-    FIELD still comes from a JSON parse -- all-or-nothing, vocabulary-checked. If this unwrap
-    ever guesses wrong the result is `not valid JSON` and nothing is recorded, never a row
-    that is quietly the wrong value. Anything other than a single wrapping fence is left
-    alone, so prose around an object still fails loudly instead of being mined for fields.
+    The single concession to how models actually reply, and it was earned: told in capitals to
+    emit no fence, a live reviewer wrapped its object in ```json anyway. It is not the
+    prose-scraping this design deletes, and the difference is the failure mode. Every FIELD
+    still comes from a JSON parse. If this unwrap guesses wrong the result is `not valid JSON`
+    and nothing is recorded, never a row that is quietly the wrong value. Prose around an object
+    is left alone and fails loudly -- which it did, on a real review, on 2026-08-11.
     """
     m = _FENCE.match(text)
     return m.group("body") if m else text
@@ -183,11 +208,8 @@ def validate(payload_text):
                        "  A reviewer that found nothing sends []. Omitting the key is not "
                        "the same statement, and only one of them is a measurement.")
     # `verdict` and `narrative` ride along so a reviewer returns ONE object and nothing has to
-    # pull a fenced block out of markdown -- that extraction is the prose parsing this design
-    # exists to delete. They are accepted and ignored here: this module records findings, and
-    # the verdict is for the human who decides whether the work closes. No vocabulary is
-    # enforced on `verdict` because nothing downstream reads it yet, and a check nothing needs
-    # is a check that will drift unnoticed.
+    # pull a fenced block out of markdown. Accepted and ignored here: this module records
+    # findings; the verdict is for the human who decides whether the work closes.
     for key in doc:
         if key not in ("findings", "verdict", "narrative"):
             raise Rejected("  top level: unknown field %r (allowed: findings, verdict, "
@@ -218,8 +240,11 @@ def validate(payload_text):
 
     rows = []
     for finding in doc["findings"]:
-        row = dict(finding)
-        row["summary"] = normalise_summary(finding["summary"])
+        row = {}
+        for name, _req, want, low, _high, _why in CONTRACT:
+            if name not in finding:
+                continue
+            row[name] = sanitise(finding[name]) if want is str else finding[name]
         if len(row["summary"]) < 8:
             raise Rejected(
                 "  a summary became too short after normalisation: %r\n"
@@ -229,28 +254,47 @@ def validate(payload_text):
     return rows
 
 
-# US (0x1f), not tab. Tab is IFS *whitespace*, and the shell collapses runs of it, so six
-# consecutive empty fields arrive as one and every value after them shifts left -- observed:
-# a summary landed in `lang` and the row was written with the wrong columns. A non-whitespace
-# separator has no such rule, and normalise_summary strips every control character, so this
-# byte cannot appear inside a value.
-SEP = "\x1f"
-
-
-def emit_fields(rows):
-    """One record per line for the shell recorder. Written to the BYTE stream on purpose:
-    Python's text mode translates \\n to os.linesep, which on Windows put a CR inside the JSON
-    string the recorder then wrote to the append-only log -- and a lone CR is read back as a
-    line break, splitting one event across two malformed lines."""
-    out = []
+def build_events(rows, opts):
+    """Complete event lines. json.dumps is the only thing that serialises a finding."""
+    at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    industries = opts["industries"]
+    lines = []
     for row in rows:
-        out.append(SEP.join([
-            row["class"], row["severity"], row.get("lang", ""), row.get("pattern", ""),
-            row.get("domain", ""), row.get("file", ""), str(row.get("line", "")),
-            row["summary"],
-        ]))
-    if out:
-        sys.stdout.buffer.write(("\n".join(out) + "\n").encode("utf-8"))
+        domain = row.get("domain", "")
+        if domain and industries is not None and domain not in industries:
+            sys.stderr.write(
+                "kit-findings: domain %r is not declared in accelerator.industry -- dropped\n"
+                "  (a domain is an industry; put the reusable design in `pattern`)\n" % domain)
+            domain = ""
+        event = {
+            "task": opts["task"], "kind": "finding", "at": at,
+            "agent": sanitise(opts["agent"]), "agent_id": sanitise(opts["agent_id"]),
+            "class": row["class"], "severity": row["severity"],
+            "lang": row.get("lang", ""), "pattern": row.get("pattern", ""),
+            "domain": domain, "model": sanitise(opts["model"]),
+            "file": row.get("file", ""),
+            # A BARE integer: the reader (jn() in kit-index.sh) matches `"line": <digits>` and
+            # would never see a quoted one. 0 means "not supplied" and maps back to NULL there.
+            "line": row.get("line", 0),
+            "summary": row["summary"],
+        }
+        line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+        _assert_flat(line)
+        lines.append(line)
+    return lines
+
+
+def gap_event(opts, reason):
+    """Absence is a measurement. A review that recorded nothing must be visible as a fact, not
+    as the silence that let `T3 0/13` read as 'nothing escaped' when it meant 'nothing was
+    recorded'."""
+    at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    event = {"task": opts["task"], "kind": "finding-gap", "at": at,
+             "agent": sanitise(opts["agent"]), "agent_id": sanitise(opts["agent_id"]),
+             "reason": sanitise(reason)}
+    line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+    _assert_flat(line)
+    return line
 
 
 def print_contract():
@@ -264,8 +308,38 @@ def print_contract():
         sys.stdout.write("  %-9s %-8s %-9s%s\n      %s\n" % (
             name, "required" if required else "optional", TYPE_NAME[want], bound, why))
     sys.stdout.write(
-        "\nUnknown fields are rejected, and a rejected batch records NOTHING -- a half-stored\n"
+        "\nThe reply is ONE object: {\"verdict\": ..., \"narrative\": ..., \"findings\": [...]}\n"
+        "Unknown fields are rejected, and a rejected batch records NOTHING -- a half-stored\n"
         "review is a finding table that disagrees with the review it came from.\n")
+
+
+def parse_opts(argv):
+    opts = {"task": "", "agent": "", "agent_id": "", "model": "",
+            "industries": None, "unattributed": False}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--task", "--agent", "--agent-id", "--model", "--industries"):
+            if i + 1 >= len(argv):
+                raise Rejected("%s needs a value" % a)
+            key = a[2:].replace("-", "_")
+            opts["industries" if a == "--industries" else key] = argv[i + 1]
+            i += 2
+        elif a == "--unattributed":
+            opts["unattributed"] = True
+            i += 1
+        else:
+            raise Rejected("unknown argument %s" % a)
+    if opts["industries"] is not None:
+        opts["industries"] = opts["industries"].split()
+    if not opts["agent"]:
+        raise Rejected("--agent is required")
+    if not opts["task"] and not opts["unattributed"]:
+        raise Rejected("--task is required (or --unattributed if the caller cannot know it)")
+    if opts["task"] and opts["unattributed"]:
+        raise Rejected("--task and --unattributed are contradictory; refusing rather than "
+                       "picking one")
+    return opts
 
 
 def main():
@@ -273,16 +347,20 @@ def main():
     if mode == "--contract":
         print_contract()
         return 0
-    if mode not in ("--validate", "--emit-fields"):
+    if mode not in ("--validate", "--emit-events"):
         sys.stderr.write("kit-findings: unknown mode %s\n" % mode)
         return 2
     try:
+        opts = parse_opts(sys.argv[2:]) if mode == "--emit-events" else None
         rows = validate(sys.stdin.read())
+        if mode == "--emit-events":
+            lines = (build_events(rows, opts) if rows
+                     else [gap_event(opts, "the reviewer returned zero findings")])
+            # One write. Nothing partial reaches the caller, so nothing partial reaches the log.
+            sys.stdout.buffer.write(("\n".join(lines) + "\n").encode("utf-8"))
     except Rejected as exc:
         sys.stderr.write("kit-findings: rejected, nothing recorded.\n%s\n" % exc)
         return 2
-    if mode == "--emit-fields":
-        emit_fields(rows)
     return 0
 
 

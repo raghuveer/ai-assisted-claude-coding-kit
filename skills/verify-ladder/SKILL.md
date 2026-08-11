@@ -46,18 +46,26 @@ less.
 
 ## Recording findings
 
-Every finding gets recorded, including from reviewers you disagree with. Take the
-reviewer's `Findings (recordable)` block and pipe it in unchanged:
+Every finding gets recorded, including from reviewers you disagree with. A reviewer returns
+**one JSON object** — `verdict`, `narrative`, `findings` — and you pipe that whole reply in
+**unchanged**. Do not read it and retype the fields: that is parsing, it is where every defect
+in the old path came from, and on 2026-08-10 it dropped `pattern` from every row of a review.
 
 ```sh
 bash ${CLAUDE_PLUGIN_ROOT}/tooling/kit-finding.sh \
-  --task <task-id> --agent <agent> --batch <<'EOF'
-fail-open | critical | go | cache-port
-race      | major    | go | cache-port
-EOF
+  --task <task-id> --agent <agent> --json  < reviewer-reply.json
 ```
 
-One finding at a time takes named flags: `--task --agent --class --severity [--lang] [--pattern] [--domain]`.
+A reviewer that found nothing returns `{"findings": []}`, which records a `finding-gap` — an
+empty review is a measurement, and it must not look like a review that never ran.
+
+Rejection is **all-or-nothing**: one bad value and nothing is recorded, because a half-stored
+review is a finding table that disagrees with the review it came from. The diagnostics name
+every problem at once.
+
+One finding at a time takes named flags: `--task --agent --class --severity --summary
+[--lang] [--pattern] [--domain]`. `--summary` is required — without it the row is a bare
+counter that cannot be told from any other. `kit-finding.sh --contract` prints the field list.
 Both forms reject an unknown value rather than storing it, and a batch with any rejected row
 exits non-zero — a partly recorded review is a measurement gap, and you are the only one
 still holding the findings needed to fix it.

@@ -284,9 +284,8 @@ accelerator.industry: .claude/bfsi.md
 ---
 ' > .claude/project-profile.md
   : > .claude/bfsi.md
-  bash "$KIT/tooling/kit-finding.sh" --task T --agent a --batch >/dev/null 2>&1 <<'BATCH'
-fail-open|major|go|cache-port|not-an-industry
-BATCH
+  printf '%s' '{"findings":[{"class":"fail-open","severity":"major","lang":"go","pattern":"cache-port","domain":"not-an-industry","summary":"a domain that no project declared must be dropped"}]}' \
+    | bash "$KIT/tooling/kit-finding.sh" --task T --agent a --json >/dev/null 2>&1
   grep -q '"domain":""' .project/events.ndjson && grep -q '"pattern":"cache-port"' .project/events.ndjson )
 check $? "undeclared domain dropped, pattern retained"
 rm -rf "$step_dir"
@@ -414,46 +413,45 @@ Task-Status: done"
 check $? "one row per transcript, agent rows from agent files, main loop unlabelled"
 fi
 
-if step "a reviewer's findings reach the table without anyone remembering"; then
+if step "a reviewer's findings reach the table, and an unrecorded review is visible"; then
 # The defect: reviewers emitted correctly formatted blocks and NOTHING consumed them. A real
 # project that had run a T2 and a T3 review held zero finding rows, and every escape-rate number
 # in the README was computed from that empty table -- `T3 0/13` reading as "nothing escaped"
-# while meaning "nothing was recorded". 19 rows appeared the moment the blocks were piped in by
-# hand, which is the part that has to stop being by hand.
+# while meaning "nothing was recorded".
 #
-# The fixture is deliberately awkward in three ways, because each is a real failure: the format
-# is QUOTED in prose before the block (reviewers explain what they emit), one line carries a
-# class the vocabulary does not accept, and the hook is fired TWICE.
-fl="$WORK.floop"; rm -rf "$fl"; mkdir -p "$fl/sess/subagents" "$fl/src"
+# This step used to exercise a hook that scraped those blocks out of a transcript. That
+# component is DELETED, not repaired (docs/LESSONS.md S5): the reviewer returns structured data
+# and the orchestrator records it, so there is no parser left to defend. What survives from the
+# old step is everything that was never about scraping -- attribution after the fact, tier
+# resolution, and the requirement that a review recording nothing SAYS so.
+fl="$WORK.floop"; rm -rf "$fl"; mkdir -p "$fl/src"
 ( cd "$fl" && git init -q -b main 2>/dev/null
   git config user.email a@b.c; git config user.name T
   bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
-  printf -- '---\nid: T-r\ntitle: r\ntier: T2\n---\nb\n' > .project/tasks/T-r.md
+  printf -- '---
+id: T-r
+title: r
+tier: T2
+---
+b
+' > .project/tasks/T-r.md
   git add -A && git commit -q --no-verify -m "chore: seed"
-  printf '{"type":"assistant","message":{"content":[{"type":"text","text":"Emit lines shaped class|severity|lang|pattern|domain here.\\n\\n## Findings (recordable)\\nfail-open|major|sql||\\ncorrectness|minor|bash||\\nbogus-class|major|bash||\\n\\n## What I did not check\\nnothing"}]}}\n' \
-    > sess/subagents/agent-A9.jsonl
-  : > sess.jsonl
-  printf '{"session_id":"S1","transcript_path":"%s/sess.jsonl","agent_id":"A9","agent_type":"security-reviewer"}' "$PWD" > hook.json
   Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+  F="$KIT/tooling/kit-finding.sh"
 
-  bash "$KIT/tooling/kit-review-findings.sh" < hook.json >/dev/null 2>&1
-  # Two recorded, the third rejected for its class -- and the prose above the heading, which
-  # contains the same pipe-separated shape, is not harvested.
-  [ "$(grep -c '"kind":"finding"' .project/events.ndjson)" = 2 ] || exit 1
+  # A reviewer that cannot know its task says so, rather than having one guessed for it.
+  printf '%s' '{"findings":[{"class":"fail-open","severity":"major","lang":"sql","summary":"the first of two recorded before any task transition"},{"class":"correctness","severity":"minor","lang":"bash","summary":"the second of two recorded before any task transition"}]}' \
+    | bash "$F" --unattributed --agent security-reviewer --json >/dev/null 2>&1
+
+  # A review that found nothing is a MEASUREMENT and must survive as one. Silence here is what
+  # let an empty table read as a clean record.
+  printf '%s' '{"findings":[]}' | bash "$F" --unattributed --agent tester --json >/dev/null 2>&1
   grep -q '"kind":"finding-gap"' .project/events.ndjson || exit 1
-  grep -q '"emitted":3,"recorded":2' .project/events.ndjson || exit 1
 
-  # Fired twice, recorded once. kit-spend.sh took four firings for two events before it keyed
-  # them; an append-only event log has to guard this in the writer.
-  bash "$KIT/tooling/kit-review-findings.sh" < hook.json >/dev/null 2>&1
-  [ "$(grep -c '"kind":"finding"' .project/events.ndjson)" = 2 ] || exit 1
-
-  # Unattributed until a task transition follows, and SAID so rather than dropped.
   bash "$KIT/tooling/kit-index.sh"  >/dev/null 2>&1
   bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
   [ "$(Q "SELECT COUNT(*) FROM finding WHERE task_id IS NULL OR task_id='';")" = 2 ] || exit 1
   grep -q 'finding(s) unattributed' STATUS.generated.md || exit 1
-  grep -q 'emitted findings that were not all recorded' STATUS.generated.md || exit 1
 
   # The task then commits, and the same heuristic that binds spend binds these -- including the
   # tier, without which escape-rate-by-tier reports every finding as untiered.
@@ -464,11 +462,12 @@ Task-Id: T-r
 Tier: T2
 Task-Status: progress"
   bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
-  [ "$(Q "SELECT COUNT(*) FROM finding WHERE task_id='T-r' AND tier='T2';")" = 2 ] || exit 1 )
-check $? "findings are harvested once, rejections are counted, and attribution follows the task"
+  [ "$(Q "SELECT COUNT(*) FROM finding WHERE task_id='T-r' AND tier='T2';")" = 2 ] || exit 1
+  # And the summary survived the whole trip, which is the column that makes a row readable.
+  [ "$(Q "SELECT COUNT(*) FROM finding WHERE task_id='T-r' AND summary LIKE '%recorded before any task transition%';")" = 2 ] )
+check $? "an empty review is recorded as a gap, and attribution and tier follow the task"
 rm -rf "$fl"
 fi
-
 if step "a subagent whose transcript cannot be found is reported, not costed" spend; then
 # The alternative -- writing the row anyway from whatever transcript is at hand -- is the
 # defect. Nothing is recorded, and the fact that nothing was recorded is.
@@ -1177,7 +1176,11 @@ if step "a reviewer returns findings as data, and a bad batch records nothing"; 
 # through the append-only log intact, and an empty review must be distinguishable from a
 # review that never happened.
 sj="$WORK.sjson"; rm -rf "$sj"; mkdir -p "$sj/src"
-( cd "$sj" && git init -q -b main 2>/dev/null
+# `cd || exit` rather than `cd && <one command>`: chaining only the next command left every
+# later line running in whatever directory the shell was already in, and with no `set -e` a
+# failed cd would have run kit-init.sh and committed a fixture task INSIDE THE KIT'S OWN REPO.
+( cd "$sj" || exit 1
+  git init -q -b main 2>/dev/null
   git config user.email a@b.c; git config user.name T
   bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
   printf -- '---\nid: T-j\ntitle: j\ntier: T2\n---\nb\n' > .project/tasks/T-j.md
@@ -1191,10 +1194,19 @@ sj="$WORK.sjson"; rm -rf "$sj"; mkdir -p "$sj/src"
   rej=$?
   after=$(grep -c '"kind":"finding"' .project/events.ndjson 2>/dev/null || echo 0)
 
-  # A hostile summary: a quote and a backslash are exactly what the awk reader in kit-index.sh
-  # cannot see past, and a CR inside the JSON string splits one event into two malformed lines.
-  printf '%s' '{"findings":[{"class":"correctness","severity":"nit","lang":"bash","file":"a/b.sh","line":42,"summary":"the guard reads \"x\" and a \\ breaks it"}]}' \
-    | bash "$F" --task T-j --agent implementation-reviewer --json >/dev/null 2>&1
+  # Hostile input in EVERY string field, not only `summary`. The first version of this case put
+  # the quote in `summary` alone, and that is precisely why the critical stayed invisible to CI:
+  # `lang`, `pattern`, `domain` and `file` reached the writer unsanitised and a quote in any of
+  # them corrupts the line permanently. A backslash and a quote are what the awk reader cannot
+  # see past, and a CR inside the string splits one event into two malformed lines.
+  # Written with a QUOTED heredoc, not printf: printf collapses `\\` into a lone backslash and
+  # produces JSON that is invalid for a reason unrelated to what is being tested, which is how
+  # this case first went red. The payload has to reach the validator exactly as a reviewer
+  # would send it.
+  cat > hostile.json <<'HOSTILE'
+{"findings":[{"class":"correctness","severity":"nit","lang":"ba\"sh","pattern":"a\\b","domain":"x\"y","file":"a\"b.sh","line":42,"summary":"the guard reads \"x\" and a \\ breaks it"}]}
+HOSTILE
+  bash "$F" --task T-j --agent implementation-reviewer --json < hostile.json >/dev/null 2>&1
   good=$?
 
   # Empty is a measurement; a missing key is not the same statement.
@@ -1208,6 +1220,9 @@ sj="$WORK.sjson"; rm -rf "$sj"; mkdir -p "$sj/src"
   rows=$(Q "SELECT COUNT(*) FROM finding;")
   summ=$(Q "SELECT summary FROM finding;")
   loc=$(Q "SELECT file_path||':'||line_no FROM finding;")
+  # Read back the OTHER hostile fields too. Asserting only `summary` is what let the critical
+  # through: the row can be present and readable while lang or pattern carries an injected key.
+  oth=$(Q "SELECT lang||'|'||pattern FROM finding;")
   # Every line of the append-only log must still be one parseable JSON object.
   pyok=$(python3 -c "
 import json,sys
@@ -1220,9 +1235,9 @@ print(bad)" 2>/dev/null || echo 99)
 
   [ "$rej" = 2 ] && [ "$before" = "$after" ] && [ "$good" = 0 ] &&
   [ "$empty" = 0 ] && [ "$nokey" = 2 ] && [ "$rows" = 1 ] && [ "$pyok" = 0 ] &&
-  [ "$loc" = "a/b.sh:42" ] &&
+  [ "$loc" = "a'b.sh:42" ] && [ "$oth" = "ba'sh|a'b" ] &&
   [ "$summ" = "the guard reads 'x' and a ' breaks it" ] )
-check $? "one bad finding records none, a hostile summary round-trips, empty differs from absent"
+check $? "one bad finding records none, hostile input in every field round-trips, empty differs from absent"
 rm -rf "$sj"
 fi
 
@@ -1236,15 +1251,25 @@ printf '%s' "$C" | grep -q 'summary   required' &&
 printf '%s' "$C" | grep -q 'class     required' &&
 printf '%s' "$C" | grep -q 'severity  required'
 check $? "--contract names the three required fields"
-# The validator must not carry its own copy of the vocabulary: it has to ASK for it, or the
-# two drift the moment a class is added. Proved by asking with the vocabulary source broken.
+# The validator must not carry its own copy of the vocabulary: it has to ASK for it, or the two
+# drift the moment a class is added. Proved by narrowing the vocabulary at its one source and
+# watching a previously-valid class be refused.
+#
+# The POSITIVE CONTROL is the point. The first version of this asserted only a non-zero exit,
+# so it passed on a failed cp, a missing python3, or a syntax error -- a check that could not
+# fail, in the guard against exactly that class, found by a T3 reviewer the next day
+# (docs/LESSONS.md S1). Now the same copied tree must ACCEPT the finding before the narrowed
+# one rejects it; if the copy is broken, the positive half fails and the step goes red.
 vb="$WORK.vocabbreak"; rm -rf "$vb"; mkdir -p "$vb"
-sed 's/^CLASSES=.*/CLASSES="only-this-one"/' "$KIT/tooling/kit-finding.sh" > "$vb/kit-finding.sh"
-cp "$KIT/tooling/kit_findings.py" "$KIT/tooling/kit-lib.sh" "$vb/" 2>/dev/null
-printf '%s' '{"findings":[{"class":"fail-open","severity":"major","summary":"valid under the real vocabulary"}]}' \
-  | python3 "$vb/kit_findings.py" --validate >/dev/null 2>&1
-[ $? -ne 0 ]
-check $? "the validator reads the vocabulary rather than restating it"
+cp "$KIT/tooling/kit_findings.py" "$KIT/tooling/kit-lib.sh" "$KIT/tooling/kit-finding.sh" "$vb/"
+GOOD='{"findings":[{"class":"fail-open","severity":"major","summary":"valid under the real vocabulary"}]}'
+printf '%s' "$GOOD" | python3 "$vb/kit_findings.py" --validate >/dev/null 2>&1
+pos=$?
+sed -i.bak 's/^CLASSES=.*/CLASSES="only-this-one"/' "$vb/kit-finding.sh"; rm -f "$vb/kit-finding.sh.bak"
+printf '%s' "$GOOD" | python3 "$vb/kit_findings.py" --validate >/dev/null 2>&1
+neg=$?
+[ "$pos" = 0 ] && [ "$neg" -ne 0 ]
+check $? "the validator reads the vocabulary rather than restating it (accepts, then refuses)"
 rm -rf "$vb"
 fi
 
