@@ -142,6 +142,65 @@ re-litigated.
 
 Every claim below was re-verified by hand before being written here.
 
+## T3 review round on the fixes (2026-08-12) — REJECTED again, 9 findings, 4 major
+
+`security-reviewer` returned 9 findings (4 major, 0 critical). `implementation-reviewer`
+returned **zero**, and that is itself the most important result of the round — see below.
+
+The five original defects are confirmed fixed. What the round found is what the fixes
+introduced, and three of the four majors are things the brief explicitly asked to be attacked,
+which means they were predictable and I shipped them anyway.
+
+### The retry loop manufactured a false clean — found by OPERATING it, not reviewing it
+
+`implementation-reviewer` was refused on attempt 1, corrected, and returned `{"findings":[]}` —
+recorded as `reason=empty`, which means *"a review looked and found nothing."* It did not look.
+
+`kit-review-record.sh:130` does `prompt=$correction`, **replacing** the original request. Each
+attempt is a stateless invocation, so attempt 2 received only *"your previous reply was refused,
+here is what was wrong, send the SAME review again"* — with no brief, no request, and no copy of
+the reply it was being asked to resend. Round 5 survived this because that reviewer re-derived
+from its tools; this one did not, and the loop recorded the silence as evidence.
+
+**This is the false-clean family again, now produced by the mechanism built to prevent it.** The
+correction must carry the original prompt and the previous reply, not replace them. Until it
+does, every retry is a coin toss between re-derivation and an empty review recorded as a
+measurement.
+
+### Majors
+
+1. **Retraction can be pinned by a future date** (`kit-index.sh:929`). The derivation takes the
+   last `via` event by `ORDER BY e.at DESC`, which is the AUTHOR date — trivially set to the
+   future — so a future-dated `Via: kit` cannot be retracted by any later `Via: unknown`.
+2. **The new fail-closed-filter test cannot fail** (`conformance.sh:864`). It asserts
+   `via = 'kit'` after running `kit-event.sh T-kit via`, and discards that command's exit
+   status — so it passes identically if the event was never written. A vacuous check, inside
+   the test added to fix "the filter has no test". §1, third instance this week.
+3. **The empty-denominator notice is gated on a GLOBAL count** (`kit-status.sh:224`). Once any
+   single task is `via:kit`, a tier with none still prints `0 / 0 via:kit` unexplained — the
+   original defect, surviving per tier.
+4. **The retraction instruction is addressed to the agent it excludes** (`.claude/CLAUDE.md:25`).
+   "Retract a wrong value with `Via: unknown`" sits inside the paragraph opening *"If you are an
+   agent reading this: do not write `Via:`"* — so the one sentence telling the operator how to
+   fix provenance is inside the block telling the agent not to touch it. The same wrong-addressee
+   defect the fix was for.
+
+### Minors
+
+`viaok()` in the trailer awk now has no caller and sits above `viaknown` with the stale comment
+and the very mapping that caused the bug; the fixture retracts a frontmatter `via: kit`, not a
+trailer, so trailer-to-trailer retraction is untested; `templates/CLAUDE.kit.md` omits the
+explanation kept in `.claude/CLAUDE.md`, so the two files the claim says are aligned give
+adopters different guidance; the notice also fires on an empty task table and on a failed query,
+asserting the zeroes are an absent denominator when no rate was printed at all; and nothing
+detects a frontmatter `Via:` key — `INSTALL.md` was corrected but the wrong spelling is still
+silently ignored rather than warned about.
+
+### Not a defect
+
+The em-dash mojibake visible in one console listing is display encoding only; the summary is
+stored correctly as UTF-8. Checked rather than assumed.
+
 ### FIXED 2026-08-12 — all five, each mutation-proved
 
 1. **`Via: unknown` is inert** → `viaknown()`, a membership test, replaces
