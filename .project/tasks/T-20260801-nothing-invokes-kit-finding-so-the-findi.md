@@ -334,6 +334,69 @@ and left a mutated file behind both times. The mutation is therefore `max + 5`: 
 still caught, because the step asserts the exact attempt count rather than merely that it
 stopped.
 
+## T3 round 5 on `5317337` (2026-08-11) — REJECTED. One critical, in the new loop.
+
+15 findings (security 12, implementation 3). **Every one is in `kit-review-record.sh` or its
+fixture** — nothing in the contract stack the previous four rounds hardened was found again.
+
+**This round was run THROUGH the loop it was reviewing**, which is the wiring proof acceptance
+criterion 1 needs: `implementation-reviewer` was refused on attempt 1, the validator's own
+diagnostics were handed back automatically, attempt 2 was accepted, and 3 findings were
+recorded — **with no human in the path**. `security-reviewer` complied first time and recorded
+12. Across five rounds the compliance split is now opus 3/3, sonnet 0/4 — and for the first
+time sonnet's non-compliance cost nothing, because the loop repaired it.
+
+### CRITICAL — the loop can report a clean review that never happened
+
+`kit-review-record.sh:60`. `--prompt-file` is read with `[ -n "$prompt_file" ] && prompt=$(cat
+"$prompt_file")` and **the failure of `cat` is ignored**, as is the case where the flag is
+omitted entirely. The reviewer is then handed an EMPTY prompt, replies with nothing, and that
+is recorded as `reason=empty` — the gap value that means *"a review looked and found nothing"*
+— and the loop **exits 0**.
+
+Reproduced: pointing `--prompt-file` at a non-existent path prints one `cat:` line to stderr and
+then reports success with an `empty` gap. This is the false-clean the entire task exists to
+prevent, rebuilt inside the mechanism meant to close it. A missing prompt must be a usage error
+before the first attempt.
+
+### Majors
+
+- **`pipefail` turns a compliant review into a broken command** (`:69`). `printf | sh -c "$cmd"`
+  under `set -o pipefail`: a reviewer that does not drain stdin kills `printf` with SIGPIPE, the
+  pipeline reports failure, the reply is discarded and a false gap recorded. The wrapper used
+  today happens to drain; nothing requires that.
+- **A validator failure that is not a refusal resends an empty prompt** (`:79`). Missing
+  `python3`, or an undecodable reply, exits non-zero with empty stdout, which is read as a
+  refusal — so `prompt=$correction` becomes empty and every remaining attempt reviews nothing.
+- **The INT trap deletes the workdir without exiting** (`:65`), so Ctrl-C falls through to the
+  tail and writes a `rejected` gap into the committed log instead of cancelling.
+- **`$ATTR` is unquoted at three sites** (`:54`), so a task id containing whitespace or a glob
+  breaks both the recorder and the gap call — losing the review with no row at all.
+- **The tail gap append is unchecked and does not `mkdir -p`** (`:107`) — the same defect
+  round 4 fixed in `kit-finding.sh`, reintroduced one file over. §4 again.
+- **A broken command is recorded as `rejected`** (`:106`), whose report text claims findings were
+  refused "for an unrecognised class or severity, or a malformed field". No findings ever
+  existed. The reason vocabulary needs a third value.
+- **The fixture asserts gap COUNT but never reason, task or agent** (`conformance.sh:1363`), and
+  builds none of the non-draining, missing-prompt-file or validator-failure paths — so the
+  "Verified" section above overclaims what is covered. §3, and mine.
+
+### Minors worth keeping
+
+Double gap when the recorder refuses a reply the validator accepted; the `mktemp` fallback path
+under `TMPDIR` is predictable and `mkdir -p` accepts a pre-created or symlinked directory; no
+timeout or output cap on the reviewer command, so the bound counts attempts but not time or
+disk; the exit-3/exit-2 distinction is never actually read by the only caller; and
+reviewer-controlled text is interpolated into the correction prompt sent back to a model, which
+is prompt injection into the retry (OWASP LLM01).
+
+### What this round did NOT find
+
+No new defect in `kit_findings.py`'s validation, sanitisation, `_assert_flat`, the all-or-nothing
+write, the gap vocabulary, or the recorder — the parts rounds 1-4 hardened. The convergence is
+that new code is where defects live, which is the argument for reviewing a fix as carefully as
+the thing it fixed.
+
 ## The approach, and why each piece is shaped that way
 
 Six principles, because patching seven symptoms would leave the eighth.
