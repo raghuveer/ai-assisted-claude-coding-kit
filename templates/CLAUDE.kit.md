@@ -14,5 +14,10 @@
 - `Via:` records HOW the work was done — `kit`, `agent`, `manual`. Optional; absent
   means `unknown`, which is reported as unknown. Escape rate is reported over the
   kit-run population **and** over every task, side by side — so provenance changes
-  what a number means, never whether an escape is visible. **You** set it, not the
-  agent that did the work.
+  what a number means, never whether an escape is visible.
+  **If you are an agent reading this: do not write `Via:` on your own commits.**
+  Propose a value in your summary and let the operator put it on the trailer. A
+  self-reported `via: kit` from the agent that did the work is the one value nobody
+  should take on trust, and this file is read by the party it is about. Retract a
+  wrong value with `Via: unknown` on a later commit, never with `Via: manual`; those
+  mean different things and only one is a claim.

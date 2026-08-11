@@ -456,6 +456,18 @@ awk -F$'\037' '
     for (i = 1; i <= n; i++) if (x == w[i]) return x
     return "unknown"
   }
+  # MEMBERSHIP, which is a different question from "what should this default to". viaok maps an
+  # invalid value onto `unknown`, which is right for frontmatter and wrong for a trailer: the
+  # guard below used `viaok(via) != "unknown"` and so discarded the literal word `unknown` too,
+  # because `unknown` IS in the vocabulary. The effect was that a human could never demote a
+  # task whose frontmatter claimed `via: kit` -- the one value the design says nobody should
+  # take on trust -- and movement into the measured population was one-way. Found in the T3
+  # review of 2026-08-10.
+  function viaknown(x,   i, n, w) {
+    n = split(ENVIRON["KIT_VIA"], w, /[ 	]+/)
+    for (i = 1; i <= n; i++) if (x == w[i]) return 1
+    return 0
+  }
 
   function q(s){ gsub(/\047/,"\047\047",s); return s }
   function trim(s){ gsub(/^[ \t\r]+|[ \t\r]+$/,"",s); return s }
@@ -515,7 +527,13 @@ awk -F$'\037' '
     # outside the vocabulary is DROPPED rather than stored -- the commit-msg hook already
     # rejected it, so one arriving here came from a commit that skipped the hook, which is the
     # last input that should be believed.
-    if (via != "" && viaok(via) != "unknown")
+    #
+    # `unknown` is IN the vocabulary and is recorded like any other value. It has to be: it is
+    # the only way a human can retract an earlier `Via: kit`, and the design forbids using
+    # `manual` for that -- "one says nobody recorded it, the other is a claim about what
+    # happened". Testing membership rather than `viaok(...) != "unknown"` is what makes the
+    # retraction possible; the old test silently discarded exactly the value it needed.
+    if (via != "" && viaknown(via))
       printf "INSERT INTO event(task_id,kind,at,commit_sha,payload) VALUES(\047%s\047,\047via\047,\047%s\047,\047%s\047,\047%s\047);\n", q(tid), q(at), q(sha), q(via)
     if (esc!="") {
       printf "INSERT INTO event(task_id,kind,at,commit_sha) VALUES(\047%s\047,\047escaped\047,\047%s\047,\047%s\047);\n", q(esc), q(at), q(sha)

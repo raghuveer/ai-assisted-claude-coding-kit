@@ -849,7 +849,37 @@ Via: agent"
   printf 'feat: x\n\nTask-Id: T-kit\nTier: T2\nVia: made-up\n' > m.txt
   bash "$KIT/tooling/kit-trailers.sh" message m.txt 2>&1 | grep -q 'invalid  Via' || exit 1
   printf 'feat: x\n\nTask-Id: T-kit\nTier: T2\nVia: kit\n' > m2.txt
-  [ -z "$(bash "$KIT/tooling/kit-trailers.sh" message m2.txt 2>&1)" ] || exit 1 )
+  [ -z "$(bash "$KIT/tooling/kit-trailers.sh" message m2.txt 2>&1)" ] || exit 1
+
+  # THE FAIL-CLOSED DERIVATION FILTER. `kit-event.sh <task> via` writes through the generic
+  # ndjson reader, which stores the WHOLE JSON LINE as payload -- that is how a JSON blob once
+  # landed in task.via and dropped a task carrying a recorded escape out of the headline metric.
+  # The `payload IN (vocabulary)` clause on the derivation is what closes it, and NOTHING
+  # exercised it: `kit-event.sh` appeared zero times in this suite, so deleting the clause left
+  # every step green. Found in the T3 review of 2026-08-10.
+  bash "$KIT/tooling/kit-event.sh" T-kit via >/dev/null 2>&1
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  # The blob must NOT become the provenance, and the honest earlier value must survive.
+  blob=$(sqlite3 .project/index.db "SELECT via FROM task WHERE id='T-kit';" | tr -d '\015')
+  [ "$blob" = "kit" ] || { printf '    ^ a kit-event payload reached task.via: %s\n' "$blob" >&2; exit 1; }
+
+  # A human RETRACTS an earlier Via: kit with Via: unknown. `unknown` is in the vocabulary, so
+  # the guard used to discard it and promotion into via:kit was one-way -- the design forbids
+  # using `manual` for this, because the two mean different things.
+  echo r > src/r; git add -A
+  git commit -q --no-verify -m "chore: retract
+
+Task-Id: T-kit
+Tier: T2
+Via: unknown"
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  back=$(sqlite3 .project/index.db "SELECT via FROM task WHERE id='T-kit';" | tr -d '\015')
+  [ "$back" = "unknown" ] || { printf '    ^ Via: unknown did not retract; via is %s\n' "$back" >&2; exit 1; }
+
+  # And with no task left in the kit population, the report must SAY the column is empty rather
+  # than print 0 / 0 in the shape of a measurement.
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -q 'column is empty' STATUS.generated.md )
 check $? "via: vocabulary honoured, unknown by default, trailer wins, rate splits and names"
 rm -rf "$vx"
 fi

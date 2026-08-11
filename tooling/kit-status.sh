@@ -212,6 +212,22 @@ ESC=$(q "SELECT printf('%-11s', COALESCE(NULLIF(t.tier,''),'untiered'))||
          GROUP BY COALESCE(NULLIF(t.tier,''),'untiered') ORDER BY 1;")
 [ -n "$ESC" ] && printf '%s\n' "$ESC" | sed 's/^/- /' || printf '_no task recorded yet_\n'
 
+# An EMPTY DENOMINATOR is not a rate, and printed in the same shape as one it reads like a
+# measurement. On 2026-08-11 this repository showed `0 / 0 via:kit` on all four tiers against 58
+# tasks with nothing saying the column was empty -- the task's own stated defect ("a metric that
+# cannot distinguish reviewed-and-nothing-escaped from never-reviewed") reintroduced in the new
+# column. The older honest fallback above is unreachable, because ESC is grouped over every task
+# and so is never empty merely because the kit population is.
+#
+# Said once, under the table, rather than per row: a reader who takes in four zeroes has already
+# formed the impression this sentence exists to prevent.
+KITN=$(q "SELECT COUNT(*) FROM task WHERE via='$KITVIA';")
+if [ "${KITN:-0}" = 0 ]; then
+  printf '\n> **The `via:%s` column is empty: no task records having been run by this pipeline.**\n' "$KITVIA"
+  printf '> Those zeroes are an absent denominator, not a clean result. Until some task carries\n'
+  printf '> `Via: %s`, only the `all` column is a measurement.\n' "$KITVIA"
+fi
+
 # The rest of the population, by value, WITH its escapes. Counting tasks alone was the older
 # shape and it is exactly the one that reads clean: "12 excluded" says nothing about whether
 # any of the twelve escaped. `unknown` is reported as itself and never folded into `manual` --

@@ -142,7 +142,38 @@ re-litigated.
 
 Every claim below was re-verified by hand before being written here.
 
-### Must fix before this task closes — these are this task's own defects
+### FIXED 2026-08-12 — all five, each mutation-proved
+
+1. **`Via: unknown` is inert** → `viaknown()`, a membership test, replaces
+   `viaok(via) != "unknown"` in the trailer guard. `unknown` is in the vocabulary and is now
+   recorded like any other value, so a human can retract an earlier `Via: kit` without the
+   `manual` conflation the design forbids. Conformance asserts the retraction end to end;
+   mutating the guard back makes it red with *"Via: unknown did not retract; via is kit"*.
+2. **The fail-closed derivation filter had no test** → the step now runs
+   `kit-event.sh T-kit via`, which is the exact route that once wrote a JSON blob into
+   `task.via`, and asserts the blob does not become the provenance. `kit-event.sh` appeared
+   **zero** times in the suite before this. Mutating `payload IN (…)` open makes it red.
+3. **`0 / 0 via:kit` printed like a measurement** → when no task carries `via:kit`,
+   `kit-status.sh` now says the column is empty and that the zeroes are an absent denominator,
+   not a clean result. Said once under the table rather than per row, because a reader who has
+   taken in four zeroes has already formed the impression. Mutating the guard makes it red.
+4. **`INSTALL.md` gave the wrong key** → it now says lowercase **`via:`** for frontmatter and
+   explains that `Via:` is the git *trailer*, which back-filled work cannot have. The paragraph
+   said `Via:` for three days while the indexer read `via`, silently recording every back-filled
+   task as `unknown`.
+5. **The human gate was prose addressed to the agent it excludes** → both `.claude/CLAUDE.md`
+   and `templates/CLAUDE.kit.md` now open with *"If you are an agent reading this: do not write
+   `Via:` on your own commits"*, say to propose a value instead, and name `Via: unknown` as the
+   retraction. The old wording — "**You** set it, not the agent that did the work" — was written
+   for the operator and lives in the file the model reads every session.
+
+**Still true and unchanged:** nothing mechanically prevents an actor with commit access from
+writing `Via: kit`. That is a gap the kit cannot close by itself — the trailer is authored
+wherever commits are authored — so the fix is to make the instruction unambiguous to its actual
+reader, which is what 5 does. Whether to add a check (for example, refusing `Via: kit` on a
+commit whose author matches the agent identity) is a separate decision and is not taken here.
+
+### The original findings, for the record
 
 **1. `Via: unknown` is accepted by the hook and silently discarded by the indexer** (major).
 `kit-index.sh:518` guards on `viaok(via) != "unknown"`, but `unknown` **is in the vocabulary**

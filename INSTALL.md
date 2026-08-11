@@ -170,11 +170,16 @@ built-for-this answer to "we already have a backlog"; the index is derived and d
 pointing it at your source loses nothing.
 
 **4. Back-fill what was already finished — including work the kit did not do.** Mark completed
-tasks `state: done` in their frontmatter, and set `Via:` (`kit`, `agent`, `manual`) on work whose
-provenance you know. This matters more than it looks: escape rate is reported over the kit-run
-population *and* over every task, side by side, so an inventory that cannot say "done, but not by
-this pipeline" makes the pipeline look responsible for outcomes it never touched. `Via:` is set
-by you, never by the agent that did the work.
+tasks `state: done` in their frontmatter, and add a lowercase **`via:`** key there (`kit`,
+`agent`, `manual`) on work whose provenance you know. This matters more than it looks: escape
+rate is reported over the kit-run population *and* over every task, side by side, so an
+inventory that cannot say "done, but not by this pipeline" makes the pipeline look responsible
+for outcomes it never touched. Provenance is set by you, never by the agent that did the work.
+
+> The frontmatter key is lowercase **`via:`**, not `Via:`. `Via:` is the **git trailer**, and it
+> only exists on a commit — which back-filled work does not have, since you cannot add a trailer
+> to a commit already written. This paragraph said `Via:` for three days and the indexer, which
+> reads `via`, silently recorded every back-filled task as `unknown`.
 
 **5. A `Task-Id` that matches no task file** — from a typo, or from a task you have not filed yet
 — is **not** counted as work. It is named in the `Unresolved task ids` section of
