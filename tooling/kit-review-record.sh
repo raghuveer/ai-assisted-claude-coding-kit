@@ -103,7 +103,10 @@ while :; do
   # itself failing -- missing python3, an undecodable reply -- and must not be read as a
   # refusal: `correction` is empty in that case, so the loop would resend an EMPTY prompt for
   # every remaining attempt and burn the budget reviewing nothing.
-  correction=$(python3 "$PY" --correction < "$WORKDIR/reply"); crc=$?
+  # --original-file is the CALLER'S request every time, not the previous attempt's prompt: the
+  # retry must restate what was asked, and compounding corrections would bury it.
+  correction=$(python3 "$PY" --correction --original-file "$prompt_file" \
+                 < "$WORKDIR/reply"); crc=$?
   if [ "$crc" != 0 ] && [ "$crc" != 3 ]; then
     kit_warn "the validator failed with exit $crc, which is not a refusal; not retrying"
     break

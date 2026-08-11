@@ -1337,17 +1337,38 @@ b
 n=$(cat "$STATE" 2>/dev/null || echo 0); n=$((n+1)); printf '%s' "$n" > "$STATE"
 prompt=$(cat)
 if [ "$n" = 1 ]; then
-  long=$(awk 'BEGIN{while(i++<210)printf "x"}')
+  # Deliberately non-compliant three ways at once: prose preamble, a code fence, and a summary
+  # past the 200-character cap. PRIOR-REPLY-MARKER is what attempt 2 looks for to prove the
+  # retry carried this reply back; without it, "resend the same review" is addressed to a
+  # process that cannot see what it said.
+  long=$(awk 'BEGIN{printf "PRIOR-REPLY-MARKER "; while(i++<210)printf "x"}')
   printf 'Sure, here you go:\n\n```json\n{"verdict":"REJECT","findings":[{"class":"fail-open","severity":"major","summary":"%s"}]}\n```\n' "$long"
   exit 0
 fi
+# The retry must carry BOTH the diagnostics AND the original request. Checking only for the
+# diagnostics passed while the request was being dropped -- and a stateless reviewer with no
+# request returns nothing, which records as reason=empty: "a review looked and found nothing".
+# Observed against a real reviewer on 2026-08-12.
 case "$prompt" in
   *"REFUSED by the findings contract"*)
-    printf '{"verdict":"REJECT","narrative":"n","findings":[{"class":"fail-open","severity":"major","lang":"bash","summary":"the diagnostics came back and this reply is the correction"}]}' ;;
+    case "$prompt" in
+      *ORIGINAL-REQUEST-MARKER*)
+        # And the reviewer's OWN previous reply must have come back with it, or "send that
+        # same review again" is an instruction it cannot follow.
+        case "$prompt" in
+          *PRIOR-REPLY-MARKER*)
+            printf '{"verdict":"REJECT","narrative":"n","findings":[{"class":"fail-open","severity":"major","lang":"bash","summary":"the diagnostics came back and this reply is the correction"}]}' ;;
+          *) printf '{"findings":[]}' ;;
+        esac ;;
+      *) printf '{"findings":[]}' ;;
+    esac ;;
   *) printf '{"findings":[]}' ;;
 esac
 REV
-  printf 'review it' > p.txt
+  # The marker is how the fixture proves the RETRY still carried the original request. Without
+  # something from the request to look for, the check can only see the diagnostics and cannot
+  # tell a coherent retry from one that dropped what was being asked.
+  printf 'review it  ORIGINAL-REQUEST-MARKER' > p.txt
   STATE="$PWD/calls"; export STATE; rm -f "$STATE"
   bash "$KIT/tooling/kit-review-record.sh" --task T-r --agent implementation-reviewer \
     --cmd "bash $PWD/rev.sh" --prompt-file p.txt --max-attempts 3 >/dev/null 2>&1

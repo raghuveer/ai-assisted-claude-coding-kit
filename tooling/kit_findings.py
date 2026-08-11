@@ -315,13 +315,30 @@ def gap_event(opts, reason):
 # retry cannot drift away from what was actually wrong. Four live runs produced three different
 # non-compliances (a reporting tool, a preamble, an over-long summary), which is the evidence
 # that a system-prompt instruction is a request and not a mechanism.
-CORRECTION = """Your previous reply was REFUSED by the findings contract and NOTHING was \
-recorded. Do not apologise or explain; send the corrected object only.
+# The retry prompt carries THE ORIGINAL REQUEST and THE PREVIOUS REPLY, and does not replace
+# them. It used to be the diagnostics alone, which is incoherent for a stateless reviewer: the
+# second attempt received "send the SAME review again" with no request to review from and no
+# copy of the reply it was being asked to resend. One reviewer re-derived from its tools and
+# looked fine; the next returned `{"findings":[]}`, which recorded as `reason=empty` -- "a
+# review looked and found nothing". It had not looked. The loop built to stop false cleans
+# manufactured one. Observed 2026-08-12 by running a real round through it.
+CORRECTION = """%(original)s
+
+======================================================================
+The request above still stands. This is a RETRY.
+
+Your previous reply was REFUSED by the findings contract and NOTHING was recorded. Do not \
+apologise or explain; send the corrected object only.
 
 What was wrong:
-%s
+%(errors)s
 
-Send the SAME review again with those problems fixed. Your entire reply must be one JSON \
+Your previous reply, for reference:
+----------------------------------------------------------------------
+%(previous)s
+----------------------------------------------------------------------
+
+Send that same review again with those problems fixed. Your entire reply must be one JSON \
 object: the first character is { and the last is }. No preamble, no code fence, no text \
 before or after it. Keep every `summary` under 200 characters -- put the explanation in \
 `narrative`, which has no limit."""
@@ -384,11 +401,34 @@ def main():
     # versus "this call was wrong". A caller that cannot tell them apart will retry a usage
     # error forever.
     if mode == "--correction":
+        # --original-file carries the request the reviewer was answering. Without it the retry
+        # is a correction with nothing to correct, which is how an empty review came to be
+        # recorded as a measurement.
+        original = ""
+        if "--original-file" in sys.argv:
+            path = sys.argv[sys.argv.index("--original-file") + 1]
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    original = fh.read()
+            except (OSError, UnicodeDecodeError) as exc:
+                sys.stderr.write("kit-findings: cannot read --original-file: %s\n" % exc)
+                return 2
+        if not original.strip():
+            sys.stderr.write(
+                "kit-findings: --correction needs --original-file with the request the "
+                "reviewer was answering.\n  A retry that drops the request asks a stateless "
+                "reviewer to resend a review it cannot see.\n")
+            return 2
+        payload = sys.stdin.read()
         try:
-            validate(sys.stdin.read())
+            validate(payload)
             return 0
         except Rejected as exc:
-            sys.stdout.write(CORRECTION % str(exc).rstrip())
+            sys.stdout.write(CORRECTION % {
+                "original": original.rstrip(),
+                "errors": str(exc).rstrip(),
+                "previous": payload.strip() or "(your previous reply was empty)",
+            })
             return 3
     try:
         # `--gap-event` reads no stdin: it is called AFTER a rejection has already consumed it,
