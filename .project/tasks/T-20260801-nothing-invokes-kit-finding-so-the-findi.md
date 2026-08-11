@@ -296,6 +296,44 @@ an over-long summary). That is a small sample and worth stating as one, but it p
 way each time, and it bears directly on the register's R-10 idea of running a compliance pass at
 a cheaper capability.
 
+## The retry loop (2026-08-11) — what closes acceptance criterion 1
+
+Four live runs, three non-compliances: a reporting tool called instead of answering, an object
+wrapped in a ```json fence, a 208-character summary. Each time a human read the diagnostics and
+repaired the reply by hand — the intervention AC1 forbids. **A system prompt is a request, not
+a mechanism.** `tooling/kit-review-record.sh` is the mechanism.
+
+    kit-review-record.sh --task T --agent implementation-reviewer --max-attempts 3 \
+      --prompt-file request.txt --cmd '<reads a prompt on stdin, writes the reply to stdout>'
+
+- **It does not spawn the reviewer.** `--cmd` is the caller's, and it is the only thing that
+  knows how a reviewer is invoked here — so no harness, CLI or model name enters the kit. That
+  keeps the boundary the profile already draws, and keeps the loop usable from a different
+  harness later without touching it.
+- **The correction is the validator's own output, verbatim** (`kit_findings.py --correction`,
+  exit 3 to distinguish "retryable" from "your call was wrong"). Nothing composes a description
+  of what went wrong, so a retry cannot drift from what was actually rejected.
+- **Bounded, and the bound is load-bearing**: a reviewer that cannot comply in N tries will not
+  comply in twenty, and an unbounded loop against a paid endpoint is a bill.
+- **Every exit path that is not success records a `finding-gap`.** A reviewer that never
+  complied is a hole in the measurement; silence there is the open circuit this task is named
+  after.
+- **A reviewer command that fails is NOT retried.** A broken invocation is not a contract
+  violation, and retrying it spends a budget on nothing.
+
+### Verified
+
+The conformance fixture is a **fake reviewer, not a model**: it fails first, and succeeds only
+if the correction text actually reaches it — so a loop that retried blindly would fail the test
+even though the attempt count matched. Three paths asserted: corrected-and-recorded, incorrigible
+(bounded, gap, exit 1), and broken command (no retry, gap).
+
+Mutation notes: removing the bound outright makes the fixture loop forever, and killing that
+reliably means reaping a process tree the parent no longer controls — it hung the harness twice
+and left a mutated file behind both times. The mutation is therefore `max + 5`: still bounded,
+still caught, because the step asserts the exact attempt count rather than merely that it
+stopped.
+
 ## The approach, and why each piece is shaped that way
 
 Six principles, because patching seven symptoms would leave the eighth.

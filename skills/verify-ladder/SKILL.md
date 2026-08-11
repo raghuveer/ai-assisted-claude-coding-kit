@@ -51,6 +51,24 @@ Every finding gets recorded, including from reviewers you disagree with. A revie
 **unchanged**. Do not read it and retype the fields: that is parsing, it is where every defect
 in the old path came from, and on 2026-08-10 it dropped `pattern` from every row of a review.
 
+**Prefer the loop.** Reviewers ignore the output rule — across four live runs it was ignored
+three times — and repairing a reply by hand is the step that stops happening on the day it
+matters. `kit-review-record.sh` runs the reviewer, hands the validator's own diagnostics back
+if the reply is refused, retries a bounded number of times, and records a `finding-gap` if the
+reviewer never complies:
+
+```sh
+bash ${CLAUDE_PLUGIN_ROOT}/tooling/kit-review-record.sh \
+  --task <task-id> --agent <agent> --max-attempts 3 \
+  --prompt-file review-request.txt \
+  --cmd '<command that reads a prompt on stdin and writes the reply to stdout>'
+```
+
+`--cmd` is the only place that knows how a reviewer is invoked here, so nothing about the
+harness or the model leaks into the kit.
+
+If you already have a reply in hand, record it directly:
+
 ```sh
 bash ${CLAUDE_PLUGIN_ROOT}/tooling/kit-finding.sh \
   --task <task-id> --agent <agent> --json  < reviewer-reply.json

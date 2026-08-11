@@ -310,6 +310,23 @@ def gap_event(opts, reason):
     return line
 
 
+# The correction handed back to a reviewer whose reply was refused. Deterministic on purpose:
+# the diagnostics are the validator's own, not a description of them composed by a model, so a
+# retry cannot drift away from what was actually wrong. Four live runs produced three different
+# non-compliances (a reporting tool, a preamble, an over-long summary), which is the evidence
+# that a system-prompt instruction is a request and not a mechanism.
+CORRECTION = """Your previous reply was REFUSED by the findings contract and NOTHING was \
+recorded. Do not apologise or explain; send the corrected object only.
+
+What was wrong:
+%s
+
+Send the SAME review again with those problems fixed. Your entire reply must be one JSON \
+object: the first character is { and the last is }. No preamble, no code fence, no text \
+before or after it. Keep every `summary` under 200 characters -- put the explanation in \
+`narrative`, which has no limit."""
+
+
 def print_contract():
     sys.stdout.write("finding object fields (JSON, one object per finding under `findings`):\n")
     for name, required, want, low, high, why in CONTRACT:
@@ -360,9 +377,19 @@ def main():
     if mode == "--contract":
         print_contract()
         return 0
-    if mode not in ("--validate", "--emit-events", "--gap-event"):
+    if mode not in ("--validate", "--emit-events", "--gap-event", "--correction"):
         sys.stderr.write("kit-findings: unknown mode %s\n" % mode)
         return 2
+    # Exit 3, distinctly from 2: "this is retryable and here is the exact text to send back",
+    # versus "this call was wrong". A caller that cannot tell them apart will retry a usage
+    # error forever.
+    if mode == "--correction":
+        try:
+            validate(sys.stdin.read())
+            return 0
+        except Rejected as exc:
+            sys.stdout.write(CORRECTION % str(exc).rstrip())
+            return 3
     try:
         # `--gap-event` reads no stdin: it is called AFTER a rejection has already consumed it,
         # so that the one case where findings are genuinely lost leaves a row rather than a

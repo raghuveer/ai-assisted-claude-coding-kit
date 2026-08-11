@@ -1276,6 +1276,98 @@ rm -rf "$nj"
 rm -rf "$sj"
 fi
 
+if step "a refused review is retried with the diagnostics, boundedly"; then
+# The contract asks a reviewer for one JSON object. Across four live runs it was ignored three
+# times, and each time a human read the diagnostics and repaired the reply by hand -- the
+# intervention acceptance criterion 1 forbids. This is the mechanism that replaces the human.
+#
+# The reviewer here is a FIXTURE, not a model: it fails the first time and succeeds only if the
+# validator's own diagnostics actually reach it. That is what makes this deterministic enough
+# to live in CI, and it is also the assertion -- a loop that retried blindly would still pass a
+# test that only counted attempts.
+rr="$WORK.retry"; rm -rf "$rr"; mkdir -p "$rr/src"
+( cd "$rr" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  printf -- '---
+id: T-r
+title: r
+tier: T2
+---
+b
+' > .project/tasks/T-r.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+
+  # Bad first: fenced, and a summary past the 200-character cap. Good second, but ONLY if the
+  # correction reached it.
+  cat > rev.sh <<'REV'
+#!/usr/bin/env bash
+n=$(cat "$STATE" 2>/dev/null || echo 0); n=$((n+1)); printf '%s' "$n" > "$STATE"
+prompt=$(cat)
+if [ "$n" = 1 ]; then
+  long=$(awk 'BEGIN{while(i++<210)printf "x"}')
+  printf 'Sure, here you go:\n\n```json\n{"verdict":"REJECT","findings":[{"class":"fail-open","severity":"major","summary":"%s"}]}\n```\n' "$long"
+  exit 0
+fi
+case "$prompt" in
+  *"REFUSED by the findings contract"*)
+    printf '{"verdict":"REJECT","narrative":"n","findings":[{"class":"fail-open","severity":"major","lang":"bash","summary":"the diagnostics came back and this reply is the correction"}]}' ;;
+  *) printf '{"findings":[]}' ;;
+esac
+REV
+  printf 'review it' > p.txt
+  STATE="$PWD/calls"; export STATE; rm -f "$STATE"
+  bash "$KIT/tooling/kit-review-record.sh" --task T-r --agent implementation-reviewer \
+    --cmd "bash $PWD/rev.sh" --prompt-file p.txt --max-attempts 3 >/dev/null 2>&1
+  ok=$?
+  tries=$(cat "$STATE")
+
+  # A reviewer that never complies must STOP, and must leave a row saying findings were lost.
+  cat > never.sh <<'NEV'
+#!/usr/bin/env bash
+cat >/dev/null
+n=$(cat "$STATE" 2>/dev/null || echo 0); printf '%s' "$((n+1))" > "$STATE"
+echo "I will not comply."
+NEV
+  STATE="$PWD/calls2"; export STATE; rm -f "$STATE"
+  bash "$KIT/tooling/kit-review-record.sh" --task T-r --agent tester \
+    --cmd "bash $PWD/never.sh" --prompt-file p.txt --max-attempts 2 >/dev/null 2>&1
+  gave=$?
+  tries2=$(cat "$STATE")
+
+  # A reviewer command that itself fails is NOT a contract violation, and retrying a broken
+  # invocation is how a loop spends a budget on nothing.
+  # It COUNTS its calls, and the assertion is the count. Asserting only the exit status could
+  # not tell "abandoned after one attempt" from "retried three times and gave up" -- both end
+  # at 1 -- so the mutation that retried a broken invocation survived this check until the
+  # count was added. A check that cannot distinguish the defect from the fix is decoration.
+  cat > broke.sh <<'BRK'
+#!/usr/bin/env bash
+cat >/dev/null
+n=$(cat "$STATE" 2>/dev/null || echo 0); printf '%s' "$((n+1))" > "$STATE"
+exit 7
+BRK
+  STATE="$PWD/calls3"; export STATE; rm -f "$STATE"
+  bash "$KIT/tooling/kit-review-record.sh" --task T-r --agent tester \
+    --cmd "bash $PWD/broke.sh" --prompt-file p.txt --max-attempts 3 >/dev/null 2>&1
+  brc=$?
+  tries3=$(cat "$STATE")
+
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  rows=$(Q "SELECT COUNT(*) FROM finding;")
+  summ=$(Q "SELECT summary FROM finding;")
+  gaps=$(Q "SELECT COUNT(*) FROM event WHERE kind='finding-gap';")
+
+  [ "$ok" = 0 ] && [ "$tries" = 2 ] &&
+  [ "$gave" = 1 ] && [ "$tries2" = 2 ] && [ "$brc" = 1 ] && [ "$tries3" = 1 ] &&
+  [ "$rows" = 1 ] && [ "$gaps" = 2 ] &&
+  [ "$summ" = "the diagnostics came back and this reply is the correction" ] )
+check $? "a refused reply is corrected and recorded; an incorrigible one stops and leaves a gap"
+rm -rf "$rr"
+fi
+
 if step "the finding contract is defined in exactly one place"; then
 # The vocabulary was restated in four files once and they all drifted. The FIELD LIST is the
 # same hazard: an agent that lists the fields from memory will list them wrongly the day one
