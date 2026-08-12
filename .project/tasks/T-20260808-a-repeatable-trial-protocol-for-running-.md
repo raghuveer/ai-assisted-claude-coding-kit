@@ -120,6 +120,45 @@ repository" (a threshold with no derivation, and nothing counts tool uses) and "
 4×" (no n, generalising one session) — **which break the protocol's own §6 rules three sections
 later.**
 
+### Revision 2 (2026-08-12) — both criticals and all ten majors addressed
+
+**Critical 1, isolation.** The rule is now a command, not an adjective:
+`git clone --no-hardlinks`, `git remote remove origin`, then `git remote -v` **must print
+nothing or you stop**. `--no-hardlinks` because a hardlinked object store shares files with the
+subject. Conformance asserts both commands are still in the document, and separately asserts the
+guard's matcher is still `Write|Edit|NotebookEdit` — so if the hook ever grows Bash coverage, the
+sentence that justifies the removed remote stops being silently stale.
+
+**Critical 2, the unsatisfiable pair.** The protocol now states plainly that `kit-status.sh`
+emits BTE by tier/scope/provenance/model and **not** per agent. The `spend` table does carry an
+`agent` column, so §1 gives the query — and it reads the weights out of `kit-status.sh` with
+`sed` rather than retyping them, which satisfies the no-duplication rule instead of colliding
+with it. Conformance asserts the disclaimer is present and that `spend.agent` still exists.
+
+**The majors.** §0 is now a real pre-flight with four groups: kit state, **instruments**,
+subject, trial. It requires proving spend and findings capture are live before starting —
+justified by a fact found while revising: **this repository has 0 spend rows after 12 days of
+heavy use**, and `kit-status.sh` drops the cost section silently when the table is empty, so
+nothing announces it. A trial would have finished with no cost data and no warning.
+
+Also: time-box, stop rules and an abort path are stated; the subject's build/test baseline is
+recorded *before* the kit touches anything; §2 gained the **across-trial** constants table that
+revision 1 lacked entirely; "vary one thing per trial" is replaced with the honest rule that the
+subject is the variable and the kit moves anyway, so a two-trial difference is a hypothesis;
+§3's five VOID conditions each carry a **detection you can run**; `docs/TRIALS/TEMPLATE.md`
+exists and conformance asserts it; §4 resolves the hooks contradiction by stating that the copy
+is not the subject, so `kit-init.sh` runs there; §5 states the `Via:`-beats-`via:` precedence and
+requires one task at a time because spend attribution mis-binds otherwise; §6 adds disputed-
+finding handling; and a VOID trial now has a filing disposition.
+
+**My two unsourced numbers are gone** — the five-tool-use threshold and the 4× wall-clock
+divergence. §2 now says tool counts are not obtainable from the kit at all, which is the fact,
+rather than asking for a column nothing can fill.
+
+**Not addressed, deliberately:** per-agent BTE should be a `kit-status.sh` mode rather than a
+query pasted into a protocol. That is a kit change, not a document change, and belongs in its own
+task.
+
 ### Found by operating the loop, again
 
 `kit-review-record.sh` records the findings and **discards the `verdict` and `narrative`**: the

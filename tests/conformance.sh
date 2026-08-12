@@ -1557,6 +1557,13 @@ if step "the trial protocol's unit matches the one the kit computes"; then
 P="$KIT/docs/TRIAL-PROTOCOL.md"
 [ -f "$P" ]; check $? "the trial protocol exists"
 # Pulled from the source rather than typed here, so this step cannot itself become a third copy.
+#
+# EXACTLY ONE definition, asserted first. A second `BTE=` line would make the sed emit eight
+# fields, and `set --` would then check only the first four while reporting success -- the
+# check would silently stop covering the definition that was actually in use.
+NBTE=$(grep -c '^BTE=' "$KIT/tooling/kit-status.sh")
+[ "$NBTE" = 1 ]
+check $? "kit-status.sh defines BTE exactly once (found $NBTE)"
 W=$(sed -n 's/^BTE="(s\.tok_in\*\([0-9]*\) + s\.cache_write\*\([0-9]*\) + s\.cache_read\*\([0-9]*\) + s\.tok_out\*\([0-9]*\))"/\1 \2 \3 \4/p' "$KIT/tooling/kit-status.sh")
 set -- $W
 # Scaled by 100 in the SQL so the weights stay integers; the prose states them unscaled.
@@ -1568,6 +1575,29 @@ check $? "and the protocol states those same four weights"
 # that sentence goes, the next trial quotes the wrong column exactly as the first one did.
 grep -q 'final context size' "$P" && grep -qi 'do NOT use the harness' "$P"
 check $? "the protocol still warns off the harness per-agent figure"
+
+# The two criticals the T2 review found before first use. Both are one sentence away from
+# regressing, and both would be paid for by a trial on a real client codebase.
+#
+# 1. Isolation. "A copy or a read-only clone" left origin pointing at the subject, and git push
+#    is a Bash call the guard never sees. The removed remote IS the control.
+grep -q 'git remote remove origin' "$P" && grep -q 'git remote -v' "$P"
+check $? "the protocol removes the clone's remote and verifies it"
+# The guard's matcher is quoted in the protocol as the reason. If the hook ever grows Bash
+# coverage that sentence becomes false, so tie it to the hook rather than to prose.
+grep -q '"matcher": "Write|Edit|NotebookEdit"' "$KIT/hooks/hooks.json"
+check $? "the guard still matches only Write|Edit|NotebookEdit, as the protocol states"
+# 2. The per-agent figure. The protocol must not mandate one the kit does not emit while also
+#    forbidding the only way to derive it -- that pair is what made revision 1 unexecutable.
+grep -q 'It does \*\*not\*\* emit a per-agent figure' "$P"
+check $? "the protocol says plainly that no per-agent BTE is emitted"
+sqlite3 "$KIT/.project/index.db" "SELECT agent FROM spend LIMIT 0;" >/dev/null 2>&1
+check $? "and spend still has the agent column the protocol's query groups by"
+
+# §7 names a template. Revision 1 named a shape with no file, so every trialist would have
+# invented one and comparability would have died at the artefact.
+[ -f "$KIT/docs/TRIALS/TEMPLATE.md" ]
+check $? "the report template §7 points at exists"
 fi
 
 if step "the via vocabulary is defined in exactly one place"; then
