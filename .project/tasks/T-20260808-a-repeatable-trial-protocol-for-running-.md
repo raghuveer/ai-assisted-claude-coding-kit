@@ -159,6 +159,82 @@ rather than asking for a column nothing can fill.
 query pasted into a protocol. That is a kit change, not a document change, and belongs in its own
 task.
 
+## Re-review of revision 2 (2026-08-12) — REJECTED. 24 findings: 2 critical, 17 major, 5 minor.
+
+**More findings than revision 1, not fewer** (20 → 24). The structural contradictions are gone;
+what replaced them is worse in kind, and the cause is one thing.
+
+### The meta-finding, and it is the only one that matters
+
+**Revision 2 added executable content and guarded it with prose matching.** The conformance step
+contains **six `grep -q` checks against the document's text and executes zero of the commands the
+document tells a trialist to run.** So every command, query and detection I added was verified
+only to be *present*, never to *work* — and the review found that four of them do not.
+
+That is `docs/LESSONS.md` §1 at document scope: a check that cannot fail for the defect it
+guards. I fixed revision 1's "conditions with no detection" by writing detections **and then
+checking they existed rather than that they ran**.
+
+### CRITICAL 1 — the isolation fix does not cover the path §0 offers
+
+§0 line 44 still says **"A COPY or a clone with its remote removed"**. §4's control — `git remote
+remove origin` then `git remote -v` — is written for the clone path only. A `cp -r` of a git
+repository keeps `.git/config` and its `origin` intact, so the copy path **reopens revision 1's
+critical exactly**. The fix guarded one of the two doors its own pre-flight opens.
+
+### CRITICAL 2 — the pre-flight stops a healthy trial
+
+§0 says: run a throwaway agent, then `SELECT COUNT(*) FROM spend`, and **zero means stop**.
+Verified: `kit-spend.sh` writes to `events.ndjson`, and rows reach the `spend` table only when
+`kit-index.sh` runs (`kit-index.sh:772`). So with **working hooks** the count is 0 until a
+reindex — and the pre-flight aborts a trial that is fine. A false stop in the gate added to
+prevent a false start.
+
+### Majors, grouped by what they share
+
+**Commands that do not run** (all four verified by executing them):
+
+- §3's empty-review detection selects a `reason` column **that does not exist** — `reason` lives
+  inside `event.payload` JSON. Reproduced: `no such column: reason`.
+- §1's two commands root in **different repositories** — `tooling/` is the kit, `.project/` is
+  the copy. Run from the copy, `$W` is empty and the `SUM()` is a SQL error.
+- §1's per-agent query has **no scope filter**, which `schema.sql:119` forbids, and
+  `kit-spend.sh` leaves swept subagents unlabelled.
+- `SUM(...)/100000` is **SQLite integer division**, so a cheap agent reports `0`.
+
+**Detections that cannot discriminate:**
+
+- reindex detection fires on **every** normal mid-trial state, because build output and a
+  regenerated `STATUS.generated.md` keep `git status --short` non-empty
+- permission-denial detection compares **tool counts, which §2 says the kit cannot obtain** —
+  unrunnable by the document's own statement, two sections apart
+- blind-run detection states **no pass criterion** and compares `finding.at` against an
+  unspecified git date
+
+**Self-contradiction reintroduced:**
+
+- **§0 mandates registering a finding during pre-flight; §3 says a registered finding
+  contaminates every later blind run.** The pre-flight creates the VOID it exists to prevent.
+- §7 embeds a **second copy of the report template** which already diverges from
+  `docs/TRIALS/TEMPLATE.md`, while §2 requires the template to match across trials
+- VOID now lives in **two places**: §2's mid-trial constant changes and §5's two-tasks-in-flight
+  both void a trial and appear in neither §3 nor any detection
+- **Nothing states what the trial DOES** between pre-flight and reporting, so two trials can
+  satisfy every §2 constant and still run unrelated workloads
+
+**The empty-spend fix, reviewed too:** its notice prescribes `kit-spend.sh --transcript`, which
+**writes a row into the very table being measured** and flips the report. And "almost always
+means the hooks were not active" is wrong for a freshly initialised project, where empty spend
+genuinely means no work yet. Its comment also claims "the sixteen OTHER sections" — an uncounted
+number; the countable `-gt 0` gates are 11. §3, in a comment I wrote while fixing a §3 defect.
+
+### What revision 3 must do differently
+
+Not "write it more carefully". **Every command in the document must be executed by conformance
+against a fixture, not grepped for.** If a query cannot be run in a test, it does not belong in
+a procedure — and the same applies to the pre-flight, which is a sequence of commands and should
+be a script the trialist runs rather than a checklist they interpret.
+
 ### Found by operating the loop, again
 
 `kit-review-record.sh` records the findings and **discards the `verdict` and `narrative`**: the
