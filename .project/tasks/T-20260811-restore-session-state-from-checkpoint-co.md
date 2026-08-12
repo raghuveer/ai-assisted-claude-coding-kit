@@ -4,9 +4,55 @@ title: Restore session state from checkpoint commits
 epic: planning
 tier: T2
 lang: bash
-paths: tooling/kit-checkpoint.sh, skills/checkpoint
+paths: tooling/kit-checkpoint.sh, skills/checkpoint, skills/task-context
 state: open
 ---
+
+## PRIOR ART — read before writing anything (added 2026-08-12)
+
+**`legacy-commands/resume-context.md` already exists** and covers a real part of this. It is
+tracked, 26 lines, and `docs/MIGRATION.md` says the legacy commands are "kept for reference,
+not wired". Harvest it; do not reinvent it. What it already specifies:
+
+- rebuild from durable files, explicitly distrusting prior conversation state
+- establish ground truth from git — `git log --oneline -15`, `git status --short` — across
+  every repository the project spans, noting any that diverged
+- open **only** the docs the status pointer links for the item about to be worked, because a
+  wide read at session start is paid for on every later turn
+- **verify anything referenced by identifier actually exists** rather than trusting the doc
+- a five-line orientation that explicitly flags contradictions between the docs and git
+
+**`docs/MIGRATION.md`'s mapping table is wrong about this, and the error hid a capability
+loss.** It records `/resume-context` → skill `task-context` as a rename. They do different
+jobs, verified by reading both:
+
+| | `resume-context` (legacy) | `task-context` (shipped) |
+|---|---|---|
+| unit | the SESSION | one TASK |
+| git | `log`, `status`, multi-repo divergence | never runs git |
+| output | 5-line orientation, contradictions flagged | files loaded for a task |
+| needs a task id | no | yes (asks the index if absent) |
+
+`task-context` is a good skill and is not a replacement for the other one. **Session-level
+orientation was dropped in the 0.2.0 migration and recorded as a rename**, which is why this
+task was filed from a reference repository as though the kit had never had it.
+
+**The genuinely missing half is the mechanism, not the ritual.** `skills/checkpoint` §5 writes
+only three trailers — `Task-Id`, `Task-Status`, `Tier`. Its §1 summary ("decisions made,
+anything left mid-flight") goes to the operator and lands nowhere durable. So there is
+**nothing in a commit body to restore from**, and §6's "the next unit rebuilds from files"
+is true only of per-task context.
+
+Scope, therefore:
+
+1. structured checkpoint commit bodies — decisions, work remaining, approaches tried and
+   **rejected** — which is the part that does not exist anywhere;
+2. a restore that reads them, whose ritual text should start from `resume-context.md`;
+3. a correction to `docs/MIGRATION.md`, so the table stops recording a capability loss as a
+   rename.
+
+Found 2026-08-12 by the operator asking whether this task was re-creating something the kit
+already had. It partly was.
 
 ## Intent
 
