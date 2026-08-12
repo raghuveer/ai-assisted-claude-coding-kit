@@ -311,7 +311,29 @@ fi
 # Scaled by 100 so the weights stay integers and the division happens once, on the total:
 # dividing per row first and summing after loses a token per row to truncation.
 BTE="(s.tok_in*100 + s.cache_write*125 + s.cache_read*10 + s.tok_out*500)"
+# SPEND IS A MEASUREMENT, AND A MEASUREMENT MUST REPORT ITS OWN ABSENCE.
+#
+# This section used to be gated on `SPENT > 0` with no else, so an uninstrumented project and a
+# project that genuinely cost nothing produced byte-identical reports. Measured on this
+# repository: 0 spend rows after twelve days of heavy use, and not one mention of cost anywhere
+# in the output. The `0 / 0 via:kit` family, and worse -- that one at least printed zeroes a
+# reader could question.
+#
+# The sixteen OTHER sections gated this way are WARNINGS -- unresolved ids, orphan escapes,
+# finding gaps, below-floor, the untagged threshold. A warning that stays quiet when there is
+# nothing to warn about is correct, and they are deliberately left alone. Do not "fix" them.
+# The distinction is whether absence of the section is itself information: for a measurement it
+# always is.
 SPENT=$(q "SELECT COUNT(*) FROM spend;")
+if [ "${SPENT:-0}" -le 0 ]; then
+  printf '\n## Spend\n\n'
+  printf '> **Not recorded — this is not a measurement of zero.** The `spend` table is empty,\n'
+  printf '> which almost always means the kit'"'"'s hooks were not active for the work: they fire\n'
+  printf '> from `SubagentStop` and `Stop`, so a session run without the plugin loaded records\n'
+  printf '> nothing. Cost figures for this project are UNAVAILABLE, not zero.\n>\n'
+  printf '> Check with `kit-spend.sh --transcript <path>` on a known transcript; if that records\n'
+  printf '> a row, the recorder is fine and the hooks are the thing to look at.\n'
+fi
 if [ "${SPENT:-0}" -gt 0 ]; then
   printf '\n## Spend\n\n'
   printf '_Billable input-token-equivalents: input x1, cache-write x1.25, cache-read x0.1, output x5._\n\n'

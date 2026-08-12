@@ -1548,6 +1548,59 @@ check $? "the validator reads the vocabulary rather than restating it (accepts, 
 rm -rf "$vb"
 fi
 
+if step "an uninstrumented project is not reported as a free one"; then
+# Spend is a MEASUREMENT, so its absence is information and must be printed. The section used
+# to be gated on a non-empty table with no else, which made "the hooks never fired" and "the
+# work cost nothing" byte-identical. Measured on the kit's own repo: 0 rows after twelve days
+# and not one mention of cost in the output.
+#
+# BOTH branches are exercised. A step that only ran the populated one could not fail for the
+# defect being fixed, which is the shape this suite exists to refuse.
+sp="$WORK.spendrep"; rm -rf "$sp"; mkdir -p "$sp/sess/subagents" "$sp/src"
+( cd "$sp" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  printf -- '---
+id: T-s
+title: s
+tier: T2
+---
+b
+' > .project/tasks/T-s.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+
+  # EMPTY: the section must exist and must say it is not a zero.
+  bash "$KIT/tooling/kit-index.sh"  >/dev/null 2>&1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -q '^## Spend' STATUS.generated.md ||
+    { printf '    ^ no Spend section at all when the table is empty\n' >&2; exit 1; }
+  grep -q 'not a measurement of zero' STATUS.generated.md ||
+    { printf '    ^ empty spend does not say it is unavailable rather than zero\n' >&2; exit 1; }
+  grep -q 'UNAVAILABLE, not zero' STATUS.generated.md || exit 1
+  # It must NOT print the populated section's furniture on an empty table.
+  grep -q 'Billable input-token-equivalents' STATUS.generated.md &&
+    { printf '    ^ the populated header printed with no rows behind it\n' >&2; exit 1; }
+
+  # POPULATED: the real section returns, and the empty notice goes away.
+  printf '{"type":"assistant","message":{"model":"m1","usage":{"input_tokens":10,"cache_creation_input_tokens":400,"cache_read_input_tokens":1000,"output_tokens":200}}}
+' > sess/subagents/agent-A1.jsonl
+  printf '{"agentType":"implementation-reviewer","spawnDepth":1}' > sess/subagents/agent-A1.meta.json
+  : > sess.jsonl
+  bash "$KIT/tooling/kit-spend.sh" --transcript "$PWD/sess.jsonl" --agent-id A1 --agent implementation-reviewer
+  bash "$KIT/tooling/kit-index.sh"  >/dev/null 2>&1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -q 'Billable input-token-equivalents' STATUS.generated.md ||
+    { printf '    ^ the populated Spend section did not return\n' >&2; exit 1; }
+  grep -q 'not a measurement of zero' STATUS.generated.md &&
+    { printf '    ^ the empty notice printed alongside real rows\n' >&2; exit 1; }
+  # And the recorder itself works -- the hypothesis that it was broken was wrong, and this is
+  # what keeps that answer true rather than remembered.
+  [ "$(sqlite3 .project/index.db 'SELECT COUNT(*) FROM spend;' | tr -d '\015')" = 1 ] )
+check $? "empty spend says unavailable, populated spend reports, and the recorder records"
+rm -rf "$sp"
+fi
+
 if step "the trial protocol's unit matches the one the kit computes"; then
 # docs/TRIAL-PROTOCOL.md fixes the unit a trial reports in, and a document is the easiest place
 # for a number to drift out of agreement with the code. The weights are computed in exactly one
