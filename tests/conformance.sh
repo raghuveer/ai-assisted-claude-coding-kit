@@ -1591,8 +1591,13 @@ check $? "the guard still matches only Write|Edit|NotebookEdit, as the protocol 
 #    forbidding the only way to derive it -- that pair is what made revision 1 unexecutable.
 grep -q 'It does \*\*not\*\* emit a per-agent figure' "$P"
 check $? "the protocol says plainly that no per-agent BTE is emitted"
-sqlite3 "$KIT/.project/index.db" "SELECT agent FROM spend LIMIT 0;" >/dev/null 2>&1
-check $? "and spend still has the agent column the protocol's query groups by"
+# Asserted against the TRACKED SCHEMA, never against .project/index.db. That file is gitignored
+# and derived, so it exists on a developer's machine and NOT on a fresh CI clone -- the first
+# version of this check queried it, passed locally for that reason alone, and went red on both
+# CI platforms within one push. LESSONS.md S9: the gate you cannot run locally is the one that
+# catches you. A conformance check must depend only on what is committed.
+sed -n '/CREATE TABLE spend/,/^);/p' "$KIT/tooling/schema.sql" | grep -qE '^  agent  *TEXT'
+check $? "and spend still declares the agent column the protocol's query groups by"
 
 # §7 names a template. Revision 1 named a shape with no file, so every trialist would have
 # invented one and comparability would have died at the artefact.
