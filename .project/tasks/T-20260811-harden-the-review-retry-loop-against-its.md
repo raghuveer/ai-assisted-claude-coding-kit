@@ -42,6 +42,23 @@ rounds and the remaining items are hardening, not correctness of the mechanism.
    No findings ever existed. The gap vocabulary needs a third value — `unavailable` — with the
    report wording to match.
 
+**Added 2026-08-12 — major: the loop discards the verdict and the narrative**
+
+`kit-review-record.sh` writes the reviewer's reply into a `mktemp -d` workdir and the `EXIT`
+trap deletes it. The findings are recorded; `verdict` and `narrative` are not, and there is no
+`verdict` column on `finding` either. `kit_findings.py` accepts both and its own comment says
+the verdict "is for the human who decides whether the work closes" — so the loop destroys
+exactly the field it names as the human's.
+
+Observed on the trial-protocol T2 round (2026-08-12): 20 findings recorded, verdict
+unrecoverable. Two criticals made the outcome obvious by inference, which is not the same as
+having the reviewer's word for it, and on a round of all-minors it would not be obvious at all.
+
+Fix is a decision, not just a patch: either persist the reply beside the events, or store
+`verdict` and `narrative` on a review row that the findings hang off. The second is better —
+it makes "which review said this" answerable — but it is a schema change and belongs to whoever
+takes this task.
+
 **Minors**
 
 5. **A double gap is possible**: `kit-finding.sh`'s `emit` writes one on rejection, and if that
