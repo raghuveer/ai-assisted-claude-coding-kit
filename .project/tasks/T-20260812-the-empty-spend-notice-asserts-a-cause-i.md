@@ -2,7 +2,7 @@
 id: T-20260812-the-empty-spend-notice-asserts-a-cause-i
 title: The empty spend notice asserts a cause it cannot know
 epic: reporting
-tier: T1
+tier: T2
 lang: bash
 paths: tooling/kit-status.sh
 state: open

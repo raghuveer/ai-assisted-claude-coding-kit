@@ -2,7 +2,7 @@
 id: T-20260812-kit-init-leaves-a-footprint-in-an-adopte
 title: kit-init leaves a footprint in an adopted repo with no way to remove it
 epic: components
-tier: T1
+tier: T2
 lang: bash
 paths: tooling/kit-init.sh, docs/TRIAL-PROTOCOL.md
 state: open

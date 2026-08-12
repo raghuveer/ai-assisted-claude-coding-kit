@@ -2,7 +2,7 @@
 id: T-20260812-commits-vanish-between-rev-list-and-the-
 title: Commits vanish between rev-list and the trailer report with nothing saying so
 epic: measurement
-tier: T2
+tier: T3
 lang: bash
 paths: tooling/kit-status.sh, tooling/kit-trailers.sh, tooling/kit-index.sh
 state: open
