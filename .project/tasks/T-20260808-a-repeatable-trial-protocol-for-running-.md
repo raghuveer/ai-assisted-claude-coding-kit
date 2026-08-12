@@ -3,7 +3,7 @@ id: T-20260808-a-repeatable-trial-protocol-for-running-
 title: A repeatable trial protocol for running the kit on an unfamiliar project
 epic: validation
 tier: T2
-paths: docs/MEASUREMENTS.md
+paths: docs/TRIAL-PROTOCOL.md, docs/MEASUREMENTS.md
 state: open
 ---
 
@@ -20,29 +20,51 @@ stated as a procedure someone can follow.
 
 ## Acceptance criteria
 
-- [ ] A protocol document that a person can execute without having read the run it came from.
+- [x] A protocol document that a person can execute without having read the run it came from.
       What to record, what to vary, what to hold constant, and what makes a trial void.
-- [ ] The unit is fixed and stated: billing-weighted input-token-equivalents (input x1,
+      → `docs/TRIAL-PROTOCOL.md`, §0 gate / §2 constants and record / §3 void.
+- [x] The unit is fixed and stated: billing-weighted input-token-equivalents (input x1,
       cache-write x1.25, cache-read x0.1, output x5), from the per-agent transcripts. NOT the
       harness's per-agent figure, which is final context size and differed from actual output
       work by 5-215x on a measured run. `docs/MEASUREMENTS.md`'s own table is in the wrong unit
       for exactly this reason and says so.
-- [ ] The known-void traps are promoted out of the 2026-08-01 narrative into the procedure:
+      → §1, and **conformance-checked in both directions**: the weights are read out of
+      `kit-status.sh` rather than retyped in the test, so the prose and the code cannot drift
+      apart silently. Three mutations prove it — code drifts, prose drifts, warning deleted.
+- [x] The known-void traps are promoted out of the 2026-08-01 narrative into the procedure:
       - a worktree path in a prompt does NOT isolate a subagent; both agents found and read the
         live repo, and that comparison was void
       - reindex AFTER committing, or the escape mechanism reads as broken
       - registering a finding contaminates any later blind run; use a worktree at a commit
         predating the registration
       - permission denials inside a subagent degrade into partial reads
-- [ ] It says what a trial must NOT do to the subject project. See the trial task's constraint:
+- [x] It says what a trial must NOT do to the subject project. See the trial task's constraint:
       these are real codebases and the kit is not to put them in an unstable state.
-- [ ] It says how work done during the trial is attributed, which is
+      → §4, and it names which half is enforced: the `kit-guard.sh` hook matches
+      `Write|Edit|NotebookEdit` — **verified, Bash is genuinely absent from the matcher** — so
+      the copy is the control and non-destructiveness is a procedure, not a guarantee.
+- [x] It says how work done during the trial is attributed, which is
       T-20260808-record-how-a-task-was-executed-so-kit-wo. A trial that cannot separate kit
       work from other work produces numbers nobody can interpret later.
-- [ ] n is stated on every figure it produces, and a figure from one project is never
+      → §5, including that `unknown` is the honest default on brownfield, the lowercase
+      `via:` frontmatter key for back-fill, and reporting over both populations.
+- [x] n is stated on every figure it produces, and a figure from one project is never
       generalised to another without saying so. The existing measurement is n=1 on greenfield
       and is explicitly not a rate card; the protocol must make that the default posture
       rather than a caveat someone remembers to add.
+      → §6. The document also declares its own **n=0**.
+
+## Built 2026-08-12
+
+`docs/TRIAL-PROTOCOL.md`. Two rules in it come from defects found in the kit's own review loop
+rather than from the greenfield run, because they are the same failure the trial would produce:
+an empty `{"findings":[]}` records as *"looked and found nothing"* when the reviewer may never
+have received the request (§3), and an empty `via:kit` denominator prints zeroes in the shape of
+a rate (§5). Both would have corrupted a trial's headline numbers.
+
+**Not closed.** T2 needs an adversarial reviewer before it is done, and this document's whole
+value is that it is right before the first trial rather than after it. Its own last line says it
+is n=0 and expects to change on first execution.
 
 ## Notes
 

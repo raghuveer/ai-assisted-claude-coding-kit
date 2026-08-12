@@ -219,6 +219,10 @@ finding.
 
 ## D. Methodology warnings for whoever repeats this
 
+> **These are now a procedure: `docs/TRIAL-PROTOCOL.md` §3.** Follow that, not this section —
+> it states them as rules to execute rather than as things that happened here, and it carries
+> two more found since. What follows is kept for the evidence behind each one.
+
 - **A worktree path in the prompt does not isolate a subagent.** On the
   implementation-reviewer tier test both agents found and read the live repo; opus said so
   explicitly and reviewed it instead. **That comparison is void.** The design-rung blind

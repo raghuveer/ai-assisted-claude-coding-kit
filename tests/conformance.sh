@@ -1548,6 +1548,28 @@ check $? "the validator reads the vocabulary rather than restating it (accepts, 
 rm -rf "$vb"
 fi
 
+if step "the trial protocol's unit matches the one the kit computes"; then
+# docs/TRIAL-PROTOCOL.md fixes the unit a trial reports in, and a document is the easiest place
+# for a number to drift out of agreement with the code. The weights are computed in exactly one
+# place -- BTE in kit-status.sh -- and the protocol restates them in prose because a person has
+# to read them. That restatement is the risk, so it is checked: the finding vocabulary was
+# restated in four files once and all four drifted.
+P="$KIT/docs/TRIAL-PROTOCOL.md"
+[ -f "$P" ]; check $? "the trial protocol exists"
+# Pulled from the source rather than typed here, so this step cannot itself become a third copy.
+W=$(sed -n 's/^BTE="(s\.tok_in\*\([0-9]*\) + s\.cache_write\*\([0-9]*\) + s\.cache_read\*\([0-9]*\) + s\.tok_out\*\([0-9]*\))"/\1 \2 \3 \4/p' "$KIT/tooling/kit-status.sh")
+set -- $W
+# Scaled by 100 in the SQL so the weights stay integers; the prose states them unscaled.
+[ "${1:-}" = 100 ] && [ "${2:-}" = 125 ] && [ "${3:-}" = 10 ] && [ "${4:-}" = 500 ]
+check $? "the weights are still 1 / 1.25 / 0.1 / 5 in kit-status.sh (read: $W)"
+grep -q 'input×1 + cache-write×1.25 + cache-read×0.1 + output×5' "$P"
+check $? "and the protocol states those same four weights"
+# The protocol's central warning: the harness per-agent figure is context size, not cost. If
+# that sentence goes, the next trial quotes the wrong column exactly as the first one did.
+grep -q 'final context size' "$P" && grep -qi 'do NOT use the harness' "$P"
+check $? "the protocol still warns off the harness per-agent figure"
+fi
+
 if step "the via vocabulary is defined in exactly one place"; then
 # The finding vocabulary was restated in four locations once, and the agents then emitted
 # values the recorder threw away. This one has a single definition in kit-lib.sh and every
