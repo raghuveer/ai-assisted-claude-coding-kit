@@ -150,12 +150,25 @@ fi
 if step "scripts are executable in the git index"; then
 # Not on disk: git on Windows cannot read the msys exec bit, so a chmod there never reaches
 # the index and the file lands non-executable on Linux. The index is the shared truth.
+#
+# THE SELECTOR MUST MATCH CI'S, and it did not. This loop filtered to `.sh$|commit-msg`, while
+# the workflow's "Exec bits survive a fresh clone" step checks EVERYTHING under tooling/ except
+# schema.sql. So `kit_findings.py` landed at 100644 on 2026-08-10 and CI went red for EIGHT
+# consecutive commits while this step stayed green -- a local gate weaker than the remote one
+# is a local gate that certifies nothing.
+#
+# Selected the same way CI selects: anything tracked under tooling/ or templates/*.sh, minus a
+# named exception list. A file that genuinely should not be executable is added HERE, visibly,
+# rather than by narrowing the pattern until it stops complaining.
 nx=0
-for f in $(git -C "$KIT" ls-files tooling templates | grep -E '\.sh$|commit-msg'); do
+for f in $(git -C "$KIT" ls-files tooling 'templates/*.sh'); do
+  case "$f" in
+    tooling/schema.sql) continue ;;   # data, never executed
+  esac
   m=$(git -C "$KIT" ls-files -s "$f" | awk '{print $1}')
   [ "$m" = 100755 ] || { echo "  $m $f"; nx=1; }
 done
-check $nx "every script is 100755"
+check $nx "every script is 100755, by CI's own selector"
 fi
 
 if step "finding vocabulary has not drifted"; then
