@@ -783,7 +783,14 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
           # which is worse than no mark at all. `at` stays in front so the id sorts and reads
           # chronologically; the hash makes it a function of the line, and the line is
           # append-only, so the id is stable for as long as the event is.
-          fid = a ":" sprintf("%08x", fnv1a($0))
+          # Printed as two 16-bit halves, NOT as sprintf("%08x", h). An FNV-1a value above
+          # 2^31 -- more than half of them -- goes through a signed int in mawk (ubuntu-latest)
+          # and BSD awk (macos-latest), so `%x` does not survive it there while gawk prints it
+          # correctly. That is how this first reached CI: green on the machine it was written
+          # on, red on both platforms, with every id different. Each half is below 65536, which
+          # every awk renders alike, and the digits are unchanged from the gawk output.
+          _h = fnv1a($0)
+          fid = a ":" sprintf("%04x%04x", int(_h / 65536), _h % 65536)
           # Two events can land on one id two ways, and they are not the same event.
           #
           # A DUPLICATE LINE is byte-identical -- this repository has one, two pre-contract
