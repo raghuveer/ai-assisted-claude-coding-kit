@@ -2,7 +2,7 @@
 id: T-20260812-a-finding-cannot-be-marked-fixed-so-any-
 title: A finding cannot be marked fixed so any gate on open criticals is uncomputable
 epic: measurement
-tier: T2
+tier: T3
 lang: sql
 paths: tooling/schema.sql, tooling/kit-vindicate.sh, tooling/kit-status.sh
 state: open
