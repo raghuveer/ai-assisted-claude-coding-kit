@@ -89,9 +89,11 @@ mkdir -p "$ROOT/$STATE_DIR"
 # defect kit-finding.sh had recorded against it twice: a value carrying a quote corrupts an
 # append-only committed log permanently, and the awk reader takes the FIRST match, so a crafted
 # field can inject a key the indexer then prefers over the real one.
+# The timestamp is stamped by the writer, not passed in from here. It needs sub-second
+# resolution -- two marks on one finding in the same second are order-ambiguous and the
+# retraction loses -- and `date -u` cannot produce it portably, because BSD date has no %N.
 _out=$(python3 "$(dirname "$0")/kit_findings.py" --resolve \
-         --finding "$finding" --fixed "$verdict" --commit "$commit" --note "$note" \
-         --at "$(date -u +%Y-%m-%dT%H:%M:%SZ)") || {
+         --finding "$finding" --fixed "$verdict" --commit "$commit" --note "$note") || {
   kit_warn "refusing to record: the event could not be serialised"; exit 1; }
 
 # The append is CHECKED, and the value is built before it. Unchecked, a full or unwritable

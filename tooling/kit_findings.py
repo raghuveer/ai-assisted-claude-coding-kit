@@ -333,8 +333,18 @@ def resolve_event(argv):
         raise Rejected("--finding is required (the id from kit-resolve.sh --list)")
     if opts["fixed"] not in ("0", "1"):
         raise Rejected("--fixed must be 0 or 1; there is no third state")
+    # SUB-SECOND, and stamped here rather than by the caller. Marks on one finding are applied
+    # last-write-wins over events sorted by `at`, and at whole-second resolution a fix and a
+    # reopen recorded in the same second are ORDER-AMBIGUOUS: the tie breaks on the text of the
+    # line, where `"fixed":0}` sorts before `"fixed":1,"commit":...`, so the retraction is
+    # applied first and the fix wins. The retraction silently does nothing.
+    #
+    # Not hypothetical and not caught by review: it passed on the machine it was written on,
+    # where the two commands are a second apart, and failed in a container fast enough to put
+    # them in one second. `date -u` cannot help -- BSD date has no %N and this runs on macOS.
     if not opts["at"]:
-        raise Rejected("--at is required")
+        opts["at"] = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ")
     event = {"kind": "finding-fixed", "at": sanitise(opts["at"]),
              "finding": sanitise(opts["finding"]), "fixed": int(opts["fixed"])}
     # Omitted rather than written empty: an absent key reads as "not supplied", where

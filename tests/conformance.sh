@@ -1433,6 +1433,21 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   fx2=$(Q "SELECT COALESCE(fixed_at,'NULL') FROM finding WHERE id='$fid';")
   vd2=$(Q "SELECT COALESCE(vindicated,'NULL') FROM finding WHERE id='$fid';")
 
+  # THREE MARKS BACK TO BACK. Ordering must not depend on how fast the machine is. At
+  # whole-second resolution these land in one second and the tie breaks on the TEXT of the
+  # line -- `"fixed":0}` sorts before `"fixed":1,"commit":...` -- so the retraction is applied
+  # first, the fix wins, and `--open` silently does nothing. That is what happened: green here,
+  # red on ubuntu-latest, because a container is fast enough to put them in the same second.
+  # Timestamps are sub-second now, and this asserts the property rather than the format.
+  bash "$R" --finding "$oid" --fixed --commit aaaaaaa >/dev/null 2>&1
+  bash "$R" --finding "$oid" --open >/dev/null 2>&1
+  bash "$R" --finding "$oid" --fixed --commit bbbbbbb >/dev/null 2>&1
+  reindex
+  lastw=$(Q "SELECT COALESCE(fixed_commit,'NULL') FROM finding WHERE id='$oid';")
+  # Five marks so far, and no two may share a timestamp -- if any do, the one that loses is
+  # decided by string order, which is not a fact about when it happened.
+  nat=$(grep -o '"kind":"finding-fixed","at":"[^"]*"' "$EV" | sort -u | wc -l | tr -d ' ')
+
   # An orphan mark ALREADY IN the log -- from a hand edit, or a merge that brought the mark
   # without the finding -- is reported. Applied as an UPDATE it would match nothing and exit 0,
   # which is a gate reading clean because its evidence never arrived.
@@ -1454,6 +1469,8 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   want "one critical fixed leaves one open"    "$openc" 1
   want "--open retracts the fix"               "$fx2" "NULL"
   want "  ...without retracting the verdict"   "$vd2" 1
+  want "the last of three rapid marks wins"    "$lastw" "bbbbbbb"
+  want "  ...no two marks share a timestamp"   "$nat" 5
   want "an orphan mark is named, not ignored"  "$orph" 1 )
 check $? "finding ids survive a merge, and addressed is recorded, retractable and independent of vindicated"
 rm -rf "$rs"
