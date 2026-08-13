@@ -469,6 +469,38 @@ if [ "$FGAPU" -gt 0 ]; then
   printf '> counted separately because guessing which kind they were would invent the number.\n'
 fi
 
+# OUTSTANDING CRITICALS. This section exists because the question "is there an open critical on
+# this task" was UNCOMPUTABLE until `finding.fixed_at` did -- `vindicated` answers whether a
+# finding was real, which is a different question, and no column answered this one. The trial
+# protocol's first pre-flight box gated on it, could not be evaluated, and was waved through.
+# A gate nobody can evaluate is worse than no gate, because it launders "we ignored it" into
+# "we checked".
+#
+# Reported per TASK rather than as a total: the gate is per task, and one number cannot say
+# which task is holding. A finding marked fixed leaves this list; a finding reopened returns to
+# it. Nothing here is inferred -- an unmarked finding is OUTSTANDING, because assuming that
+# silence means fixed is the failure this replaces.
+OPENCRIT=$(q "SELECT COALESCE(NULLIF(f.task_id,''),'(unattributed)')||'  '||COUNT(*)||
+                     '  ['||COALESCE(NULLIF(t.state,''),'no task file')||']'
+                FROM finding f LEFT JOIN task t ON t.id = f.task_id
+               WHERE f.severity='critical' AND f.fixed_at IS NULL
+               GROUP BY f.task_id ORDER BY COUNT(*) DESC;")
+CRITTOT=$(q "SELECT COUNT(*) FROM finding WHERE severity='critical' AND fixed_at IS NULL;")
+CRITPROG=$(q "SELECT COUNT(*) FROM finding f JOIN task t ON t.id=f.task_id
+               WHERE f.severity='critical' AND f.fixed_at IS NULL AND t.state='progress';")
+printf '\n## Outstanding criticals\n\n'
+if [ -n "$OPENCRIT" ]; then
+  printf '%s\n' "$OPENCRIT" | sed 's/^/- /'
+  printf '\n_%s unfixed critical(s), %s of them on a task at `progress`. Mark one addressed with\n' \
+    "${CRITTOT:-0}" "${CRITPROG:-0}"
+  printf '`kit-resolve.sh --finding ID --fixed`; `--list --severity critical --unfixed` prints the ids._\n'
+else
+  # Said explicitly. An empty section reads as "not measured" -- which is what this whole
+  # section replaces -- and there is a real difference between no criticals and no marks.
+  printf '- none outstanding (%s critical finding(s) recorded, all marked addressed)\n' \
+    "$(q "SELECT COUNT(*) FROM finding WHERE severity='critical';")"
+fi
+
 # Findings the attribution heuristic could not bind to a task. Same standing as unattributed
 # spend: the work was reviewed and the finding is real, so it is named rather than dropped from
 # the count it should have been in.

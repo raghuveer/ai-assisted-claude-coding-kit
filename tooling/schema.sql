@@ -101,7 +101,17 @@ CREATE TABLE finding (
                                     -- backslash, because the awk reader that fills this column
                                     -- matches "[^"]*" and cannot see past an escaped quote.
   file_path  TEXT,                  -- where the finding is anchored, so it can be re-checked
-  line_no    INTEGER                -- 1-indexed line in that file
+  line_no    INTEGER,               -- 1-indexed line in that file
+  fixed_at   TEXT,                  -- NULL outstanding | timestamp addressed. ORTHOGONAL to
+                                    -- `vindicated`: real-and-fixed, real-and-open,
+                                    -- false-and-irrelevant are three different states and one
+                                    -- column cannot carry two facts. Until this existed, "is
+                                    -- there an open critical on this task" was uncomputable, so
+                                    -- every gate written on it either blocked forever or was
+                                    -- waved through -- which launders "we ignored it" into
+                                    -- "we checked". Derived from `finding-fixed` events, never
+                                    -- written directly; see kit-resolve.sh.
+  fixed_commit TEXT                 -- optional SHA of the commit that addressed it
 );
 
 -- What a unit of work actually cost. One row per transcript -- the session's for the main

@@ -725,11 +725,38 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
            t = jn($0,"tok_in") + jn($0,"tok_out") + jn($0,"cache_read") + jn($0,"cache_write")
          printf "%s\t%020d\t%s\n", a, t, $0
        }' "$EV" | LC_ALL=C sort | cut -f3- |
-  awk '
+  LC_ALL=C awk '
+    # LC_ALL=C is not decoration. fnv1a() walks bytes, and in a UTF-8 locale gawk counts
+    # CHARACTERS while mawk and BSD awk count bytes -- so a finding whose summary contains a
+    # non-ASCII byte would hash differently on Linux and macOS, and its id would change when
+    # the platform did. Sixteen lines of this repo`s own log contain such bytes.
     function jf(s,k,  r){ r=""
       if (match(s, "\"" k "\"[ ]*:[ ]*\"[^\"]*\"")) {
         r=substr(s,RSTART,RLENGTH); sub(/^[^:]*:[ ]*"/,"",r); sub(/"$/,"",r) }
       return r }
+    # FNV-1a, 32-bit, over the raw event line. The multiply is split into 16-bit halves
+    # because awk arithmetic is IEEE double: h * 16777619 needs 55 bits of mantissa and
+    # silently loses precision above 2^53, which would make the hash machine-dependent.
+    # Verified against the published vectors -- "a"=e40c292c, "hello"=4f9f2cab,
+    # "foobar"=bf9cf968 -- and conformance re-checks them, so a rewrite that drifts is red.
+    function fnv1a(s,   i,h,c,lo,hi){
+      h = 2166136261
+      for (i = 1; i <= length(s); i++) {
+        c = ORD[substr(s,i,1)]; if (c == "") c = 255
+        h = xor32(h, c)
+        lo = (h % 65536) * 16777619
+        hi = (int(h / 65536) * 16777619) % 65536
+        h = (lo + hi * 65536) % 4294967296
+      }
+      return h }
+    function xor32(a,b,   i,r,p,x,y){
+      r = 0; p = 1
+      for (i = 0; i < 32; i++) {
+        x = a % 2; y = b % 2
+        if (x != y) r = r + p
+        a = int(a/2); b = int(b/2); p = p * 2 }
+      return r }
+    BEGIN { for (i = 1; i < 256; i++) ORD[sprintf("%c", i)] = i }
     # jf reads a quoted string; token counts are bare numbers and need their own reader.
     function jn(s,k,  r){ r=0
       if (match(s, "\"" k "\"[ ]*:[ ]*-?[0-9]+")) {
@@ -748,13 +775,39 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
         if (cls == "") { dropped++ }
         else {
           n++
+          # IDENTITY IS CONTENT-DERIVED, NOT POSITIONAL. It used to be `at:n`, n counting
+          # indexed findings in sorted order -- so a single event merged in from a branch with
+          # an earlier timestamp renumbered EVERY finding after it. Measured on this repository:
+          # one inserted line shifted all 219 ids by one. A fix-mark keyed on such an id does
+          # not merely fail to resolve, it silently reattaches to the NEIGHBOURING finding,
+          # which is worse than no mark at all. `at` stays in front so the id sorts and reads
+          # chronologically; the hash makes it a function of the line, and the line is
+          # append-only, so the id is stable for as long as the event is.
+          fid = a ":" sprintf("%08x", fnv1a($0))
+          # Two events can land on one id two ways, and they are not the same event.
+          #
+          # A DUPLICATE LINE is byte-identical -- this repository has one, two pre-contract
+          # findings on the same task, class, severity and second, recorded before `summary`
+          # existed to tell them apart. Collapsing them would silently drop a row, so the
+          # second takes an occurrence suffix. It is the one positional component left, and it
+          # is ordered only among lines that are identical anyway: appending an unrelated event
+          # cannot move it, which is the property the old counter lacked.
+          #
+          # A TRUE COLLISION is two DIFFERENT lines hashing alike. The suffix keeps both rows,
+          # so nothing is lost, but their ids then depend on each other and it is said out loud.
+          dupn[fid]++
+          if (dupn[fid] > 1) {
+            if (fpay[fid] != $0) coll++
+            fid = fid ":" dupn[fid]
+          } else fpay[fid] = $0
+          fseen[fid] = 1
           # summary/file/line are absent on every finding recorded before the structured
           # contract existed, and jf() returns "" for a key that is not there -- so old rows
           # keep working and simply carry no summary. line_no is written via jn(), which
           # returns 0 for a missing key; 0 is stored as NULL rather than as line zero, because
           # a line number nobody supplied must not read as a location somebody did.
           ln = jn($0,"line")
-          printf "INSERT OR REPLACE INTO finding(id,task_id,agent,model,tier,lang,domain,pattern,class,severity,at,summary,file_path,line_no) VALUES(\047%s:%d\047,\047%s\047,\047%s\047,\047%s\047,NULL,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,%s);\n", q(a), n, q(t), q(jf($0,"agent")), q(jf($0,"model")), q(jf($0,"lang")), q(jf($0,"domain")), q(jf($0,"pattern")), q(cls), q(jf($0,"severity")), q(a), q(jf($0,"summary")), q(jf($0,"file")), (ln>0 ? ln : "NULL")
+          printf "INSERT OR REPLACE INTO finding(id,task_id,agent,model,tier,lang,domain,pattern,class,severity,at,summary,file_path,line_no) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,NULL,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047,%s);\n", fid, q(t), q(jf($0,"agent")), q(jf($0,"model")), q(jf($0,"lang")), q(jf($0,"domain")), q(jf($0,"pattern")), q(cls), q(jf($0,"severity")), q(a), q(jf($0,"summary")), q(jf($0,"file")), (ln>0 ? ln : "NULL")
         }
       }
       # Spend totals are CUMULATIVE for a transcript, so OR REPLACE keeps the last -- and
@@ -780,11 +833,35 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
         nv++
         v[nv] = sprintf("UPDATE finding SET vindicated=%s WHERE task_id=\047%s\047 AND class=\047%s\047;", (index($0,"\"vindicated\":1")?"1":"0"), q(t), q(jf($0,"class")))
       }
+      # Whether a finding was ADDRESSED -- a different question from whether it was real, and
+      # the one nothing could answer before. Held to END for the reason vindication is: after a
+      # union merge a mark can sort before the finding it names, and an inline UPDATE would
+      # match zero rows and say nothing. Sorted input makes last-write-wins correct, so a
+      # reopen recorded after a fix wins, and a fix recorded after a reopen wins.
+      if (k=="finding-fixed") {
+        nf++
+        fref[nf] = jf($0,"finding")
+        if (index($0,"\"fixed\":0") > 0)
+          f[nf] = sprintf("UPDATE finding SET fixed_at=NULL, fixed_commit=NULL WHERE id=\047%s\047;", q(jf($0,"finding")))
+        else
+          f[nf] = sprintf("UPDATE finding SET fixed_at=\047%s\047, fixed_commit=\047%s\047 WHERE id=\047%s\047;", q(a), q(jf($0,"commit")), q(jf($0,"finding")))
+      }
     }
     END {
       for (i=1; i<=nv; i++) print v[i]
+      for (i=1; i<=nf; i++) {
+        # A mark naming an id no finding has is the failure this whole change exists to make
+        # impossible, so it is NAMED rather than run as an UPDATE that matches nothing and
+        # exits 0. Silence here would restore exactly the state being fixed: a gate reading
+        # clean because the evidence never landed.
+        if (fref[i] in fseen) print f[i]; else orphan++
+      }
       if (dropped)
         printf "kit: %d finding event(s) carried no class and were not indexed\n", dropped > "/dev/stderr"
+      if (orphan)
+        printf "kit: %d finding-fixed event(s) name no known finding and were NOT applied\n", orphan > "/dev/stderr"
+      if (coll)
+        printf "kit: %d finding id collision(s) -- two distinct events hashed alike; marks on them are ambiguous\n", coll > "/dev/stderr"
     }'
 fi
 

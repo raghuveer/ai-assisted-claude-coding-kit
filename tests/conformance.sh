@@ -1344,6 +1344,121 @@ rm -rf "$nj"
 rm -rf "$sj"
 fi
 
+if step "a finding has a stable id and can be marked addressed"; then
+# Two properties, and the first is load-bearing for the second.
+#
+# IDENTITY. The id used to be `at:n`, n counting indexed findings in sorted order, so an event
+# merged in from a branch with an earlier timestamp renumbered every finding after it --
+# measured on this repository's own log, one inserted line moved all 219. A mark keyed on such
+# an id does not fail to resolve; it silently reattaches to the NEIGHBOURING finding, which is
+# worse than no mark. So the mutation to watch for here is any return to a positional counter.
+#
+# ADDRESSED. `vindicated` says whether a finding was REAL. Nothing said whether it was FIXED,
+# so "is there an open critical on this task" was uncomputable and the trial protocol's first
+# pre-flight box was waved through on its first execution. The two facts are orthogonal and
+# this proves all four combinations are representable, not merely that a column exists.
+rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
+( cd "$rs" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  printf -- '---\nid: T-r\ntitle: r\ntier: T2\n---\nb\n' > .project/tasks/T-r.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  EV=.project/events.ndjson
+  F="$KIT/tooling/kit-finding.sh"; R="$KIT/tooling/kit-resolve.sh"
+  Q() { sqlite3 .project/index.db "$1" 2>/dev/null | tr -d '\015'; }
+  reindex() { rm -f .project/index.db; bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1; }
+
+  printf '%s' '{"findings":[{"class":"fail-open","severity":"critical","summary":"the first one, which gets fixed"},{"class":"correctness","severity":"critical","summary":"the second one, which stays open"}]}' \
+    | bash "$F" --task T-r --agent implementation-reviewer --json >/dev/null 2>&1
+  reindex
+  ids0=$(Q "SELECT group_concat(id,' ') FROM finding ORDER BY at,id;")
+  n0=$(Q "SELECT COUNT(*) FROM finding;")
+
+  # THE MERGE. An event from a branch whose clock ran earlier -- the case .gitattributes'
+  # merge=union makes routine. Nothing about the two findings above changed, so nothing about
+  # their ids may change either.
+  printf '%s\n' '{"task":"T-r","kind":"finding","at":"2000-01-01T00:00:00Z","agent":"other-branch","class":"perf","severity":"minor","lang":"bash","summary":"recorded on a branch with an earlier clock"}' >> "$EV"
+  reindex
+  ids1=$(Q "SELECT group_concat(id,' ') FROM finding WHERE at > '2001' ORDER BY at,id;")
+  n1=$(Q "SELECT COUNT(*) FROM finding;")
+
+  # A BYTE-IDENTICAL duplicate is two rows, not one. Pre-contract findings carry no summary, so
+  # two distinct defects on one task in one second serialise alike; collapsing them would drop a
+  # finding silently, which is the failure mode this file exists to refuse.
+  dupline='{"task":"T-r","kind":"finding","at":"2000-01-02T00:00:00Z","agent":"o","class":"perf","severity":"nit","lang":"bash"}'
+  printf '%s\n%s\n' "$dupline" "$dupline" >> "$EV"
+  reindex
+  ndup=$(Q "SELECT COUNT(*) FROM finding WHERE at='2000-01-02T00:00:00Z';")
+
+  # THE GOLDEN ID. A fixed event line must always produce this exact id -- here, on the other
+  # CI platform, and after any rewrite of the hash. The id is FNV-1a 32 over the line, and awk
+  # arithmetic is IEEE double: an implementation that multiplies without splitting into 16-bit
+  # halves needs 55 bits of mantissa, silently rounds, and computes a different value on a
+  # different awk. Every id in the repository would then depend on which machine last indexed.
+  #
+  # This is asserted END TO END, through kit-index.sh, on purpose. The first version of this
+  # check pasted the algorithm into the test and compared it against the published vectors --
+  # which proves an algorithm correct without proving it is the one in use, and a mutation that
+  # broke the multiply inside kit-index.sh SURVIVED it. LESSONS S1, found by mutating rather
+  # than by reading.
+  printf '%s\n' '{"task":"T-r","kind":"finding","at":"2000-01-03T00:00:00Z","agent":"golden","class":"perf","severity":"nit","lang":"bash","summary":"a fixed line whose id must not move"}' >> "$EV"
+  reindex
+  gold=$(Q "SELECT id FROM finding WHERE at='2000-01-03T00:00:00Z';")
+
+  fid=$(Q "SELECT id FROM finding WHERE summary LIKE 'the first one%';")
+  oid=$(Q "SELECT id FROM finding WHERE summary LIKE 'the second one%';")
+
+  # A typo must fail where it is typed. Appending a mark for an id no finding has puts a line
+  # in a permanent log that can only ever be reported as an orphan, while the operator saw
+  # exit 0 and believed it landed.
+  evb=$(grep -c '"kind":"finding-fixed"' "$EV" 2>/dev/null); evb=${evb:-0}
+  bash "$R" --finding "T-r:nosuchid" --fixed >/dev/null 2>&1; bogus=$?
+  eva=$(grep -c '"kind":"finding-fixed"' "$EV" 2>/dev/null); eva=${eva:-0}
+
+  bash "$R" --finding "$fid" --fixed --commit deadbee >/dev/null 2>&1; markrc=$?
+  bash "$KIT/tooling/kit-vindicate.sh" --task T-r --class fail-open --real >/dev/null 2>&1
+  # Rebuilt FROM SCRATCH, not updated in place. A mark that lived only in the database would
+  # be erased by the next reindex -- present, plausible, and gone.
+  reindex
+  fx=$(Q "SELECT COALESCE(fixed_at,'NULL') FROM finding WHERE id='$fid';")
+  fc=$(Q "SELECT COALESCE(fixed_commit,'NULL') FROM finding WHERE id='$fid';")
+  vd=$(Q "SELECT COALESCE(vindicated,'NULL') FROM finding WHERE id='$fid';")
+  openc=$(Q "SELECT COUNT(*) FROM finding WHERE severity='critical' AND fixed_at IS NULL;")
+
+  # Retraction. A fix that turned out not to be one must be expressible, or the mark is a
+  # one-way door and the first mistake is permanent.
+  bash "$R" --finding "$fid" --open >/dev/null 2>&1
+  reindex
+  fx2=$(Q "SELECT COALESCE(fixed_at,'NULL') FROM finding WHERE id='$fid';")
+  vd2=$(Q "SELECT COALESCE(vindicated,'NULL') FROM finding WHERE id='$fid';")
+
+  # An orphan mark ALREADY IN the log -- from a hand edit, or a merge that brought the mark
+  # without the finding -- is reported. Applied as an UPDATE it would match nothing and exit 0,
+  # which is a gate reading clean because its evidence never arrived.
+  printf '%s\n' '{"kind":"finding-fixed","at":"2030-01-01T00:00:00Z","finding":"nothing-has-this-id","fixed":1}' >> "$EV"
+  rm -f .project/index.db
+  orph=$(bash "$KIT/tooling/kit-index.sh" 2>&1 >/dev/null | grep -c 'name no known finding')
+
+  want() { [ "$2" = "$3" ] || { printf '    ^ %s: got %s, wanted %s\n' "$1" "$2" "$3" >&2; exit 1; }; }
+  want "an earlier-dated merge adds a finding" "$n1" "$((n0 + 1))"
+  want "  ...and renumbers none of the others" "$ids1" "$ids0"
+  want "identical lines stay two findings"     "$ndup" 2
+  want "a fixed line has a fixed id"           "$gold" "2000-01-03T00:00:00Z:addbabbf"
+  want "an unknown id is refused"              "$bogus" 2
+  want "  ...and nothing is appended"          "$eva" "$evb"
+  want "a known id is accepted"                "$markrc" 0
+  want "the mark survives a rebuild"           "$fx" "$(Q "SELECT at FROM event WHERE kind='finding-fixed' AND payload LIKE '%deadbee%';")"
+  want "  ...carrying its commit"              "$fc" "deadbee"
+  want "vindicated is untouched by fixing"     "$vd" 1
+  want "one critical fixed leaves one open"    "$openc" 1
+  want "--open retracts the fix"               "$fx2" "NULL"
+  want "  ...without retracting the verdict"   "$vd2" 1
+  want "an orphan mark is named, not ignored"  "$orph" 1 )
+check $? "finding ids survive a merge, and addressed is recorded, retractable and independent of vindicated"
+rm -rf "$rs"
+fi
+
 if step "a refused review is retried with the diagnostics, boundedly"; then
 # The contract asks a reviewer for one JSON object. Across four live runs it was ignored three
 # times, and each time a human read the diagnostics and repaired the reply by hand -- the

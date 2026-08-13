@@ -284,8 +284,8 @@ ai-assisted-claude-coding-kit/
 ```
 
 **Scripts:** `kit-init`, `kit-task`, `kit-index`, `kit-plan`, `kit-status`, `kit-finding`,
-`kit-vindicate`, `kit-accel`, `kit-event`, `kit-checkpoint`, `kit-guard`, `kit-lib`,
-`commit-msg`.
+`kit-vindicate`, `kit-resolve`, `kit-accel`, `kit-event`, `kit-checkpoint`, `kit-guard`,
+`kit-lib`, `commit-msg`.
 
 **Verified end to end:**
 

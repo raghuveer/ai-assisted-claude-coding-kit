@@ -310,6 +310,43 @@ def gap_event(opts, reason):
     return line
 
 
+def resolve_event(argv):
+    """Whether a finding was ADDRESSED. Orthogonal to `vindicated`, which says whether it was
+    real -- both facts exist, and one column cannot hold two.
+
+    Serialised HERE and nowhere else for the reason every other event line is: the shell used to
+    build these with printf, and a single quote in a value corrupts an append-only committed log
+    permanently. The finding id is the only field the reader keys on, so it is the one that most
+    needs to arrive intact."""
+    opts = {"finding": "", "fixed": "", "commit": "", "note": "", "at": ""}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a[2:].replace("-", "_") in opts and a.startswith("--"):
+            if i + 1 >= len(argv):
+                raise Rejected("%s needs a value" % a)
+            opts[a[2:].replace("-", "_")] = argv[i + 1]
+            i += 2
+        else:
+            raise Rejected("unknown argument %s" % a)
+    if not opts["finding"]:
+        raise Rejected("--finding is required (the id from kit-resolve.sh --list)")
+    if opts["fixed"] not in ("0", "1"):
+        raise Rejected("--fixed must be 0 or 1; there is no third state")
+    if not opts["at"]:
+        raise Rejected("--at is required")
+    event = {"kind": "finding-fixed", "at": sanitise(opts["at"]),
+             "finding": sanitise(opts["finding"]), "fixed": int(opts["fixed"])}
+    # Omitted rather than written empty: an absent key reads as "not supplied", where
+    # `"commit":""` reads as a commit that was supplied and is blank.
+    for k in ("commit", "note"):
+        if opts[k]:
+            event[k] = sanitise(opts[k])
+    line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+    _assert_flat(line)
+    return line
+
+
 # The correction handed back to a reviewer whose reply was refused. Deterministic on purpose:
 # the diagnostics are the validator's own, not a description of them composed by a model, so a
 # retry cannot drift away from what was actually wrong. Four live runs produced three different
@@ -394,9 +431,18 @@ def main():
     if mode == "--contract":
         print_contract()
         return 0
-    if mode not in ("--validate", "--emit-events", "--gap-event", "--correction"):
+    if mode not in ("--validate", "--emit-events", "--gap-event", "--correction", "--resolve"):
         sys.stderr.write("kit-findings: unknown mode %s\n" % mode)
         return 2
+    # Dispatched before stdin is touched: this mode reads none, and a mode that blocks on a
+    # terminal it was never given looks exactly like a hang.
+    if mode == "--resolve":
+        try:
+            sys.stdout.buffer.write((resolve_event(sys.argv[2:]) + "\n").encode("utf-8"))
+        except Rejected as exc:
+            sys.stderr.write("kit-findings: %s\n" % exc)
+            return 2
+        return 0
     # Exit 3, distinctly from 2: "this is retryable and here is the exact text to send back",
     # versus "this call was wrong". A caller that cannot tell them apart will retry a usage
     # error forever.

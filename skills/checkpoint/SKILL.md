@@ -72,6 +72,13 @@ If a review call was later shown wrong, or right, say so:
 `kit-vindicate.sh --task <id> --class <class> --real|--false`. Unvindicated findings promote
 on raw counts, which launders reviewer noise into shared accelerators.
 
+When a finding has actually been ADDRESSED, record that too — it is a different question and
+`kit-vindicate` does not answer it: `kit-resolve.sh --finding <id> --fixed [--commit <sha>]`,
+with `--list --severity critical --unfixed` to get the ids. An unmarked finding counts as
+outstanding, so any gate on open criticals — the trial protocol's first pre-flight box, among
+others — reads the backlog as blocked until the fixes are recorded. Marking is not a claim
+that the work was good; it is a claim that it happened, and `--open` retracts it.
+
 ## 4. Decision-record check
 
 If a real decision was made, write or amend the record via `adr-scribe`. Records are

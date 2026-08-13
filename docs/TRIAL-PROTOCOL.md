@@ -23,7 +23,23 @@ Stop unless every box is ticked. Record the answers; they are part of the result
 **The kit**
 
 - [ ] Working tree clean, full conformance green, CI green on every platform.
-- [ ] No task at `progress` carrying an unfixed critical.
+- [ ] No task at `progress` carrying an unfixed critical. **Computable — run it, do not judge it:**
+
+      sqlite3 .project/index.db "SELECT COUNT(*) FROM finding f JOIN task t ON t.id=f.task_id
+                                  WHERE f.severity='critical' AND f.fixed_at IS NULL
+                                    AND t.state='progress';"
+
+      Zero, or stop. `kit-status.sh` prints the same thing per task under **Outstanding
+      criticals**, and `kit-resolve.sh --list --severity critical --unfixed` names them.
+      An unmarked finding counts as OUTSTANDING: silence is not a fix.
+
+      > Revision 2 wrote this box with no way to evaluate it. The `finding` table had no column
+      > for whether a finding was addressed — `vindicated` says whether it was *real*, a
+      > different question — so the first execution of this protocol hit the very first box,
+      > got 16 including findings fixed hours earlier, and overrode it. That is the honest
+      > outcome and it is also proof a gate nobody can evaluate is worse than none: it launders
+      > "we ignored it" into "we checked". Three review rounds on this document did not find
+      > that. Running the first checkbox did.
 - [ ] `git rev-parse HEAD` recorded. The SHA is the kit version, not the tag.
 
 **The instruments** — an unmeasured trial is worse than none, because it looks like a result.
