@@ -55,16 +55,57 @@ here, and it is why this is not a one-line fix.
 
 ## Acceptance criteria
 
-- [ ] A finding can be marked addressed, by a command, without editing derived state.
+- [x] A finding can be marked addressed, by a command, without editing derived state.
+      `kit-resolve.sh --finding ID --fixed|--open` appends a `finding-fixed` event.
 - [ ] "Open criticals on task X" is a query that returns 0 on this repository today, because
       every recorded critical has in fact been fixed. If it does not return 0, either the data
       or the claim is wrong and the discrepancy is the finding.
-- [ ] The mark survives `kit-index.sh` rebuilding from scratch — asserted, since findings are
+      **IT DOES NOT RETURN 0, AND THE CLAIM WAS WRONG. See "What the gate says" below.**
+- [x] The mark survives `kit-index.sh` rebuilding from scratch — asserted, since findings are
       derived and a mark stored only in the database would vanish.
-- [ ] Marking a finding addressed is distinct from vindicating it. A fixture proves all four
+- [x] Marking a finding addressed is distinct from vindicating it. A fixture proves all four
       combinations are representable.
-- [ ] `docs/TRIAL-PROTOCOL.md` §0's gate becomes computable, or is deleted. **A gate nobody can
+- [x] `docs/TRIAL-PROTOCOL.md` §0's gate becomes computable, or is deleted. **A gate nobody can
       evaluate is worse than no gate**, because it launders "we ignored it" into "we checked".
+
+## Identity had to come first, and the instability was worse than filed (2026-08-13)
+
+The task said the id "changes when events are re-read". Measured rather than assumed:
+appending ONE event dated earlier than the rest — the case `.gitattributes` `merge=union`
+makes routine — **renumbered all 219 findings**, every id shifted by one. So a mark keyed on
+`at:n` does not fail to resolve. It silently reattaches to the NEIGHBOURING finding, which is
+worse than no mark at all.
+
+The id is now `<at>:<FNV-1a 32 of the event line>`. The line is append-only, so the id is
+stable for exactly as long as the event is, and it is a function of content rather than of
+position. Byte-identical lines take an occurrence suffix instead of collapsing: two
+pre-contract findings on one task in one second serialise alike, and dropping one silently is
+the failure mode this repository exists to refuse. A true hash collision — two different lines,
+one id — keeps both rows and is announced on stderr.
+
+Seven mutations, all killed. One SURVIVED first and is the lesson worth keeping: the hash
+check pasted the algorithm into the test and compared it against the published FNV-1a vectors,
+which proves an algorithm correct **without proving it is the one in use** — breaking the
+multiply inside `kit-index.sh` left it green. Replaced with a golden id asserted end to end
+through the indexer, which also pins the value across CI platforms.
+
+## What the gate says (2026-08-13)
+
+Computable now, and the answer is not zero. **18 unfixed criticals became 11**, verified one at
+a time against the current tree rather than against memory:
+
+- **7 marked fixed**, each with the commit that did it — the four one-writer criticals
+  (`d907522`), the empty-prompt false-clean (`dcd78e6`), and the two trial-protocol revision-1
+  criticals (`436df35`).
+- **2 are genuinely still open**, and re-reading them confirmed the finding rather than
+  retiring it: `§0` still permits "**A COPY** or a clone with its remote removed" while `§4`'s
+  remote-removal control covers only the clone path, and `§0`'s spend check still reads
+  `.project/index.db`, which a live hook does not populate until `kit-index.sh` runs.
+- **9 cannot be assessed at all.** They predate the `summary` column and carry only
+  `class|severity|task`. Nobody can say what "it" was, so nobody can say it was fixed, and
+  marking them would be precisely the laundering this task exists to stop. They stay
+  OUTSTANDING and the pre-flight gate stays red on their tasks. **This is a real cost of the
+  bare-counter era and it should be filed, not absorbed here.**
 
 ## Notes
 
