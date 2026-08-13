@@ -44,8 +44,14 @@ done
 STATE_DIR=$(kit_cfg "$(kit_profile "$ROOT")" paths.state ".project")
 DB="$ROOT/$STATE_DIR/index.db"
 
+# The database is only probed if it EXISTS. `sqlite3 <path> <query>` CREATES an empty database
+# at that path, so the probe that was meant to detect a missing index quietly manufactured one
+# -- and left it behind, where the next kit-status.sh run would read it as an index with no
+# tasks in it.
+db_readable() { [ -f "$DB" ] && sqlite3 "$DB" "SELECT COUNT(*) FROM finding;" >/dev/null 2>&1; }
+
 if [ "$list" = 1 ]; then
-  sqlite3 "$DB" "SELECT COUNT(*) FROM finding;" >/dev/null 2>&1 || {
+  db_readable || {
     kit_warn "index at ${DB#$ROOT/} is missing or unreadable; run kit-index.sh"; exit 1; }
   # Single-quotes in a caller-supplied filter would end the literal and change the query, so
   # they are doubled -- the same treatment kit-index.sh gives every value it interpolates.
@@ -54,11 +60,25 @@ if [ "$list" = 1 ]; then
   [ -n "$ftask" ] && W="$W AND task_id='$(esc "$ftask")'"
   [ -n "$fsev" ]  && W="$W AND severity='$(esc "$fsev")'"
   [ "$unfixed" = 1 ] && W="$W AND fixed_at IS NULL"
-  sqlite3 -noheader -separator '  ' "$DB" \
+  # THE QUERY'S EXIT STATUS IS READ, and an empty result is SAID rather than printed as
+  # nothing. Unchecked, a filter naming a column this index does not have printed nothing and
+  # exited 0 -- indistinguishable from "no findings match", which is the reading an operator
+  # about to conclude "nothing left to fix" would take.
+  out=$(sqlite3 -noheader -separator '  ' "$DB" \
     "SELECT id,
             CASE WHEN fixed_at IS NULL THEN 'OPEN ' ELSE 'fixed' END,
-            severity, class, COALESCE(task_id,'-'), COALESCE(summary,'')
-       FROM finding WHERE $W ORDER BY at, id;"
+            severity, class, COALESCE(task_id,'-'), COALESCE(summary,''),
+            CASE WHEN fixed_note IS NULL OR fixed_note='' THEN '' ELSE '  (fixed: '||fixed_note||')' END
+       FROM finding WHERE $W ORDER BY at, id;" 2>&1) || {
+    kit_warn "the listing query failed against ${DB#$ROOT/} -- NOT an empty result"
+    printf '%s\n' "$out" | sed 's/^/  /' >&2
+    kit_warn "  if this index predates fixed_at, delete it and run kit-index.sh"
+    exit 1; }
+  if [ -z "$out" ]; then
+    kit_warn "no finding matches that filter (this is an empty result, not a failed query)"
+    exit 0
+  fi
+  printf '%s\n' "$out"
   exit 0
 fi
 
@@ -70,7 +90,7 @@ fi
 # indexer can only report as an orphan for the rest of the repository's life, and the operator
 # who typed it would have seen exit 0 and believed the finding was marked. A typo must fail
 # where it is made, not in a report nobody reads afterwards.
-if sqlite3 "$DB" "SELECT COUNT(*) FROM finding;" >/dev/null 2>&1; then
+if db_readable; then
   fesc=$(printf '%s' "$finding" | sed "s/'/''/g")
   hit=$(sqlite3 -noheader "$DB" "SELECT COUNT(*) FROM finding WHERE id='$fesc';" 2>/dev/null)
   if [ "${hit:-0}" = 0 ]; then

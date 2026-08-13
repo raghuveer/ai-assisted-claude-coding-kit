@@ -723,7 +723,14 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
          t = 0
          if (index($0, "\"spend\"") > 0)
            t = jn($0,"tok_in") + jn($0,"tok_out") + jn($0,"cache_read") + jn($0,"cache_write")
-         printf "%s\t%020d\t%s\n", a, t, $0
+         # The SORT KEY is normalised to fixed width; the payload is untouched. Timestamps are
+         # compared as strings, and `.` (0x2E) sorts before `Z` (0x5A), so a whole-second
+         # `...:00Z` landed AFTER every sub-second `...:00.123456Z` in the same second -- the
+         # reverse of the truth, since a whole second denotes its start. It matters wherever
+         # last-write-wins decides an outcome, which for finding-fixed marks is every time.
+         sk = a
+         if (a != "" && index(a, ".") == 0) sub(/Z$/, ".000000Z", sk)
+         printf "%s\t%020d\t%s\n", sk, t, $0
        }' "$EV" | LC_ALL=C sort | cut -f3- |
   LC_ALL=C awk '
     # LC_ALL=C is not decoration. fnv1a() walks bytes, and in a UTF-8 locale gawk counts
@@ -802,11 +809,19 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
           #
           # A TRUE COLLISION is two DIFFERENT lines hashing alike. The suffix keeps both rows,
           # so nothing is lost, but their ids then depend on each other and it is said out loud.
-          dupn[fid]++
-          if (dupn[fid] > 1) {
-            if (fpay[fid] != $0) coll++
-            fid = fid ":" dupn[fid]
-          } else fpay[fid] = $0
+          base = fid
+          dupn[base]++
+          if (dupn[base] > 1) {
+            # A TRUE COLLISION MAKES EVERY ID AT THIS BASE AMBIGUOUS, and marks on them are
+            # refused in END rather than applied to whichever line happened to sort first.
+            # The occurrence suffix is the one positional component left, so appending a
+            # DIFFERENT line that hashes alike can take the first slot and push the original to
+            # `:2` -- and the fix mark on that original, keyed on the unsuffixed id, would land
+            # on the newcomer. Inheriting a mark is worse than losing one: it asserts that a
+            # specific defect was fixed. Fail closed on the ambiguity instead.
+            if (fpay[base] != $0) { coll++; collbase[base] = 1 }
+            fid = base ":" dupn[base]
+          } else fpay[base] = $0
           fseen[fid] = 1
           # summary/file/line are absent on every finding recorded before the structured
           # contract existed, and jf() returns "" for a key that is not there -- so old rows
@@ -849,9 +864,9 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
         nf++
         fref[nf] = jf($0,"finding")
         if (index($0,"\"fixed\":0") > 0)
-          f[nf] = sprintf("UPDATE finding SET fixed_at=NULL, fixed_commit=NULL WHERE id=\047%s\047;", q(jf($0,"finding")))
+          f[nf] = sprintf("UPDATE finding SET fixed_at=NULL, fixed_commit=NULL, fixed_note=NULL WHERE id=\047%s\047;", q(jf($0,"finding")))
         else
-          f[nf] = sprintf("UPDATE finding SET fixed_at=\047%s\047, fixed_commit=\047%s\047 WHERE id=\047%s\047;", q(a), q(jf($0,"commit")), q(jf($0,"finding")))
+          f[nf] = sprintf("UPDATE finding SET fixed_at=\047%s\047, fixed_commit=\047%s\047, fixed_note=\047%s\047 WHERE id=\047%s\047;", q(a), q(jf($0,"commit")), q(jf($0,"note")), q(jf($0,"finding")))
       }
     }
     END {
@@ -861,8 +876,25 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
         # impossible, so it is NAMED rather than run as an UPDATE that matches nothing and
         # exits 0. Silence here would restore exactly the state being fixed: a gate reading
         # clean because the evidence never landed.
-        if (fref[i] in fseen) print f[i]; else orphan++
+        # Prefix-matched with substr, not a regex: `fref[i]` is untrusted text from the log and
+        # this repository has an open task about exactly that shape -- a value interpolated
+        # into a pattern, where one metacharacter changes what is matched.
+        amb = 0
+        for (b in collbase)
+          if (fref[i] == b || substr(fref[i], 1, length(b) + 1) == b ":") amb = 1
+        if (!(fref[i] in fseen)) orphan++
+        else if (amb) ambigm++
+        else print f[i]
       }
+      # RECORDED, not just warned. These went to stderr only, and stderr from an indexer that
+      # runs inside kit-status.sh, a hook, or CI is seen by nobody -- so STATUS.generated.md,
+      # the one place anyone reads, could not show that marks had failed to apply. A measurement
+      # failure that is announced where no one is looking is an unannounced measurement failure.
+      printf "INSERT OR REPLACE INTO meta VALUES(\047finding_orphan_marks\047,\047%d\047);\n", orphan+0
+      printf "INSERT OR REPLACE INTO meta VALUES(\047finding_id_collisions\047,\047%d\047);\n", coll+0
+      printf "INSERT OR REPLACE INTO meta VALUES(\047finding_ambiguous_marks\047,\047%d\047);\n", ambigm+0
+      if (ambigm)
+        printf "kit: %d finding-fixed event(s) name an id made ambiguous by a collision and were NOT applied\n", ambigm > "/dev/stderr"
       if (dropped)
         printf "kit: %d finding event(s) carried no class and were not indexed\n", dropped > "/dev/stderr"
       if (orphan)

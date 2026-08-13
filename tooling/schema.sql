@@ -111,7 +111,13 @@ CREATE TABLE finding (
                                     -- waved through -- which launders "we ignored it" into
                                     -- "we checked". Derived from `finding-fixed` events, never
                                     -- written directly; see kit-resolve.sh.
-  fixed_commit TEXT                 -- optional SHA of the commit that addressed it
+  fixed_commit TEXT,                -- optional SHA of the commit that addressed it
+  fixed_note   TEXT                 -- why it is considered addressed. Sanitised and recorded
+                                    -- from the first day and read by nothing for exactly as
+                                    -- long: a write-only field is a field whose absence nobody
+                                    -- notices, which for the one piece of free text explaining
+                                    -- a closure is the whole value. Surfaced by
+                                    -- kit-resolve.sh --list.
 );
 
 -- What a unit of work actually cost. One row per transcript -- the session's for the main

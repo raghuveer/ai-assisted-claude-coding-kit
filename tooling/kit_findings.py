@@ -345,6 +345,14 @@ def resolve_event(argv):
     if not opts["at"]:
         opts["at"] = datetime.datetime.now(datetime.timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%S.%fZ")
+    # A caller-supplied `--at` is VALIDATED. It was taken on trust, and this field is the sort
+    # key that decides which of two marks on one finding wins -- anything that does not compare
+    # correctly as a string against the others silently reorders the outcome. Accepted in both
+    # widths so the timestamps already in the log stay legal.
+    elif not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{6})?Z$", opts["at"]):
+        raise Rejected("--at must be YYYY-MM-DDTHH:MM:SS[.ffffff]Z, got %r.\n"
+                       "  It is the ordering key for marks on one finding, not a label."
+                       % opts["at"])
     event = {"kind": "finding-fixed", "at": sanitise(opts["at"]),
              "finding": sanitise(opts["finding"]), "fixed": int(opts["fixed"])}
     # Omitted rather than written empty: an absent key reads as "not supplied", where

@@ -480,25 +480,69 @@ fi
 # which task is holding. A finding marked fixed leaves this list; a finding reopened returns to
 # it. Nothing here is inferred -- an unmarked finding is OUTSTANDING, because assuming that
 # silence means fixed is the failure this replaces.
+# A FAILED QUERY IS NOT AN EMPTY RESULT, and this section shipped unable to tell them apart.
+# `q()` sends stderr to /dev/null and yields "", so against an index built before `fixed_at`
+# existed -- which the readability check at the top of this file passes, because `task` is
+# still there -- the query errored, the empty string took the "none outstanding" branch, and
+# the gate read clean. The critical its own T3 round found.
+#
+# Worse on inspection: that branch could never print at all. Its format string began with `-`,
+# which bash printf parses as an option, so it errored to stderr and emitted nothing -- in the
+# failure case AND in the ordinary case of a repository with genuinely zero open criticals. The
+# line meant to say "none outstanding" had never once run. A control written against LESSONS S1
+# that was itself S1.
+#
+# So: the exit status is READ, `--` ends option parsing, and the three states -- unreadable,
+# none, some -- are three different pieces of output.
 OPENCRIT=$(q "SELECT COALESCE(NULLIF(f.task_id,''),'(unattributed)')||'  '||COUNT(*)||
                      '  ['||COALESCE(NULLIF(t.state,''),'no task file')||']'
                 FROM finding f LEFT JOIN task t ON t.id = f.task_id
                WHERE f.severity='critical' AND f.fixed_at IS NULL
-               GROUP BY f.task_id ORDER BY COUNT(*) DESC;")
+               GROUP BY f.task_id ORDER BY COUNT(*) DESC;"); OCRC=$?
 CRITTOT=$(q "SELECT COUNT(*) FROM finding WHERE severity='critical' AND fixed_at IS NULL;")
 CRITPROG=$(q "SELECT COUNT(*) FROM finding f JOIN task t ON t.id=f.task_id
                WHERE f.severity='critical' AND f.fixed_at IS NULL AND t.state='progress';")
+CRITALL=$(q "SELECT COUNT(*) FROM finding WHERE severity='critical';")
 printf '\n## Outstanding criticals\n\n'
-if [ -n "$OPENCRIT" ]; then
+if [ "$OCRC" != 0 ]; then
+  printf -- '> **NOT MEASURED — the query failed.** This is not a report of zero. The usual\n'
+  printf -- '> cause is an index built before `finding.fixed_at` existed: the readability check\n'
+  printf -- '> at the top of this file passes on such a database because `task` is intact, and\n'
+  printf -- '> only this section notices. Delete `%s` and run `kit-index.sh`.\n' "${DB#$ROOT/}"
+elif [ -n "$OPENCRIT" ]; then
   printf '%s\n' "$OPENCRIT" | sed 's/^/- /'
-  printf '\n_%s unfixed critical(s), %s of them on a task at `progress`. Mark one addressed with\n' \
+  printf -- '\n_%s unfixed critical(s), %s of them on a task at `progress`. Mark one addressed with\n' \
     "${CRITTOT:-0}" "${CRITPROG:-0}"
-  printf '`kit-resolve.sh --finding ID --fixed`; `--list --severity critical --unfixed` prints the ids._\n'
+  printf -- '`kit-resolve.sh --finding ID --fixed`; `--list --severity critical --unfixed` prints the ids._\n'
 else
   # Said explicitly. An empty section reads as "not measured" -- which is what this whole
   # section replaces -- and there is a real difference between no criticals and no marks.
-  printf '- none outstanding (%s critical finding(s) recorded, all marked addressed)\n' \
-    "$(q "SELECT COUNT(*) FROM finding WHERE severity='critical';")"
+  printf -- '- none outstanding (%s critical finding(s) recorded, all marked addressed)\n' \
+    "${CRITALL:-0}"
+fi
+
+# Marks that did NOT apply. The indexer used to say this on stderr alone, where a run inside
+# kit-status.sh, a hook or CI is read by nobody -- so the list above could be short for the one
+# reason that must never be silent: the evidence failed to land. Each count is a different
+# failure and they are not summed.
+FORPH=$(q "SELECT value FROM meta WHERE key='finding_orphan_marks';")
+FAMB=$(q "SELECT value FROM meta WHERE key='finding_ambiguous_marks';")
+FCOLL=$(q "SELECT value FROM meta WHERE key='finding_id_collisions';")
+if [ "${FORPH:-0}" != 0 ]; then
+  printf -- '\n> **%s finding-fixed mark(s) name no known finding and were NOT applied.** The\n' "$FORPH"
+  printf -- '> finding they point at is not in this index, so whatever they record is not\n'
+  printf -- '> reflected above. An id is content-derived; a mark that resolves to nothing was\n'
+  printf -- '> written against a different log, or by hand.\n'
+fi
+if [ "${FAMB:-0}" != 0 ]; then
+  printf -- '\n> **%s finding-fixed mark(s) were REFUSED as ambiguous.** Two different events hash\n' "$FAMB"
+  printf -- '> to one id, so the mark cannot be attached to one of them without guessing which.\n'
+  printf -- '> It is withheld rather than applied: a mark on the wrong finding asserts that a\n'
+  printf -- '> specific defect was fixed, which is worse than no mark at all.\n'
+fi
+if [ "${FCOLL:-0}" != 0 ]; then
+  printf -- '\n> **%s finding id collision(s).** Distinct events sharing an id. Both rows are kept\n' "$FCOLL"
+  printf -- '> and both are listed, but marks on them are refused per the notice above.\n'
 fi
 
 # Findings the attribution heuristic could not bind to a task. Same standing as unattributed

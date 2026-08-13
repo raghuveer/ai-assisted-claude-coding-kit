@@ -1416,15 +1416,52 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   bash "$R" --finding "T-r:nosuchid" --fixed >/dev/null 2>&1; bogus=$?
   eva=$(grep -c '"kind":"finding-fixed"' "$EV" 2>/dev/null); eva=${eva:-0}
 
-  bash "$R" --finding "$fid" --fixed --commit deadbee >/dev/null 2>&1; markrc=$?
+  bash "$R" --finding "$fid" --fixed --commit deadbee --note "closed by the one-writer move" \
+    >/dev/null 2>&1; markrc=$?
   bash "$KIT/tooling/kit-vindicate.sh" --task T-r --class fail-open --real >/dev/null 2>&1
   # Rebuilt FROM SCRATCH, not updated in place. A mark that lived only in the database would
   # be erased by the next reindex -- present, plausible, and gone.
   reindex
   fx=$(Q "SELECT COALESCE(fixed_at,'NULL') FROM finding WHERE id='$fid';")
   fc=$(Q "SELECT COALESCE(fixed_commit,'NULL') FROM finding WHERE id='$fid';")
+  fnote=$(Q "SELECT COALESCE(fixed_note,'NULL') FROM finding WHERE id='$fid';")
   vd=$(Q "SELECT COALESCE(vindicated,'NULL') FROM finding WHERE id='$fid';")
   openc=$(Q "SELECT COUNT(*) FROM finding WHERE severity='critical' AND fixed_at IS NULL;")
+
+  # ALL FOUR COMBINATIONS, CONSTRUCTED. The criterion this fixture is cited for claims the four
+  # vindicated-by-fixed states are representable, and BOTH reviewers of the T3 round found that
+  # only `--real` was ever exercised -- `vindicated=0` appeared nowhere, so at most three
+  # existed and the fourth was asserted by the tick alone. `false and fixed` is the interesting
+  # one: a reviewer was wrong AND the code was changed anyway, which one column cannot say.
+  # `correctness` is vindicated real and left UNFIXED, which is the real-and-open corner --
+  # without it three of the four counts below could be satisfied by one finding each.
+  bash "$KIT/tooling/kit-vindicate.sh" --task T-r --class correctness --real >/dev/null 2>&1
+  bash "$KIT/tooling/kit-vindicate.sh" --task T-r --class perf --false >/dev/null 2>&1
+  pid=$(Q "SELECT id FROM finding WHERE class='perf' AND at='2000-01-03T00:00:00Z';")
+  bash "$R" --finding "$pid" --fixed --commit ccccccc >/dev/null 2>&1
+  reindex
+  c_rf=$(Q "SELECT COUNT(*) FROM finding WHERE vindicated=1 AND fixed_at IS NOT NULL;")
+  c_ro=$(Q "SELECT COUNT(*) FROM finding WHERE vindicated=1 AND fixed_at IS NULL;")
+  c_ff=$(Q "SELECT COUNT(*) FROM finding WHERE vindicated=0 AND fixed_at IS NOT NULL;")
+  c_fo=$(Q "SELECT COUNT(*) FROM finding WHERE vindicated=0 AND fixed_at IS NULL;")
+  four=0
+  [ "${c_rf:-0}" -ge 1 ] && [ "${c_ro:-0}" -ge 1 ] &&
+  [ "${c_ff:-0}" -ge 1 ] && [ "${c_fo:-0}" -ge 1 ] && four=1
+
+  # A SECOND TASK. With one task in the fixture, a change that keyed the indexer's per-finding
+  # arrays by task would pass everything above while silently scoping identity to a task --
+  # ids, duplicate detection and mark resolution are all repository-wide, and nothing here
+  # showed that until there were two tasks to be wide across.
+  printf -- '---\nid: T-r2\ntitle: r2\ntier: T2\n---\nb\n' > .project/tasks/T-r2.md
+  git add -A && git commit -q --no-verify -m "chore: second task"
+  printf '%s' '{"findings":[{"class":"fail-open","severity":"critical","summary":"a critical on the OTHER task, same class as the first"}]}' \
+    | bash "$F" --task T-r2 --agent implementation-reviewer --json >/dev/null 2>&1
+  reindex
+  tid=$(Q "SELECT id FROM finding WHERE summary LIKE 'a critical on the OTHER task%';")
+  bash "$R" --finding "$tid" --fixed --commit ddddddd >/dev/null 2>&1
+  reindex
+  t2fx=$(Q "SELECT COALESCE(fixed_commit,'NULL') FROM finding WHERE id='$tid';")
+  t1fx=$(Q "SELECT COALESCE(fixed_commit,'NULL') FROM finding WHERE id='$fid';")
 
   # Retraction. A fix that turned out not to be one must be expressible, or the mark is a
   # one-way door and the first mistake is permanent.
@@ -1444,9 +1481,30 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   bash "$R" --finding "$oid" --fixed --commit bbbbbbb >/dev/null 2>&1
   reindex
   lastw=$(Q "SELECT COALESCE(fixed_commit,'NULL') FROM finding WHERE id='$oid';")
-  # Five marks so far, and no two may share a timestamp -- if any do, the one that loses is
-  # decided by string order, which is not a fact about when it happened.
+  # No two marks may share a timestamp -- if any do, the one that loses is decided by string
+  # order, which is not a fact about when it happened. Compared against the NUMBER OF MARKS
+  # rather than a literal, so adding a case to this fixture cannot quietly weaken it.
   nat=$(grep -o '"kind":"finding-fixed","at":"[^"]*"' "$EV" | sort -u | wc -l | tr -d ' ')
+  nmk=$(grep -c '"kind":"finding-fixed"' "$EV"); nmk=${nmk:-0}
+
+  # A REAL COLLISION. Two DIFFERENT lines, one `at`, one FNV-1a 32 hash -- found by brute force
+  # (1.7M tries, tools in the task notes) because this pair cannot be written by hand and the
+  # fail-closed path cannot be exercised without one. A control that cannot run is not a
+  # control, and refusing to apply a mark to an ambiguous id is the whole reason the collision
+  # is detected at all.
+  printf '%s\n' '{"task":"T-r","kind":"finding","at":"2000-01-04T00:00:00Z","agent":"collide","class":"compliance","severity":"nit","lang":"bash","summary":"collision fixture 1549599"}' >> "$EV"
+  printf '%s\n' '{"task":"T-r","kind":"finding","at":"2000-01-04T00:00:00Z","agent":"collide","class":"compliance","severity":"nit","lang":"bash","summary":"collision fixture 1712382"}' >> "$EV"
+  reindex
+  ncol=$(Q "SELECT COUNT(*) FROM finding WHERE at='2000-01-04T00:00:00Z';")
+  colmeta=$(Q "SELECT value FROM meta WHERE key='finding_id_collisions';")
+  # Both rows survive -- neither line is dropped -- but a mark on the shared base id is
+  # withheld, because attaching it to one of them would be a guess that asserts a specific
+  # defect was fixed.
+  bash "$R" --finding "2000-01-04T00:00:00Z:77087be7" --fixed --commit eeeeeee >/dev/null 2>&1
+  colmark=$?
+  reindex
+  colfixed=$(Q "SELECT COUNT(*) FROM finding WHERE at='2000-01-04T00:00:00Z' AND fixed_at IS NOT NULL;")
+  ambmeta=$(Q "SELECT value FROM meta WHERE key='finding_ambiguous_marks';")
 
   # An orphan mark ALREADY IN the log -- from a hand edit, or a merge that brought the mark
   # without the finding -- is reported. Applied as an UPDATE it would match nothing and exit 0,
@@ -1454,6 +1512,59 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   printf '%s\n' '{"kind":"finding-fixed","at":"2030-01-01T00:00:00Z","finding":"nothing-has-this-id","fixed":1}' >> "$EV"
   rm -f .project/index.db
   orph=$(bash "$KIT/tooling/kit-index.sh" 2>&1 >/dev/null | grep -c 'name no known finding')
+
+  # A WHOLE-SECOND MARK DENOTES THE START OF ITS SECOND. Timestamps are compared as strings and
+  # `.` sorts before `Z`, so `...:07Z` landed AFTER every `...:07.######Z` -- backwards. Here a
+  # hand-written whole-second RETRACTION is planted in the same second as the microsecond fix
+  # that precedes it in time; the fix must still win. Every mark this command writes is
+  # sub-second, so without a planted one this reordering is untestable and invisible.
+  t2sec=$(Q "SELECT substr(fixed_at,1,19) FROM finding WHERE id='$tid';")
+  printf '{"kind":"finding-fixed","at":"%sZ","finding":"%s","fixed":0}\n' "$t2sec" "$tid" >> "$EV"
+  reindex
+  t2keep=$(Q "SELECT COALESCE(fixed_commit,'NULL') FROM finding WHERE id='$tid';")
+
+  # `--at` is the ordering key, not a label, and it was taken on trust.
+  python3 "$KIT/tooling/kit_findings.py" --resolve --finding x --fixed 1 --at "yesterday" \
+    >/dev/null 2>&1; atbad=$?
+  python3 "$KIT/tooling/kit_findings.py" --resolve --finding x --fixed 1 --at "2026-01-01T00:00:00Z" \
+    >/dev/null 2>&1; atgood=$?
+
+  # WHAT REACHES THE FILE ANYONE READS. The indexer announced orphaned and ambiguous marks on
+  # stderr alone, and stderr from a run inside kit-status.sh, a hook or CI is seen by nobody --
+  # so the criticals list could be short for the one reason that must never be quiet.
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  s_orph=$(grep -c 'name no known finding' STATUS.generated.md); s_orph=${s_orph:-0}
+  s_amb=$(grep -c 'REFUSED as ambiguous' STATUS.generated.md); s_amb=${s_amb:-0}
+
+  # THE CLEAN CASE MUST BE ABLE TO PRINT. Its line began with `-`, which bash printf parses as
+  # an option, so it errored to stderr and emitted NOTHING -- an empty section, which reads as
+  # no criticals. It had never run, in this case or in the failure case below.
+  for c in $(Q "SELECT id FROM finding WHERE severity='critical' AND fixed_at IS NULL;"); do
+    bash "$R" --finding "$c" --fixed --commit fffffff >/dev/null 2>&1
+  done
+  reindex
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  s_none=$(grep -c 'none outstanding' STATUS.generated.md); s_none=${s_none:-0}
+
+  # THE UNMEASURABLE CASE. An index built before `fixed_at` existed passes the readability
+  # check at the top of kit-status.sh, because `task` is intact -- only this section notices.
+  # Silence there is the critical its own T3 round found.
+  sqlite3 .project/index.db "ALTER TABLE finding DROP COLUMN fixed_at;" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  s_unmeas=$(grep -c 'NOT MEASURED' STATUS.generated.md); s_unmeas=${s_unmeas:-0}
+  s_falseclean=$(grep -c 'none outstanding' STATUS.generated.md); s_falseclean=${s_falseclean:-0}
+  # Same broken index: a listing must FAIL rather than print nothing and exit 0.
+  bash "$R" --list --severity critical >/dev/null 2>&1; listrc=$?
+  reindex
+  # ...and a genuinely empty result is a different statement, said rather than left blank.
+  bash "$R" --list --severity nosuchseverity >/dev/null 2>&1; listempty=$?
+
+  # Probing a database that is not there must not CREATE one: `sqlite3 <path> <query>` does.
+  # A stray empty index.db is later read as an index with no tasks in it.
+  ( cd "$rs" || exit 1; rm -f .project/index.db
+    bash "$R" --finding "anything" --fixed >/dev/null 2>&1 )
+  strays=0; [ -f .project/index.db ] && strays=1
+  reindex
 
   want() { [ "$2" = "$3" ] || { printf '    ^ %s: got %s, wanted %s\n' "$1" "$2" "$3" >&2; exit 1; }; }
   want "an earlier-dated merge adds a finding" "$n1" "$((n0 + 1))"
@@ -1465,13 +1576,33 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   want "a known id is accepted"                "$markrc" 0
   want "the mark survives a rebuild"           "$fx" "$(Q "SELECT at FROM event WHERE kind='finding-fixed' AND payload LIKE '%deadbee%';")"
   want "  ...carrying its commit"              "$fc" "deadbee"
+  want "  ...and its note, which has a reader" "$fnote" "closed by the one-writer move"
+  want "all four vindicated x fixed states"    "$four" 1
+  want "a mark on a second task applies"       "$t2fx" "ddddddd"
+  want "  ...without disturbing the first"     "$t1fx" "deadbee"
   want "vindicated is untouched by fixing"     "$vd" 1
   want "one critical fixed leaves one open"    "$openc" 1
   want "--open retracts the fix"               "$fx2" "NULL"
   want "  ...without retracting the verdict"   "$vd2" 1
   want "the last of three rapid marks wins"    "$lastw" "bbbbbbb"
-  want "  ...no two marks share a timestamp"   "$nat" 5
-  want "an orphan mark is named, not ignored"  "$orph" 1 )
+  want "  ...no two marks share a timestamp"   "$nat" "$nmk"
+  want "an orphan mark is named, not ignored"  "$orph" 1
+  want "a colliding pair stays two rows"       "$ncol" 2
+  want "  ...and the collision is counted"     "$colmeta" 1
+  want "a mark on that id is accepted"         "$colmark" 0
+  want "  ...but REFUSED, not applied"         "$colfixed" 0
+  want "  ...and the refusal is counted"       "$ambmeta" 1
+  want "a whole-second mark starts its second" "$t2keep" "ddddddd"
+  want "a malformed --at is refused"           "$atbad" 2
+  want "  ...and a legal one is not"           "$atgood" 0
+  want "status reports the orphan"             "$s_orph" 1
+  want "status reports the refusal"            "$s_amb" 1
+  want "a clean repo says so out loud"         "$s_none" 1
+  want "an unmeasurable gate says NOT MEASURED" "$s_unmeas" 1
+  want "  ...and never says none outstanding"  "$s_falseclean" 0
+  want "a broken listing fails, not empties"   "$listrc" 1
+  want "an empty listing says it is empty"     "$listempty" 0
+  want "probing a missing index makes no db"   "$strays" 0 )
 check $? "finding ids survive a merge, and addressed is recorded, retractable and independent of vindicated"
 rm -rf "$rs"
 fi
