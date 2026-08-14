@@ -69,11 +69,23 @@ Nothing is composed or generated. Agents read `.claude/project-profile.md` at sp
 the project layer is edited in one place and never built. Plugin agents and a project's own
 `.claude/agents/` coexist, so a project can add its own without touching these.
 
-> **Superseded in 0.2.0.** Through 0.1 the agents were composed from `agents/core/` plus
-> `agents/overlay/<project>/` by `sync-agents.ps1`, which wrote `.claude/agents/`. That
-> build step is retired — the script is kept as `legacy-sync-agents.ps1` for reference and
-> is not wired up. The per-session profile read replaces it, lands in the cached prefix at
-> 0.1×, and drops the last PowerShell dependency. See `docs/MIGRATION.md`.
+> **Superseded in 0.2.0.** Through 0.1 the agents were composed per project by a
+> `sync-agents.ps1` build step that wrote `.claude/agents/`. That step is retired — the script
+> is kept as `legacy-sync-agents.ps1` for reference and is not wired up. The per-session
+> profile read replaces it, lands in the cached prefix at 0.1×, and drops the last PowerShell
+> dependency. See `docs/MIGRATION.md`.
+>
+> Its one durable lesson, since the document describing it has been deleted: the composer chose
+> the SOURCE by flag and the DESTINATION by where the script lived, so running it with another
+> project's flag silently rewrote the live agent set with a different project's vocabulary and
+> decision ids — no diff, no error. A marker file recording which project a destination belonged
+> to made the mismatch refuse and change nothing. **Any future generator that writes into a
+> repository needs the destination pinned, not inferred.**
+>
+> **The word "overlay" no longer refers to this.** In this kit an *overlay* is the **solution
+> overlay** — client architecture supplied as an input — defined in `docs/DESIGN-NOTES.md` §2,
+> which is its one home. The agent-composition sense is retired and its document removed so the
+> term is unambiguous.
 
 ## What transfers, and what has to be earned
 

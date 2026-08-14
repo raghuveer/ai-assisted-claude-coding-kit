@@ -126,6 +126,33 @@ slots are empty and neither needs a schema change to fill.
 
 ## 2. The solution-architect overlay
 
+**Terminology, fixed 2026-08-14.** In this kit "overlay" means THIS — the **solution overlay**,
+the reference architecture and target solution shape supplied as an INPUT by the solution
+architect: the confirmed technology stack, cloud mandates and whether they are vendor-dependent
+or vendor-agnostic, and whatever else about the target shape is already decided and is not the
+coding agent's to re-open. The 0.1 agent-composition sense of the word is retired and its
+document deleted, so the term is unambiguous. It is **not** an accelerator: accelerators are
+*earned* from findings that recurred across projects, an overlay is *given* and authoritative
+from the first commit. The overlay names the chosen stack and industry, and that choice is what
+selects which technology and industry accelerators apply.
+
+**What decides the stack, beyond architecture.** Two parameters sit alongside it and belong in
+the overlay because they outlive the engagement: **business growth projections** — what the
+system must absorb — and **developer choice** — what the team can actually maintain. Both feed
+the same two questions: does the choice stay maintainable, and does it serve the purpose.
+Reusable-asset development is a separate activity; the technology accelerators *reference* those
+assets rather than containing them.
+
+**The constraint that outranks the rest: the delivered application must be maintainable WITHOUT
+GenAI, by developers, as-is.** The kit, this harness and any coding agent are scaffolding. What
+ships and has to survive is the code and the docs, **ADRs included** — because a team may later
+drop the kit, change tool, or work with no assistant at all, and those artefacts are the entire
+inheritance. Two consequences bind design here: nothing the kit produces may be readable only
+through the kit (derived state is rebuildable and disposable; the durable record is task files,
+git trailers, `events.ndjson`, ADRs and the code), and a decision recorded only in a model's
+context or only in this database is not recorded at all. That is why decisions land as ADRs and
+trailers rather than as chat.
+
 A third accelerator kind, not a new subsystem:
 
 ```

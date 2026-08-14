@@ -40,7 +40,7 @@ Keep the component catalogue **small**. The engineering pattern is worth copying
 Filed 2026-08-11 from R-03, **scoped down on review**. R-03 also asked for "a POSIX shell path
 alongside PowerShell" — that half is already satisfied and was dropped: `ls tooling/*.ps1
 templates/*.ps1` returns nothing, the installer is bash, and the PowerShell overlay/sync model
-was retired in 0.2.0 (`docs/agents-overlay-README.md` carries a do-not-follow banner).
+was retired in 0.2.0 (its document is deleted; see `docs/agents-README.md`).
 
 Prerequisite for the accelerator promotion ladder being meaningful: a shared library nobody can
 selectively install is a library everybody pays for.

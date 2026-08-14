@@ -307,7 +307,7 @@ ai-assisted-claude-coding-kit/
 
 1. **Agents were in `agents/core/`.** Plugin discovery is flat — nested agents never
    load, and `agents/README.md` would have been parsed *as an agent*. Flattened; READMEs
-   moved to `docs/`. (`core/`/`overlay/` only existed for `sync-agents.ps1`, now retired.)
+   moved to `docs/`. (the retired per-project composition dirs only existed for `sync-agents.ps1`.)
 2. **`commit-msg` hook loaded its library from a hardcoded path — and when it failed,
    the commit went through anyway.** A validation hook that silently passes while the
    repo looks protected is the fail-open class the security-reviewer exists to catch.
