@@ -25,17 +25,22 @@ Stop unless every box is ticked. Record the answers; they are part of the result
 - [ ] Working tree clean, full conformance green, CI green on every platform.
 - [ ] No unfixed critical anywhere in the backlog. **Computable — run it, do not judge it:**
 
-      sqlite3 .project/index.db "SELECT COUNT(*) FROM finding
-                                  WHERE severity='critical' AND fixed_at IS NULL
-                                    AND COALESCE(vindicated,1) <> 0;"
+          bash tooling/kit-preflight.sh --criticals
 
-      **Not filtered by task state.** Revision 3 of this box read `AND t.state='progress'`,
-      which meant a critical on a *done* task did not count — so closing the task cleared the
-      pre-flight exactly as well as fixing the defect, and two of this repository's own
-      outstanding criticals were invisible to it. A gate you can satisfy by changing a status
-      field is not a gate. Refuted findings (`vindicated=0`) ARE excluded, because a reviewer
-      being wrong is not outstanding work; `kit-status.sh` prints that exclusion as its own
-      count so it cannot be mistaken for a lower number.
+      **The rule is not written here.** It lived in this document AND in `kit-status.sh`, and a
+      rule with two homes has been wrong twice: once filtering by task state, once excluding
+      refutations too eagerly. The command is the single home; this box calls it.
+
+      **Not filtered by task state.** An earlier revision read `AND t.state='progress'`, so a
+      critical on a *done* task did not count — closing the task cleared the pre-flight exactly
+      as well as fixing the defect, and two of this repository's own outstanding criticals were
+      invisible to it. A gate you can satisfy by editing a status field is not a gate.
+
+      **Refuted findings are excluded only when the refutation is unambiguous.**
+      `kit-vindicate.sh` keys on `(task, class)` and marks every finding matching both, so on a
+      task with two `fail-open` findings one `--false` about the harmless one also refutes the
+      critical. It is retired only when it is the sole finding of its class on its task;
+      otherwise it stays in the gate, unjudged rather than assumed innocent.
 
       Zero, or stop. `kit-status.sh` prints the same thing per task under **Outstanding
       criticals**, and `kit-resolve.sh --list --severity critical --unfixed` names them.
@@ -52,12 +57,24 @@ Stop unless every box is ticked. Record the answers; they are part of the result
 
 **The instruments** — an unmeasured trial is worse than none, because it looks like a result.
 
-- [ ] **Spend capture is live.** Run one throwaway agent, then
-      `sqlite3 .project/index.db "SELECT COUNT(*) FROM spend;"`. A zero here means the hooks are
-      not firing and **the entire cost half of the trial will be empty**. This is not
-      hypothetical: the kit's own repository recorded **0 spend rows across 12 days** of heavy
-      use, and `kit-status.sh` skips the cost section silently when the table is empty, so
-      nothing announces it.
+- [ ] **Spend capture is live.** Run one throwaway agent, then:
+
+          bash tooling/kit-preflight.sh --spend
+
+      A failure here means **the entire cost half of the trial will be empty**. Not
+      hypothetical: this repository recorded **0 spend rows across 12 days** of heavy use, and
+      `kit-status.sh` skips the cost section silently when the table is empty, so nothing
+      announced it.
+
+      > This box used to read `sqlite3 .project/index.db "SELECT COUNT(*) FROM spend;"` with no
+      > rebuild, which made it **say STOP to a working kit**. Hooks append to
+      > `.project/events.ndjson`; `spend` rows exist only once `kit-index.sh` has derived them,
+      > so querying the index straight after the agent finishes reads whatever the last rebuild
+      > happened to contain — normally zero. A live recorder failing a check written to detect a
+      > dead one is the same class of defect as the gate that could not be evaluated, and it was
+      > found the same way: by running it. The command above asks the event log first, so "the
+      > hook never fired" and "the hook fired and nothing derived it" report as the different
+      > faults they are.
 - [ ] **Findings capture is live.** Run one reviewer through `kit-review-record.sh` and confirm
       a row lands. A review that records nothing is indistinguishable from a review that found
       nothing (§3).
@@ -65,8 +82,15 @@ Stop unless every box is ticked. Record the answers; they are part of the result
 
 **The subject**
 
-- [ ] **A COPY or a clone with its remote removed** — §4, the rule with the least room for
-      judgement.
+- [ ] **The subject copy has NO REMOTE.** Not "a copy or a clone with its remote removed" —
+      that phrasing was the hole. A `cp -r` copy carries `.git/config` verbatim, so it keeps
+      `origin` pointed at the subject, and §4's removal procedure began with `git clone` and so
+      covered only the other path. The rule is a property of the copy, not of how you made it,
+      and it is checked the same way either way:
+
+          bash tooling/kit-preflight.sh --isolated <copy>
+
+      Zero, or stop. §4 has the reasoning and the same check.
 - [ ] **Baseline recorded before the kit touches anything**: does the subject build, do its
       tests pass, how long do they take. A subject whose tests already fail is a valid trial
       subject, but only if you knew that first — otherwise the kit gets blamed for it.
@@ -215,11 +239,24 @@ invocation, which the guard hook does not match (below). Do this instead:
 git clone --no-hardlinks <subject> <copy>
 cd <copy>
 git remote remove origin
-git remote -v          # MUST print nothing. If it prints anything, stop.
 ```
 
-`--no-hardlinks` because a hardlinked object store shares files with the subject. Verify the
-remote is gone before any agent runs; that command is the control, not the intention.
+`--no-hardlinks` because a hardlinked object store shares files with the subject.
+
+**Then verify the PROPERTY, not the procedure.** Revision 2 fixed the clone path and left the
+copy path open: the removal block above starts with `git clone`, while §0 still permitted "a
+COPY", and `cp -r` duplicates `.git/config` with `origin` intact. A rule about how you made the
+copy cannot be checked afterwards; a rule about what is true of it can. One command, whichever
+route you took:
+
+```sh
+bash tooling/kit-preflight.sh --isolated <copy>
+```
+
+It exits non-zero if the copy has any remote, is not a git repository at all, or still shares an
+object store with the subject via `alternates` — the hardlink case wearing a different hat. Run
+it after making the copy and before any agent runs. **That command is the control; the intention
+is not.**
 
 **What is enforced and what is not.** `hooks/hooks.json` matches `Write|Edit|NotebookEdit`, so
 the guard blocks those outside the project root. **It does not see Bash at all** — no `git push`,

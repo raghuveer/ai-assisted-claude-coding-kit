@@ -3,9 +3,16 @@ id: T-20260808-trial-the-kit-on-one-unfamiliar-brownfie
 title: Trial the kit on one unfamiliar brownfield polyglot project
 epic: validation
 tier: T2
-blocked_by: T-20260808-record-how-a-task-was-executed-so-kit-wo,T-20260808-a-repeatable-trial-protocol-for-running-,T-20260808-adoption-paths-for-an-empty-folder-and-f
+blocked_by: T-20260808-record-how-a-task-was-executed-so-kit-wo,T-20260808-a-repeatable-trial-protocol-for-running-,T-20260808-adoption-paths-for-an-empty-folder-and-f,T-20260813-nine-criticals-predate-summary-and-canno
 state: open
 ---
+
+> **Fourth blocker added 2026-08-14.** §0's criticals gate stopped filtering by task state, and
+> nine criticals that predate the `summary` column cannot be assessed — so the gate cannot reach
+> zero until `T-20260813-nine-criticals-predate-summary-and-canno` lands, and this trial cannot
+> honestly start. That was true the moment the gate widened and nothing recorded it: `kit-plan`
+> went on offering this task as ready work. An approach reviewer noticed the edge was missing,
+> not the tooling.
 
 ## Intent
 

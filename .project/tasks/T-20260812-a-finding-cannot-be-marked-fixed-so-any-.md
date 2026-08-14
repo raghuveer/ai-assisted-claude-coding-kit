@@ -5,7 +5,7 @@ epic: measurement
 tier: T3
 lang: sql
 paths: tooling/schema.sql, tooling/kit-vindicate.sh, tooling/kit-status.sh
-state: open
+state: done
 ---
 
 ## Intent
@@ -207,6 +207,47 @@ their local clocks, and nothing here can establish a true order between them. A 
 counter would collide across branches, and a vector clock is a distributed-systems apparatus
 this kit has no other use for. Single-operator use is unaffected; the limit is stated in
 `kit-resolve.sh` so it is a known bound rather than a surprise.
+
+## T3 approach round 2 (2026-08-14): 8 findings, 3 major — all fixed, and then CLOSED
+
+Run on the fixes from the first approach round. Three majors, none of them cosmetic:
+
+- **A class-scoped refutation could retire a critical that was never judged.** `kit-vindicate.sh`
+  keys on `(task, class)`, so one `--false` about a harmless finding also refuted a critical
+  sharing its class — and yesterday's "exclude refuted criticals" fix then dropped it from the
+  gate. A refutation now retires a finding only when it is the sole finding of its class on its
+  task; anything else stays in, unjudged rather than assumed innocent, and is named.
+- **The `id_ambiguous` probe defaulted to 0 on a stale index**, skipping the refusal and printing
+  "recorded" for a mark no rebuild applies. Third occurrence of absent-read-as-benign in this
+  task alone.
+- **The authority split claimed to work "exactly as `Via:` does" and did not**: `Via:` is
+  recorded and reported, while a fix mark carried no actor at all. Marks now carry one, and
+  conformance asserts that none lacks it. The prose had been borrowing credibility from a
+  mechanism that was not there.
+
+**Fixing them exposed a defect of my own that no reviewer saw.** The new exclusion was written
+`NOT (vindicated = 0 AND …)`, and `vindicated` is NULL for most findings — `NULL = 0` is NULL,
+`NOT NULL` is NULL, and NULL is not TRUE, so every unjudged finding with a unique class silently
+left the gate. This repository's own count dropped from 11 to 10 without a word. Caught by the
+fixture, not by reading. It is the third NULL-in-SQL trap recorded in these files.
+
+**Two mutations survived first, and both were the same mistake.** The gate-predicate mutation
+changed nothing any assertion looked at, because the fixture checked the *notice* about
+untrustworthy refutations rather than whether the task stayed in the list; and nothing exercised
+the ambiguity probe against an index lacking the column. When a fix adds both a message and a
+behaviour, the test lands on the message. Assert the behaviour.
+
+## Closed 2026-08-14
+
+Five review rounds: two implementation (10 findings then 5), two approach (10 then 8), and the
+execution of the gate itself, which found more than any of them. 33 findings, 2 critical, 7
+major, all fixed and each mutation-proved. The gate is computable, and it answers 11 rather than
+0 — which is recorded above under "Unmet at closure" rather than forced to zero.
+
+**Closed with one criterion deliberately unmet and one limit deliberately unfixed** (cross-machine
+mark ordering). Both are stated in this file rather than left as empty boxes. What remains is
+filed as its own work: `T-20260813-nine-criticals-predate-summary-and-canno` and
+`T-20260814-a-reviewer-s-verdict-and-narrative-are-d`.
 
 ## Notes
 

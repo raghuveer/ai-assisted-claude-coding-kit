@@ -318,7 +318,8 @@ def resolve_event(argv):
     build these with printf, and a single quote in a value corrupts an append-only committed log
     permanently. The finding id is the only field the reader keys on, so it is the one that most
     needs to arrive intact."""
-    opts = {"finding": "", "fixed": "", "commit": "", "note": "", "at": "", "task": ""}
+    opts = {"finding": "", "fixed": "", "commit": "", "note": "", "at": "", "task": "",
+            "actor": ""}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -360,6 +361,13 @@ def resolve_event(argv):
              "finding": sanitise(opts["finding"]), "fixed": int(opts["fixed"])}
     if opts["task"]:
         event["task"] = sanitise(opts["task"])
+    # WHO MARKED IT. The authority split claimed to work "exactly as `Via:` does", and it did
+    # not: `Via:` is recorded on a commit and reported, while a fix mark carried no actor at
+    # all -- so a self-certified mark left nothing to audit and the analogy was borrowing
+    # credibility from a mechanism that was not there. Recorded now, which is what makes "the
+    # operator records it" a checkable claim rather than an instruction nobody can verify.
+    if opts["actor"]:
+        event["actor"] = sanitise(opts["actor"])
     # Omitted rather than written empty: an absent key reads as "not supplied", where
     # `"commit":""` reads as a commit that was supplied and is blank.
     for k in ("commit", "note"):

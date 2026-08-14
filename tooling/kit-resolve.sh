@@ -80,9 +80,20 @@ if [ "$list" = 1 ]; then
   # nothing. Unchecked, a filter naming a column this index does not have printed nothing and
   # exited 0 -- indistinguishable from "no findings match", which is the reading an operator
   # about to conclude "nothing left to fix" would take.
+  # The state column carries the REFUTATION too. §0 calls this listing "the ids", and it
+  # disagreed with the gate whenever a critical was refuted: the gate excluded it, the listing
+  # still showed it as OPEN, and the two numbers could not be reconciled by reading either.
+  # `refutd` is a finding a reviewer withdrew; `OPEN?` is one whose refutation is class-scoped
+  # and therefore untrustworthy -- it is still in the gate, and the listing now says so.
   out=$(sqlite3 -noheader -separator '  ' "$DB" \
     "SELECT id,
-            CASE WHEN fixed_at IS NULL THEN 'OPEN ' ELSE 'fixed' END,
+            CASE WHEN fixed_at IS NOT NULL THEN 'fixed'
+                 WHEN COALESCE(vindicated,1) = 0 AND 1 = (SELECT COUNT(*) FROM finding g
+                        WHERE COALESCE(g.task_id,'') = COALESCE(finding.task_id,'')
+                          AND COALESCE(g.class,'')   = COALESCE(finding.class,''))
+                   THEN 'refutd'
+                 WHEN COALESCE(vindicated,1) = 0 THEN 'OPEN?'
+                 ELSE 'OPEN ' END,
             severity, class, COALESCE(task_id,'-'), COALESCE(summary,''),
             CASE WHEN fixed_note IS NULL OR fixed_note='' THEN '' ELSE '  (fixed: '||fixed_note||')' END
        FROM finding WHERE $W ORDER BY at, id;" 2>&1) || {
@@ -118,8 +129,21 @@ if db_readable; then
   # one of its findings without guessing, so the indexer withholds the mark -- and this used to
   # print "kit: fixed recorded" anyway. A success message for something no rebuild will ever
   # apply is worse than an error, because the operator stops thinking about it.
-  amb=$(sqlite3 -noheader "$DB" "SELECT COALESCE(id_ambiguous,0) FROM finding WHERE id='$fesc';" 2>/dev/null)
-  if [ "${amb:-0}" = 1 ]; then
+  # THE QUERY'S FAILURE IS NOT A ZERO. This read `2>/dev/null` with `${amb:-0}`, so against an
+  # index built before `id_ambiguous` existed -- which the row-existence check above passes,
+  # because `finding` is still there -- the column error became "not ambiguous" and the refusal
+  # was skipped. The tool then printed "recorded" for a mark every rebuild discards. That is the
+  # third time in this task that an absent value has been read as a benign one; assume the shape
+  # rather than the instance.
+  amb=$(sqlite3 -noheader "$DB" "SELECT COALESCE(id_ambiguous,0) FROM finding WHERE id='$fesc';" 2>&1)
+  case "$amb" in
+    0|1) ;;
+    *) kit_warn "cannot tell whether '$finding' is ambiguous -- refusing rather than guessing"
+       printf '%s\n' "$amb" | sed 's/^/  /' >&2
+       kit_warn "  an index predating id_ambiguous fails here; delete it and run kit-index.sh"
+       exit 2 ;;
+  esac
+  if [ "$amb" = 1 ]; then
     kit_warn "'$finding' is AMBIGUOUS: another event hashes to the same id"
     kit_warn "  a mark here would be a guess about which finding it addresses, so it is refused"
     kit_warn "  (the indexer would withhold it on every rebuild; this fails now instead)"
@@ -160,7 +184,8 @@ mkdir -p "$ROOT/$STATE_DIR"
 # retraction loses -- and `date -u` cannot produce it portably, because BSD date has no %N.
 _out=$(python3 "$(dirname "$0")/kit_findings.py" --resolve \
          --finding "$finding" --fixed "$verdict" --commit "$commit" --note "$note" \
-         --task "${ftask:-}") || {
+         --task "${ftask:-}" --actor "$(git -C "$ROOT" config user.email 2>/dev/null ||
+                                        git -C "$ROOT" config user.name 2>/dev/null || true)") || {
   kit_warn "refusing to record: the event could not be serialised"; exit 1; }
 
 # The append is CHECKED, and the value is built before it. Unchecked, a full or unwritable

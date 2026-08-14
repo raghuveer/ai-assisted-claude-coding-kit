@@ -1528,7 +1528,7 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   # written on a branch where the colliding line did not yet exist and merged in afterwards.
   # Planted by hand for that reason -- kit-resolve refuses it at the keyboard, so a fixture that
   # only went through the command could no longer reach this path at all.
-  printf '{"kind":"finding-fixed","at":"2030-06-02T00:00:00.000000Z","task":"T-r","finding":"2000-01-04T00:00:00Z:77087be7","fixed":1}\n' >> "$EV"
+  printf '{"kind":"finding-fixed","at":"2030-06-02T00:00:00.000000Z","task":"T-r","actor":"fixture","finding":"2000-01-04T00:00:00Z:77087be7","fixed":1}\n' >> "$EV"
   reindex
   colfixed=$(Q "SELECT COUNT(*) FROM finding WHERE at='2000-01-04T00:00:00Z' AND fixed_at IS NOT NULL;")
   ambmeta=$(Q "SELECT value FROM meta WHERE key='finding_ambiguous_marks';")
@@ -1538,7 +1538,7 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   # substantiated.
   bash "$R" --finding "$oid" --fixed --commit deadbeefdeadbeef >/dev/null 2>&1; badsha=$?
   # A mark whose commit later leaves the history is reported rather than left resolving to air.
-  printf '{"kind":"finding-fixed","at":"2030-06-01T00:00:00.000000Z","task":"T-r","finding":"%s","fixed":1,"commit":"%s"}\n' \
+  printf '{"kind":"finding-fixed","at":"2030-06-01T00:00:00.000000Z","task":"T-r","actor":"fixture","finding":"%s","fixed":1,"commit":"%s"}\n' \
     "$pid" "0000000000000000000000000000000000000001" >> "$EV"
   reindex
   missmeta=$(Q "SELECT value FROM meta WHERE key='finding_fix_commit_missing';")
@@ -1553,7 +1553,7 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   # An orphan mark ALREADY IN the log -- from a hand edit, or a merge that brought the mark
   # without the finding -- is reported. Applied as an UPDATE it would match nothing and exit 0,
   # which is a gate reading clean because its evidence never arrived.
-  printf '%s\n' '{"kind":"finding-fixed","at":"2030-01-01T00:00:00Z","finding":"nothing-has-this-id","fixed":1}' >> "$EV"
+  printf '%s\n' '{"kind":"finding-fixed","at":"2030-01-01T00:00:00Z","actor":"fixture","finding":"nothing-has-this-id","fixed":1}' >> "$EV"
   rm -f .project/index.db
   orph=$(bash "$KIT/tooling/kit-index.sh" 2>&1 >/dev/null | grep -c 'name no known finding')
 
@@ -1563,7 +1563,7 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   # that precedes it in time; the fix must still win. Every mark this command writes is
   # sub-second, so without a planted one this reordering is untestable and invisible.
   t2sec=$(Q "SELECT substr(fixed_at,1,19) FROM finding WHERE id='$tid';")
-  printf '{"kind":"finding-fixed","at":"%sZ","finding":"%s","fixed":0}\n' "$t2sec" "$tid" >> "$EV"
+  printf '{"kind":"finding-fixed","at":"%sZ","actor":"fixture","finding":"%s","fixed":0}\n' "$t2sec" "$tid" >> "$EV"
   reindex
   t2keep=$(Q "SELECT COALESCE(fixed_commit,'NULL') FROM finding WHERE id='$tid';")
 
@@ -1601,6 +1601,38 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
   s_closed=$(grep -c 'already done or abandoned' STATUS.generated.md); s_closed=${s_closed:-0}
   s_refuted=$(grep -c 'excluded as refuted' STATUS.generated.md); s_refuted=${s_refuted:-0}
+
+  # A CLASS-SCOPED REFUTATION IS NOT A JUDGEMENT ON EVERY FINDING OF THAT CLASS. kit-vindicate
+  # keys on (task, class), so a `--false` about one finding also refutes a critical sharing its
+  # class -- which would then leave the gate having never been judged. T-r3 carries two
+  # `fail-open` findings for exactly this: one critical, one minor.
+  printf '%s' '{"findings":[{"class":"fail-open","severity":"minor","summary":"a harmless fail-open sharing the class of the critical"}]}' \
+    | bash "$F" --task T-r3 --agent implementation-reviewer --json >/dev/null 2>&1
+  bash "$KIT/tooling/kit-vindicate.sh" --task T-r3 --class fail-open --false >/dev/null 2>&1
+  reindex
+  ambigref=$(Q "SELECT COUNT(*) FROM finding f WHERE f.severity='critical' AND f.fixed_at IS NULL
+                 AND f.vindicated=0 AND NOT 1 = (SELECT COUNT(*) FROM finding g
+                        WHERE COALESCE(g.task_id,'')=COALESCE(f.task_id,'')
+                          AND COALESCE(g.class,'')=COALESCE(f.class,''));")
+  pfrc=$(cd "$rs" && bash "$KIT/tooling/kit-preflight.sh" --criticals >/dev/null 2>&1; echo $?)
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  s_ambigref=$(grep -c 'refutation that cannot be trusted' STATUS.generated.md); s_ambigref=${s_ambigref:-0}
+  # The notice above is driven by its own counter, so it survives a regression in the LIST. The
+  # list is what a reader acts on: T-r3 must still be IN it, because its critical carries a
+  # refutation that cannot be trusted and is therefore still outstanding. Without this, reverting
+  # the gate predicate to the too-eager `COALESCE(vindicated,1) <> 0` changed nothing any
+  # assertion looked at -- a mutation survived and said so.
+  s_r3crit=$(sed -n '/## Outstanding criticals/,/^## /p' STATUS.generated.md | grep -c 'T-r3')
+  s_r3crit=${s_r3crit:-0}
+  # The listing must agree with the gate about that finding rather than calling it plain OPEN.
+  case "$(bash "$R" --list --task T-r3 2>/dev/null)" in *"OPEN?"*) listagree=1 ;; *) listagree=0 ;; esac
+  # And EVERY mark records WHO made it -- what the `Via:` analogy claimed and did not have.
+  # The two marks this fixture plants by hand carry `"actor":"fixture"` for the same reason a
+  # real one carries an email: a mark with no actor is a mark nobody can be asked about, and
+  # the invariant is worth more than the two exceptions would be.
+  markactor=$(Q "SELECT COUNT(*) FROM event WHERE kind='finding-fixed'
+                  AND (actor IS NULL OR actor='');")
+
 
   # AN ABSENT COUNTER IS NOT A ZERO COUNTER. Reading them with ${x:-0} made a stale index assert
   # that no mark had failed to apply -- the same fail-open as this section's critical, one level
@@ -1653,6 +1685,16 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   strays=0; [ -f .project/index.db ] && strays=1
   reindex
 
+  # THE AMBIGUITY PROBE AGAINST AN INDEX THAT PREDATES ITS COLUMN. This read `2>/dev/null` with
+  # `${amb:-0}`, so the column error became "not ambiguous", the refusal was skipped, and the
+  # tool printed "recorded" for a mark every rebuild would discard. Nothing exercised it -- the
+  # stale-index case above drops `fixed_at` and tests the REPORT, not the mark path -- so a
+  # mutation restoring the old probe survived and said so.
+  sqlite3 .project/index.db "ALTER TABLE finding DROP COLUMN id_ambiguous;" >/dev/null 2>&1
+  precolalt=$?
+  bash "$R" --finding "$oid" --fixed --commit "$SHA_A" >/dev/null 2>&1; precolrc=$?
+  reindex
+
   want() { [ "$2" = "$3" ] || { printf '    ^ %s: got %s, wanted %s\n' "$1" "$2" "$3" >&2; exit 1; }; }
   want "an earlier-dated merge adds a finding" "$n1" "$((n0 + 1))"
   want "  ...and renumbers none of the others" "$ids1" "$ids0"
@@ -1691,6 +1733,12 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   want "the closing task is really closed"     "$r3state" "done"
   want "  ...its critical still counts"        "$gateclosed" 1
   want "  ...and status names it"              "$s_closed" 1
+  want "an ambiguous refutation does NOT retire" "$ambigref" 1
+  want "  ...so the gate still says STOP"      "$pfrc" 1
+  want "  ...and status names the doubt"       "$s_ambigref" 1
+  want "  ...and still LISTS the task"         "$s_r3crit" 1
+  want "  ...and --list agrees with the gate"  "$listagree" 1
+  want "no mark lacks an actor"                "$markactor" 0
   want "a refuted critical leaves the gate"    "$gaterefuted" 1
   want "  ...and the exclusion is named"       "$s_refuted" 1
   want "absent counters are not read as zero"  "$s_absent" 1
@@ -1701,9 +1749,109 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   want "  ...and never says none outstanding"  "$s_falseclean" 0
   want "a broken listing fails, not empties"   "$listrc" 1
   want "an empty listing says it is empty"     "$listempty" 0
-  want "probing a missing index makes no db"   "$strays" 0 )
+  want "probing a missing index makes no db"   "$strays" 0
+  want "the id_ambiguous fixture was built"    "$precolalt" 0
+  want "a pre-column index refuses the mark"   "$precolrc" 2 )
 check $? "finding ids survive a merge, and addressed is recorded, retractable and independent of vindicated"
 rm -rf "$rs"
+fi
+
+if step "the pre-flight gates are commands, and a cp -r copy does not pass isolation"; then
+# The two criticals the first trial execution left open, and both are about a gate that reads
+# fine and does the wrong thing.
+#
+# ISOLATION. §4 mandated `git clone` then `git remote remove origin`, and §0 permitted "A COPY
+# or a clone with its remote removed". A `cp -r` copy duplicates `.git/config` verbatim, so it
+# keeps `origin` pointed at the subject -- and `git push` is a Bash call, which kit-guard.sh
+# does not match. The removal procedure covered only the route nobody would take when in a
+# hurry. The rule is now a PROPERTY of the copy and this proves the property is checked for
+# both routes, especially the one that used to slip through.
+pf="$WORK.preflight"; rm -rf "$pf"; mkdir -p "$pf"
+( cd "$pf" || exit 1
+  git init -q -b main subject 2>/dev/null
+  ( cd subject || exit 1
+    git config user.email a@b.c; git config user.name T
+    echo hello > f.txt; git add -A; git commit -q --no-verify -m "seed" )
+  P="$KIT/tooling/kit-preflight.sh"
+
+  # The route that used to pass: a plain recursive copy. It has origin only if the source had
+  # one, so give the source a remote first -- which is what a real subject has.
+  git -C subject remote add origin https://example.invalid/subject.git
+  cp -r subject copy_cp
+  bash "$P" --isolated copy_cp >/dev/null 2>&1; cprc=$?
+
+  # The route the protocol described, done right and done wrong.
+  git clone -q --no-hardlinks subject clone_ok 2>/dev/null
+  git -C clone_ok remote remove origin 2>/dev/null
+  bash "$P" --isolated clone_ok >/dev/null 2>&1; okrc=$?
+  git clone -q --no-hardlinks subject clone_bad 2>/dev/null
+  bash "$P" --isolated clone_bad >/dev/null 2>&1; badrc=$?
+
+  # A --shared clone BORROWS the subject`s object store through `alternates`: a path back that
+  # `git remote -v` cannot show, and one that makes `git gc` in either repository able to
+  # affect the other. Written as a plain `git clone` first, which was wrong -- a local clone
+  # hardlinks objects but writes no alternates file, so the check passed and the assertion was
+  # measuring nothing. Hardlinks and alternates are different mechanisms and only one of them
+  # is what this detects.
+  git clone -q --shared subject clone_alt 2>/dev/null
+  git -C clone_alt remote remove origin 2>/dev/null
+  bash "$P" --isolated clone_alt >/dev/null 2>&1; altrc2=$?
+
+  # "Not a repository" and "no such path" must NOT read as isolated. A check that passes when
+  # it could not run is the shape this whole file exists to refuse.
+  mkdir -p notarepo
+  bash "$P" --isolated notarepo >/dev/null 2>&1; nrrc=$?
+  bash "$P" --isolated /nonexistent-path-for-conformance >/dev/null 2>&1; nprc=$?
+
+  want() { [ "$2" = "$3" ] || { printf '    ^ %s: got %s, wanted %s\n' "$1" "$2" "$3" >&2; exit 1; }; }
+  want "a cp -r copy is NOT isolated"        "$cprc"  1
+  want "a clone with origin is NOT isolated" "$badrc" 1
+  want "a --shared clone is NOT isolated"    "$altrc2" 1
+  want "a de-remoted clone IS isolated"      "$okrc"  0
+  want "a non-repository is not a pass"      "$nrrc"  1
+  want "a missing path is not a pass"        "$nprc"  2 )
+check $? "isolation is checked as a property of the copy, by whichever route it was made"
+
+# SPEND. §0 queried the index straight after running an agent. Hooks append EVENTS; spend rows
+# exist only once kit-index.sh derives them -- so a live recorder failed a check written to
+# detect a dead one, and the box said STOP to a working kit.
+sp="$WORK.spendpf"; rm -rf "$sp"; mkdir -p "$sp"
+( cd "$sp" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  P="$KIT/tooling/kit-preflight.sh"
+  # THE TWO FAULTS MUST REPORT DIFFERENTLY, and asserting only the exit code cannot see that --
+  # a mutation that deleted the no-events branch survived, because the other branch also
+  # returned 1 and the check could not say which. "The hook never fired" and "the hook fired
+  # and nothing derived it" have different causes and different fixes; the message is the
+  # deliverable, not the status.
+  nonemsg=$(bash "$P" --spend 2>&1); nonerc=$?
+  case "$nonemsg" in *"no spend EVENT has ever been recorded"*) nonesaid=1 ;; *) nonesaid=0 ;; esac
+
+  # An event the indexer cannot derive a row from: kit-index.sh skips a spend event with no
+  # transcript, so this is the "hook fired, derivation produced nothing" state exactly.
+  printf '%s\n' '{"kind":"spend","at":"2026-01-01T00:00:00Z","transcript":"","scope":"session","agent":"x","model":"sonnet","turns":1,"tok_in":10,"tok_out":20,"cache_read":0,"cache_write":0,"context":100}' \
+    >> .project/events.ndjson
+  rm -f .project/index.db
+  undermsg=$(bash "$P" --spend 2>&1); underrc=$?
+  case "$undermsg" in *"no spend row was derived"*) undersaid=1 ;; *) undersaid=0 ;; esac
+
+  # One spend EVENT that DOES derive, and no index at all: the exact state after an agent
+  # finishes, and the state in which the old box said STOP to a working kit.
+  printf '%s\n' '{"kind":"spend","at":"2026-01-02T00:00:00Z","transcript":"t1","scope":"session","agent":"x","model":"sonnet","turns":1,"tok_in":10,"tok_out":20,"cache_read":0,"cache_write":0,"context":100}' \
+    >> .project/events.ndjson
+  rm -f .project/index.db
+  bash "$P" --spend >/dev/null 2>&1; liverc=$?
+  want() { [ "$2" = "$3" ] || { printf '    ^ %s: got %s, wanted %s\n' "$1" "$2" "$3" >&2; exit 1; }; }
+  want "no spend event at all is a STOP"   "$nonerc" 1
+  want "  ...and names the dead hook"      "$nonesaid" 1
+  want "an underived event is a STOP"      "$underrc" 1
+  want "  ...and names the OTHER fault"    "$undersaid" 1
+  want "a live hook passes without a prior rebuild" "$liverc" 0 )
+check $? "spend capture is judged from the event log, not from whatever the last rebuild held"
+rm -rf "$pf" "$sp"
 fi
 
 if step "a refused review is retried with the diagnostics, boundedly"; then
@@ -2009,8 +2157,21 @@ check $? "the protocol still warns off the harness per-agent figure"
 #
 # 1. Isolation. "A copy or a read-only clone" left origin pointing at the subject, and git push
 #    is a Bash call the guard never sees. The removed remote IS the control.
-grep -q 'git remote remove origin' "$P" && grep -q 'git remote -v' "$P"
-check $? "the protocol removes the clone's remote and verifies it"
+#
+#    This checked for `git remote -v` in the prose, which was true of the document while its
+#    §0 still offered "A COPY" as an alternative -- a phrasing that skipped the removal
+#    entirely, since `cp -r` duplicates .git/config with origin intact. Prose agreeing with
+#    prose is not the property. The check is now the COMMAND both sections point at, and
+#    whether it actually refuses each route is proved in its own step.
+grep -q 'git remote remove origin' "$P" && grep -q 'kit-preflight.sh --isolated' "$P"
+check $? "the protocol removes the remote and verifies isolation with a command"
+# §0 must not reintroduce the alternative that made the removal optional. Named exactly, so
+# that rewording the box is fine and re-offering an unverified copy is not.
+if grep -q 'A COPY or a clone with its remote removed' "$P"; then
+  check 1 "S0 no longer offers an unverified copy as an alternative"
+else
+  check 0 "S0 no longer offers an unverified copy as an alternative"
+fi
 # The guard's matcher is quoted in the protocol as the reason. If the hook ever grows Bash
 # coverage that sentence becomes false, so tie it to the hook rather than to prose.
 grep -q '"matcher": "Write|Edit|NotebookEdit"' "$KIT/hooks/hooks.json"

@@ -773,7 +773,11 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
     NF {
       t=jf($0,"task"); k=jf($0,"kind"); a=jf($0,"at")
       if (k=="") next
-      printf "INSERT INTO event(task_id,kind,at,payload) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047);\n", q(t), q(k), q(a), q($0)
+      # `actor` is carried through when the event has one. Events derived from commits get it
+      # from the author; events from this log had no way to say who acted, which is what made
+      # "the operator records the mark, the agent proposes it" an instruction with nothing
+      # behind it -- `Via:` is auditable and a fix mark was not.
+      printf "INSERT INTO event(task_id,kind,at,actor,payload) VALUES(\047%s\047,\047%s\047,\047%s\047,\047%s\047,\047%s\047);\n", q(t), q(k), q(a), q(jf($0,"actor")), q($0)
       if (k=="finding") {
         cls = jf($0,"class")
         # A classless finding cannot be grouped, counted or promoted -- it only adds a
@@ -1147,12 +1151,20 @@ mv -f "$NEW" "$DB" ||
 # history and adds another undoing it, so the mark still resolves and still reads as addressed.
 # Deciding whether a later commit undoes an earlier one is not a lookup, and pretending this
 # covers it would be the false-rationale this kit exists to refuse.
+# Counts MARKS, not distinct commits, because that is what the report says it counts -- three
+# marks citing one vanished SHA under-reported as one. And read with `while read`, not
+# `for _c in $(...)`: an unquoted command substitution word-splits and globs, and a value stored
+# before `--commit` was validated is arbitrary text. That is the interpolation shape LESSONS §4
+# says to sweep for rather than fix one instance of, and it was introduced here while fixing
+# something else.
 MISSING=0
-for _c in $(sqlite3 "$DB" "SELECT DISTINCT fixed_commit FROM finding
-                            WHERE fixed_commit IS NOT NULL AND fixed_commit <> '';" 2>/dev/null |
-            tr -d '\r'); do
+while IFS= read -r _c; do
+  [ -n "$_c" ] || continue
   git -C "$ROOT" cat-file -e "${_c}^{commit}" 2>/dev/null || MISSING=$((MISSING + 1))
-done
+done <<EOF
+$(sqlite3 "$DB" "SELECT fixed_commit FROM finding
+                  WHERE fixed_commit IS NOT NULL AND fixed_commit <> '';" 2>/dev/null | tr -d '\r')
+EOF
 sqlite3 "$DB" "INSERT OR REPLACE INTO meta VALUES('finding_fix_commit_missing','$MISSING');" 2>/dev/null
 if [ "$MISSING" -gt 0 ]; then
   kit_warn "$MISSING fix mark(s) name a commit that is not in this history."

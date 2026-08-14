@@ -499,22 +499,41 @@ fi
 # ADDRESSED, and "we did nothing because it was not a defect" is neither. It stays in the table,
 # is excluded from the gate, and is counted below so the exclusion is visible rather than
 # arithmetic nobody can see.
-CRITFALSE=$(q "SELECT COUNT(*) FROM finding
-                WHERE severity='critical' AND fixed_at IS NULL AND vindicated=0;")
+#
+# COALESCE BEFORE THE COMPARISON, or SQL three-valued logic empties the gate: `vindicated` is
+# NULL for most findings, `NULL = 0` is NULL, `NULL AND TRUE` is NULL, and `NOT NULL` is NULL --
+# which is not TRUE, so every unjudged finding whose class is unique on its task silently left
+# the count. Written without the COALESCE first and caught by the fixture, not by reading. It is
+# the same NULL trap this file already carries two other fixes for.
+#
+# ONLY AN UNAMBIGUOUS REFUTATION RETIRES A FINDING. `kit-vindicate.sh` keys on (task, class) and
+# updates every finding matching both, so on a task carrying two `fail-open` findings a single
+# `--false` about the harmless one ALSO refutes the critical -- which would then leave this gate
+# having never been judged. Excluded only when it is the sole finding of its class on its task.
+# The same predicate lives in kit-preflight.sh --criticals, which is what the protocol runs.
+UNAMBIG="1 = (SELECT COUNT(*) FROM finding g
+               WHERE COALESCE(g.task_id,'') = COALESCE(f.task_id,'')
+                 AND COALESCE(g.class,'')   = COALESCE(f.class,''))"
+CRITFALSE=$(q "SELECT COUNT(*) FROM finding f
+                WHERE f.severity='critical' AND f.fixed_at IS NULL AND f.vindicated=0
+                  AND $UNAMBIG;")
+CRITAMBIG=$(q "SELECT COUNT(*) FROM finding f
+                WHERE f.severity='critical' AND f.fixed_at IS NULL AND f.vindicated=0
+                  AND NOT $UNAMBIG;")
 OPENCRIT=$(q "SELECT COALESCE(NULLIF(f.task_id,''),'(unattributed)')||'  '||COUNT(*)||
                      '  ['||COALESCE(NULLIF(t.state,''),'no task file')||']'
                 FROM finding f LEFT JOIN task t ON t.id = f.task_id
                WHERE f.severity='critical' AND f.fixed_at IS NULL
-                 AND COALESCE(f.vindicated,1) <> 0
+                 AND NOT (COALESCE(f.vindicated,1) = 0 AND $UNAMBIG)
                GROUP BY f.task_id ORDER BY COUNT(*) DESC;"); OCRC=$?
-CRITTOT=$(q "SELECT COUNT(*) FROM finding WHERE severity='critical' AND fixed_at IS NULL
-              AND COALESCE(vindicated,1) <> 0;")
+CRITTOT=$(q "SELECT COUNT(*) FROM finding f WHERE f.severity='critical' AND f.fixed_at IS NULL
+              AND NOT (COALESCE(f.vindicated,1) = 0 AND $UNAMBIG);")
 # CLOSING A TASK IS NOT FIXING ITS CRITICALS. The gate filtered `state='progress'`, so a
 # critical on a done task did not count -- "fix it" and "close it" cleared the pre-flight
 # equally. Counted and named here, because it is the direction that hides work.
 CRITDONE=$(q "SELECT COUNT(*) FROM finding f JOIN task t ON t.id=f.task_id
                WHERE f.severity='critical' AND f.fixed_at IS NULL
-                 AND COALESCE(f.vindicated,1) <> 0 AND t.state IN ('done','abandoned');")
+                 AND NOT (COALESCE(f.vindicated,1) = 0 AND $UNAMBIG) AND t.state IN ('done','abandoned');")
 CRITALL=$(q "SELECT COUNT(*) FROM finding WHERE severity='critical';")
 printf '\n## Outstanding criticals\n\n'
 if [ "$OCRC" != 0 ]; then
@@ -554,7 +573,7 @@ FORPH=$(q "SELECT value FROM meta WHERE key='finding_orphan_marks';")
 FAMB=$(q "SELECT value FROM meta WHERE key='finding_ambiguous_marks';")
 FCOLL=$(q "SELECT value FROM meta WHERE key='finding_id_collisions';")
 FMISS=$(q "SELECT value FROM meta WHERE key='finding_fix_commit_missing';")
-if [ -z "$FORPH" ] || [ -z "$FAMB" ]; then
+if [ -z "$FORPH" ] || [ -z "$FAMB" ] || [ -z "$FMISS" ] || [ -z "$FCOLL" ]; then
   printf -- '\n> **Mark-failure counters are ABSENT from this index, not zero.** It was built\n'
   printf -- '> before they existed, so whether any mark failed to apply is unknown here. Delete\n'
   printf -- '> `%s` and run `kit-index.sh`.\n' "${DB#$ROOT/}"
@@ -564,6 +583,13 @@ if [ "${FMISS:-0}" != 0 ]; then
   printf -- '> as addressed and its evidence resolves to nothing — a rebased branch, or a SHA\n'
   printf -- '> that never existed. Note that a REVERTED fix is NOT detected: its commit is still\n'
   printf -- '> there, so the mark still resolves and still reads as addressed.\n'
+fi
+if [ "${CRITAMBIG:-0}" != 0 ]; then
+  printf -- '\n> **%s unfixed critical(s) carry a refutation that cannot be trusted.** They are\n' "$CRITAMBIG"
+  printf -- '> COUNTED above, not excluded. `kit-vindicate.sh` keys on `(task, class)` and marks\n'
+  printf -- '> every finding matching both, so on a task with two findings of one class a single\n'
+  printf -- '> `--false` about the harmless one also refutes the critical. A refutation retires a\n'
+  printf -- '> finding only when it is the sole finding of its class on its task.\n'
 fi
 if [ "${CRITFALSE:-0}" != 0 ]; then
   printf -- '\n> **%s unfixed critical(s) are excluded as refuted** (`vindicated=0`). A reviewer\n' "$CRITFALSE"
