@@ -1538,8 +1538,18 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   # substantiated.
   bash "$R" --finding "$oid" --fixed --commit deadbeefdeadbeef >/dev/null 2>&1; badsha=$?
   # A mark whose commit later leaves the history is reported rather than left resolving to air.
-  printf '{"kind":"finding-fixed","at":"2030-06-01T00:00:00.000000Z","task":"T-r","actor":"fixture","finding":"%s","fixed":1,"commit":"%s"}\n' \
-    "$pid" "0000000000000000000000000000000000000001" >> "$EV"
+  #
+  # TWO marks citing the SAME vanished SHA, deliberately. The counter reports "fix mark(s)" and
+  # was counting DISTINCT commits, so three marks on one dead SHA under-reported as one. With a
+  # single planted mark the two behaviours give the same number and the mutation reverting it
+  # SURVIVED -- a fixture that cannot tell the fix from the defect is not evidence for either.
+  mid=$(Q "SELECT id FROM finding WHERE at='2000-01-01T00:00:00Z';")
+  _n=1
+  for _f in "$pid" "$mid"; do
+    printf '{"kind":"finding-fixed","at":"2030-06-01T00:00:0%s.000000Z","task":"T-r","actor":"fixture","finding":"%s","fixed":1,"commit":"%s"}\n' \
+      "$_n" "$_f" "0000000000000000000000000000000000000001" >> "$EV"
+    _n=$((_n + 1))
+  done
   reindex
   missmeta=$(Q "SELECT value FROM meta WHERE key='finding_fix_commit_missing';")
   # The mark carries its task, so a task timeline shows its findings being resolved. Compared
@@ -1723,7 +1733,7 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   want "  ...and both rows are flagged"        "$ambflag" 2
   want "a merged-in ambiguous mark is refused" "$ambmeta" 1
   want "a SHA that does not resolve is refused" "$badsha" 2
-  want "a vanished fix commit is reported"     "$missmeta" 1
+  want "both marks on one dead SHA counted"    "$missmeta" 2
   want "every mark carries its task"           "$marktask" "$marksonr"
   want "the stale-index fixture was built"     "$altrc" 0
   want "an empty listing SAYS it is empty"     "$listesaid" 1
