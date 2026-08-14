@@ -187,3 +187,51 @@ visible to its own gate at the moment of commit — after the last local run.
 A new file is invisible to that check exactly once, and that once is the commit introducing it.
 The gate did its job at the first opportunity it had. The alternative was carrying a broken mode
 through however many commits until someone thought to ask CI.
+
+---
+
+## 10. Decompose by technical property, not by organisational category
+
+Two task splits in one day were wrong the same way, and both were caught by being asked "is this
+the right approach?" rather than by review.
+
+The first split a recorder task into **reviewer** work and **producer** work. That boundary comes
+from the pipeline's org chart, not from the code: `verdict` is a closed three-value vocabulary
+that fits an existing event line, and so is every producer fact — build pass/fail, an error
+count, tests passed/failed/skipped. `narrative` is unbounded free text going into a committed,
+line-oriented log. **The seam is bounded versus unbounded, and it cuts across reviewer/producer
+rather than along it.** Splitting the wrong way bundled a cheap fix with an expensive one and
+hid that recording the verdict alone was enough to tell an empty review from one that never ran.
+
+The second nearly repeated it: within "bounded", reviewers have a runner that captures their
+output and producers have none. That is an *emission-path* difference, not a data-shape one, and
+it is the property that decides the work.
+
+The test: if a boundary would still make sense with the agents renamed, it is probably real. If
+it only makes sense because of what the parts are *called*, look for the property underneath.
+
+A related failure in the same family: a dependency edge was proposed between two tasks that
+merely shared a design decision. `blocked_by` cascades — one mistyped id once withheld 20 of 22
+open tasks — so it states "cannot start until", never "decide this together". Shared constraints
+are enforced by the constraint (one JSON writer), not by an edge.
+
+## 11. Record the measured value beside the required one
+
+A gate that reports only pass or fail cannot be audited, and a ladder with no measurement
+promotes on opinion. The pattern that works is two numbers adjacent: what was required, and what
+was observed. `threshold 0.85 / measured 0.72` says *experimental* by arithmetic — nobody has to
+be persuaded, and nobody can quietly disagree.
+
+The kit already does this in one place and not the others. Escape rate reports both populations
+side by side precisely so provenance can change what a number means without changing whether an
+escape is visible. The promotion ladder, by contrast, is documented with thresholds and
+implemented with nothing, so promotion would be an act of belief.
+
+Two corollaries that keep costing us when they are skipped:
+
+- **An exclusion must be counted.** When a gate drops something — a refuted finding, a filtered
+  population — the excluded count is reported next to the surviving one, or the smaller number
+  is indistinguishable from a wrong one.
+- **State applicability in both directions.** Anything shared says what it is unsuitable for, not
+  only what it does. An asset that advertises only its strengths gets loaded where it does harm,
+  and the person loading it has no way to know.

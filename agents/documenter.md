@@ -1,7 +1,7 @@
 ---
 name: documenter
 description: Use after tests pass, and on any feature-state change. Updates README, doc comments, CHANGELOG, and the relevant topic sub-docs. Never writes ADRs (that is adr-scribe) and never writes operator-owned notes.
-model: haiku
+model: sonnet
 tools: Read, Write, Edit, Grep, Glob
 ---
 

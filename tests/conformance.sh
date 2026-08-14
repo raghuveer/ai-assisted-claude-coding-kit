@@ -1766,6 +1766,29 @@ check $? "finding ids survive a merge, and addressed is recorded, retractable an
 rm -rf "$rs"
 fi
 
+if step "every agent's declared tier matches the table that documents it"; then
+# MODELS.md names a tier per agent and the frontmatter declares one; nothing compared them, so a
+# tier could be raised in one place and read the other way in the other. The vocabulary already
+# taught this: a list restated in four locations had drifted in all four, and the fix was not
+# vigilance but a check. Same shape, and cheap enough that there was no reason to wait for the
+# drift to happen first.
+drift=0
+for a in "$KIT"/agents/*.md; do
+  nm=$(basename "$a" .md)
+  declared=$(sed -n 's/^model: //p' "$a" | tr -d '\r' | head -1)
+  [ -n "$declared" ] || { echo "  $nm declares no model:"; drift=1; continue; }
+  # The row that names this agent, then the tier in that row's second column.
+  documented=$(grep -F "\`$nm\`" "$KIT/docs/MODELS.md" | grep '^|' |
+               sed -n 's/^[^|]*|[^|]*| *`\([a-z]*\)` *|.*/\1/p' | head -1)
+  if [ -z "$documented" ]; then
+    echo "  $nm is not named in the MODELS.md table"; drift=1
+  elif [ "$declared" != "$documented" ]; then
+    echo "  $nm declares '$declared', MODELS.md says '$documented'"; drift=1
+  fi
+done
+check $drift "agent frontmatter and MODELS.md agree on every tier"
+fi
+
 if step "the pre-flight gates are commands, and a cp -r copy does not pass isolation"; then
 # The two criticals the first trial execution left open, and both are about a gate that reads
 # fine and does the wrong thing.

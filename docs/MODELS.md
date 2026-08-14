@@ -10,8 +10,23 @@ Each agent declares a model in its frontmatter:
 | Agent | `model:` | Why |
 |---|---|---|
 | `researcher`, `approach-reviewer`, `security-reviewer` | `opus` | design alternatives and adversarial reading, where a missed failure mode is expensive |
-| `coder`, `implementation-reviewer`, `tester`, `adr-scribe` | `sonnet` | the working tier — most of the volume |
-| `documenter` | `haiku` | mechanical, high-volume, low-judgement |
+| `coder`, `implementation-reviewer`, `tester`, `adr-scribe`, `documenter` | `sonnet` | the working tier — most of the volume |
+
+`documenter` was `haiku`, justified as "mechanical, high-volume, low-judgement". **The
+justification was wrong about its scope.** It writes README and topic sub-docs — audience-facing
+prose, where the judgement is deciding what a reader needs, at what depth, in what register, and
+what to leave out. That is not mechanical, and it is high-ambiguity even though its blast radius
+is small.
+
+It matters more than a tier row because of what the documentation *is*: the delivered application
+must be maintainable without any AI tooling, by developers, as-is — so the docs are not a
+description of the deliverable, they are half of it. Under-tiering the agent that writes half the
+inheritance is the wrong economy, and cheap prose is expensive twice: once when it is written and
+again for everyone who maintains from it.
+
+Cost is still a real constraint. If this tier proves expensive in volume, the answer is to **split
+the work by audience, not to lower the tier across it** — mechanical updates (CHANGELOG entries,
+docstring stubs) can sit on a cheaper tier than prose a stranger has to learn from.
 
 `opus`, `sonnet` and `haiku` are **aliases**, not model IDs. `ANTHROPIC_DEFAULT_OPUS_MODEL`,
 `ANTHROPIC_DEFAULT_SONNET_MODEL` and `ANTHROPIC_DEFAULT_HAIKU_MODEL` control what each one
