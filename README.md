@@ -276,6 +276,7 @@ sqlite3 .project/index.db "SELECT lang, class, COUNT(*) FROM finding
 | File | What it answers |
 |---|---|
 | [`INSTALL.md`](INSTALL.md) | Installing, adopting in a new repo, joining one that already uses it |
+| [`SECURITY.md`](SECURITY.md) | What is trusted and what is not, the five properties enforced mechanically, the four that are convention, and what is absent |
 | [`docs/HANDOFF.md`](docs/HANDOFF.md) | Why it is built this way — requirements, decisions with rationale, verified state, open gaps, and the constraints that must not be broken |
 | [`docs/VERSIONING.md`](docs/VERSIONING.md) | What MAJOR/MINOR/PATCH mean here, tag format, and the release sequence |
 | [`docs/ADAPTERS.md`](docs/ADAPTERS.md) | Reading project state from somewhere other than the built-in text sources — GitHub issues, an API, a database |

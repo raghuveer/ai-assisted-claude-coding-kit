@@ -12,6 +12,17 @@
 Read `HANDOFF.md` first for why the kit is built the way it is. This note only covers work
 that follows from it.
 
+**Summary.** Four proposals, none implemented. **§1** binds accelerators to *components* rather
+than whole projects, so a polyglot or partly-modernised repository loads the right guidance per
+part. **§2** is the **solution overlay** — the reference architecture supplied as an input by the
+solution architect: confirmed stack, cloud mandates, and the decisions that are not the coding
+agent's to re-open. It is *given* where an accelerator is *earned*, it is project-scoped and must
+never be exported, and it carries the constraint that outranks the rest — the delivered
+application must be maintainable **without GenAI**, by developers, as-is. §2 also sets out how
+knowledge enters (many sources, two states) and what a published accelerator must carry to be
+safely loadable by another project. **§3** versions accelerators independently of the plugin so a
+project can pin one. **§4** treats context line budget as a prerequisite rather than a follow-up.
+
 ---
 
 ## 0. The constraint everything here has to satisfy
@@ -249,6 +260,56 @@ projects. Resist a third tier for "expert-provided". The operational question is
 *has this system observed it*, and an experienced architect's judgement is still a
 hypothesis until the findings table agrees. Record attribution as metadata if useful; keep
 the two states.
+
+### Sources are many; states are two
+
+A separate axis, and confusing it with the one above has already caused an argument. **Where
+knowledge comes from** is open-ended; **what the system claims about it** is binary.
+
+Three sources are in view:
+
+1. **Supplied for analysis** — an accelerator handed over from work delivered outside this kit.
+2. **Derived project to project** — the promotion ladder, the only source that can reach
+   `[earned]`.
+3. **Best practice gathered from public material, analysed by an agent, then discussed with the
+   architects who maintain accelerators.** Advisory and optional — an accelerant for drafting,
+   not an authority. Whatever a model was trained on already influences its output, so material
+   it re-summarises is a starting hypothesis and nothing more.
+
+All three enter as `[seeded]`. None of them shortcut promotion. The architect's binding channel
+is not accelerator publication at all — it is the **solution overlay** (§2), which is given,
+project-scoped and authoritative from the first commit. That is what makes the two-state rule
+survivable: an architect who needs a decision obeyed does not need it promoted to `[earned]`,
+because the overlay already outranks evidence for that project.
+
+### Accelerator stewardship — what a published asset has to carry
+
+An accelerator that is shared across projects is a distributed artefact, and the failure mode is
+a stale one being loaded into work that then inherits its assumptions. The kit's three seed files
+carry none of this yet; what a real one needs, and what the schema should hold:
+
+- **Status and lifecycle.** `experimental` → `approved` → `deprecated`, with a review date, and a
+  deprecation block naming a successor rather than leaving a dead asset loadable.
+- **An owner.** A maintaining team and a named maintainer, so "who may publish this" has an
+  answer.
+- **A promotion gate with measured values beside thresholds.** Not "quality is good" but
+  `threshold_min: 0.85` against `measured_value: 0.72` — which keeps the asset `experimental`,
+  visibly, by arithmetic rather than by opinion. This is the same discipline as escape rate: the
+  number that decides is recorded next to the number required.
+- **Applicability, stated in both directions.** Domains and regions it suits, and the ones it
+  does **not** — plus explicit `known_limitations` and `known_gotchas`. An accelerator that only
+  advertises what it can do will be loaded where it must not be.
+- **A cost envelope.** Token and wall-clock ceilings plus measured p50/p95, so binding one is a
+  priced decision. The kit already treats context as the scarce resource; an unpriced accelerator
+  contradicts that.
+- **Overlay compatibility.** Which client mandates it can satisfy — portability, data residency,
+  crypto requirements, SSO shape — and which it cannot.
+- **Dependencies with reasons.** Version constraints on other accelerators, each with a sentence
+  saying why, so a graph of assets does not become a mystery.
+
+None of this is built. It is recorded here because the promotion ladder is meaningless without a
+gate, and the gate is meaningless without a measured value to compare against — which is the
+same argument `T-20260808-co-change-has-no-eval-harness-so-its-sco` makes for co-change.
 
 ### Line budget is a prerequisite, not a follow-up
 
