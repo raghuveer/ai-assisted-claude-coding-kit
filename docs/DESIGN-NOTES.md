@@ -17,8 +17,10 @@ than whole projects, so a polyglot or partly-modernised repository loads the rig
 part. **§2** is the **solution overlay** — the reference architecture supplied as an input by the
 solution architect: confirmed stack, cloud mandates, and the decisions that are not the coding
 agent's to re-open. It is *given* where an accelerator is *earned*, it is project-scoped and must
-never be exported, and it carries the constraint that outranks the rest — the delivered
-application must be maintainable **without GenAI**, by developers, as-is. §2 also sets out how
+never be exported, and it carries the constraint that outranks the rest — the product must be
+maintainable by a team with **no assistant of any kind**, which is a requirement on the code and
+docs; process artefacts are separately required to be tool-neutral, and the two are not the same
+requirement. §2 also sets out how
 knowledge enters (many sources, two states) and what a published accelerator must carry to be
 safely loadable by another project. **§3** versions accelerators independently of the plugin so a
 project can pin one. **§4** treats context line budget as a prerequisite rather than a follow-up.
@@ -154,15 +156,36 @@ the same two questions: does the choice stay maintainable, and does it serve the
 Reusable-asset development is a separate activity; the technology accelerators *reference* those
 assets rather than containing them.
 
-**The constraint that outranks the rest: the delivered application must be maintainable WITHOUT
-GenAI, by developers, as-is.** The kit, this harness and any coding agent are scaffolding. What
-ships and has to survive is the code and the docs, **ADRs included** — because a team may later
-drop the kit, change tool, or work with no assistant at all, and those artefacts are the entire
-inheritance. Two consequences bind design here: nothing the kit produces may be readable only
-through the kit (derived state is rebuildable and disposable; the durable record is task files,
-git trailers, `events.ndjson`, ADRs and the code), and a decision recorded only in a model's
-context or only in this database is not recorded at all. That is why decisions land as ADRs and
-trailers rather than as chat.
+**The constraint that outranks the rest.** A maintenance team may continue with this kit, adopt a
+different one, use a different coding agent with no kit at all, or maintain the code by hand as
+teams did before any of this existed. **All four must work.** That is two separate requirements
+on two different things, and collapsing them — as an earlier draft of this paragraph did — hides
+the one that actually binds.
+
+**AI-independence is a property of the PRODUCT.** The code and the docs — decision records,
+runbooks, tests — must be ordinary software that a team can read, change and ship with **no
+assistant of any kind**. Hand maintenance is not the edge case; it is the baseline and the
+strictest of the four, because it assumes nothing is available. What that forbids in the
+delivered application: a runtime dependency on a model or an SDK; tests that need a network or a
+model call; a decision record that is a score-card rather than prose a person reads; docs that
+defer to an assistant instead of explaining; and structure that a senior engineer would not
+recognise, chosen because an agent found it convenient.
+
+The rule this puts on the kit: **it must leave the product ordinary.** The kit reviews, records
+and orders work — it does not decide the application's shape, which belongs to the developer and
+the overlay. Anything that would push the product into a form only intelligible with the kit is
+out of bounds, however convenient.
+
+**Tool-neutrality is a property of the PROCESS RESIDUE.** Task files, git trailers and
+`events.ndjson` are artefacts *about* the work, not part of it. They exist so a different kit, a
+different agent, or a later reader can pick up the thread. In the hand-maintenance case they
+become simply irrelevant — deletable in full without touching the product — which is why
+un-adoption has to be possible, and why nothing in the product may ever depend on them.
+
+Derived state (`index.db`, the generated status view, cluster packs) is a rebuildable cache and
+is disposable by construction. And a decision recorded only in a model's context, or only in that
+database, is not recorded at all — which is why decisions land as ADRs and trailers rather than
+as chat.
 
 A third accelerator kind, not a new subsystem:
 
