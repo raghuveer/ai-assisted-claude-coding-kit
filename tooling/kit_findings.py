@@ -318,7 +318,7 @@ def resolve_event(argv):
     build these with printf, and a single quote in a value corrupts an append-only committed log
     permanently. The finding id is the only field the reader keys on, so it is the one that most
     needs to arrive intact."""
-    opts = {"finding": "", "fixed": "", "commit": "", "note": "", "at": ""}
+    opts = {"finding": "", "fixed": "", "commit": "", "note": "", "at": "", "task": ""}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -353,8 +353,13 @@ def resolve_event(argv):
         raise Rejected("--at must be YYYY-MM-DDTHH:MM:SS[.ffffff]Z, got %r.\n"
                        "  It is the ordering key for marks on one finding, not a label."
                        % opts["at"])
+    # `task` first, and named `task`, because that is the key the generic event reader binds to
+    # `event.task_id`. Without it a mark is recorded outside every per-task view in the kit --
+    # a task timeline that never shows its own findings being resolved.
     event = {"kind": "finding-fixed", "at": sanitise(opts["at"]),
              "finding": sanitise(opts["finding"]), "fixed": int(opts["fixed"])}
+    if opts["task"]:
+        event["task"] = sanitise(opts["task"])
     # Omitted rather than written empty: an absent key reads as "not supplied", where
     # `"commit":""` reads as a commit that was supplied and is blank.
     for k in ("commit", "note"):

@@ -23,11 +23,19 @@ Stop unless every box is ticked. Record the answers; they are part of the result
 **The kit**
 
 - [ ] Working tree clean, full conformance green, CI green on every platform.
-- [ ] No task at `progress` carrying an unfixed critical. **Computable — run it, do not judge it:**
+- [ ] No unfixed critical anywhere in the backlog. **Computable — run it, do not judge it:**
 
-      sqlite3 .project/index.db "SELECT COUNT(*) FROM finding f JOIN task t ON t.id=f.task_id
-                                  WHERE f.severity='critical' AND f.fixed_at IS NULL
-                                    AND t.state='progress';"
+      sqlite3 .project/index.db "SELECT COUNT(*) FROM finding
+                                  WHERE severity='critical' AND fixed_at IS NULL
+                                    AND COALESCE(vindicated,1) <> 0;"
+
+      **Not filtered by task state.** Revision 3 of this box read `AND t.state='progress'`,
+      which meant a critical on a *done* task did not count — so closing the task cleared the
+      pre-flight exactly as well as fixing the defect, and two of this repository's own
+      outstanding criticals were invisible to it. A gate you can satisfy by changing a status
+      field is not a gate. Refuted findings (`vindicated=0`) ARE excluded, because a reviewer
+      being wrong is not outstanding work; `kit-status.sh` prints that exclusion as its own
+      count so it cannot be mistaken for a lower number.
 
       Zero, or stop. `kit-status.sh` prints the same thing per task under **Outstanding
       criticals**, and `kit-resolve.sh --list --severity critical --unfixed` names them.

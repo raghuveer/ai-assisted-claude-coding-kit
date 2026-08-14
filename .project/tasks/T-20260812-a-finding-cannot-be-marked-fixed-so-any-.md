@@ -82,7 +82,15 @@ worse than no mark at all.
 
 The id is now `<at>:<FNV-1a 32 of the event line>`. The line is append-only, so the id is
 stable for exactly as long as the event is, and it is a function of content rather than of
-position. Byte-identical lines take an occurrence suffix instead of collapsing: two
+position.
+
+**A third option was available and is not in this write-up, which costed content-hashing only
+against `at:n`.** A WRITER-ASSIGNED id — a uuid emitted by `kit_findings.py` at record time —
+is stable by construction, needs no hash, and cannot collide. It was rejected because the 219
+findings already in the log carry no such field, so every one of them would need a derived id
+anyway and the repository would run two identity schemes at once; and because an id that is not
+a function of the line cannot be recomputed if the field is ever lost. Content-hashing is one
+rule for old and new rows alike. That is the argument, and it was missing. Byte-identical lines take an occurrence suffix instead of collapsing: two
 pre-contract findings on one task in one second serialise alike, and dropping one silently is
 the failure mode this repository exists to refuse. A true hash collision — two different lines,
 one id — keeps both rows and is announced on stderr.
@@ -152,6 +160,53 @@ The rest, all fixed and each mutation-proved:
 **Not fixed, filed instead:** `kit-review-record.sh` builds each reply in a `mktemp -d` with a
 cleanup trap and records only the `findings` array, so the reviewer's `verdict` and `narrative`
 are destroyed. The reasoning behind every finding above now exists nowhere.
+
+## Unmet at closure — stated, not left blank
+
+An unticked box on a closed task cannot be told from a forgotten one, so the one criterion that
+is NOT met is named here rather than left as an empty checkbox someone has to interpret.
+
+**AC2 — "open criticals on task X returns 0 on this repository today" — IS NOT MET, deliberately.**
+It returns 11. Seven were marked fixed against the commit that did each; two were re-read and
+confirmed genuinely open; nine cannot be assessed at all because they predate the `summary`
+column, and are filed as `T-20260813-nine-criticals-predate-summary-and-canno`. The criterion
+itself anticipated this: it said that if the query did not return 0, either the data or the
+claim was wrong and the discrepancy was the finding. The claim was wrong. Forcing the number to
+zero by marking findings nobody can read would be the laundering this whole task exists to stop.
+
+## T3 approach round (2026-08-14): 10 findings, 4 major
+
+Run after two implementation rounds had converged, on the argument that convergence in one
+dimension says nothing about the others. It found four majors neither implementation round
+raised, because none of them is a line-level defect:
+
+- **The gate was bypassable by closing the task.** §0 filtered `t.state='progress'`, so a
+  critical on a done task did not count — "fix it" and "close it" cleared the pre-flight
+  equally, and two of this repository's own outstanding criticals were invisible to it. The
+  gate no longer filters by task state, and criticals on closed tasks are named separately.
+- **`--commit` was never validated**, so a mark with no evidence and a mark citing a SHA that
+  never existed were the same row. It must now resolve, and is stored in full.
+- **Nothing reacted to a fix commit leaving the history.** Checked on rebuild and reported. A
+  REVERT is still not detected and the limitation is written down rather than implied.
+- **No authority model, in the worst possible place.** The instruction to mark findings fixed
+  was written into `skills/checkpoint/SKILL.md` — the file the AGENT reads — telling the session
+  that wrote the code to clear the gate that gates it. This is the wrong-addressee defect the
+  provenance work found twice and split both CLAUDE files to prevent, repeated by the same hand
+  that fixed it there. Split by addressee now, in the skill and in `.claude/CLAUDE.md`, and
+  stated as convention rather than mechanism because nothing here can enforce it.
+
+The six minors: refuted criticals blocked the gate forever with no honest way to retire them
+(now excluded and counted); marks are ordered by local wall clock, which `merge=union` puts two
+machines' worth of into one file (documented, not solved — see below); `finding-fixed` events
+carried no `task` key so no task timeline showed its findings resolved; the identity write-up
+never named the writer-assigned alternative; the nine-criticals task said four tasks when three
+was right; and this section exists because of the last one.
+
+**Known and NOT fixed, deliberately:** two marks on one finding from two machines are ordered by
+their local clocks, and nothing here can establish a true order between them. A monotonic
+counter would collide across branches, and a vector clock is a distributed-systems apparatus
+this kit has no other use for. Single-operator use is unaffected; the limit is stated in
+`kit-resolve.sh` so it is a known bound rather than a surprise.
 
 ## Notes
 

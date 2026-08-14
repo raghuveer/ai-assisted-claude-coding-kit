@@ -1368,6 +1368,11 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   F="$KIT/tooling/kit-finding.sh"; R="$KIT/tooling/kit-resolve.sh"
   Q() { sqlite3 .project/index.db "$1" 2>/dev/null | tr -d '\015'; }
   reindex() { rm -f .project/index.db; bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1; }
+  # Real commits, because `--commit` must now RESOLVE. The fixture used to cite `deadbee` and
+  # `aaaaaaa`, which is exactly the defect an approach reviewer named: a mark with no evidence
+  # and a mark citing a SHA that never existed were the same row, and the second reads as
+  # substantiated. A fixture that cannot tell them apart cannot catch it either.
+  newsha() { git commit -q --no-verify --allow-empty -m "fixture commit $1"; git rev-parse HEAD; }
 
   printf '%s' '{"findings":[{"class":"fail-open","severity":"critical","summary":"the first one, which gets fixed"},{"class":"correctness","severity":"critical","summary":"the second one, which stays open"}]}' \
     | bash "$F" --task T-r --agent implementation-reviewer --json >/dev/null 2>&1
@@ -1416,7 +1421,8 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   bash "$R" --finding "T-r:nosuchid" --fixed >/dev/null 2>&1; bogus=$?
   eva=$(grep -c '"kind":"finding-fixed"' "$EV" 2>/dev/null); eva=${eva:-0}
 
-  bash "$R" --finding "$fid" --fixed --commit deadbee --note "closed by the one-writer move" \
+  SHA_FID=$(newsha fid)
+  bash "$R" --finding "$fid" --fixed --commit "$SHA_FID" --note "closed by the one-writer move" \
     >/dev/null 2>&1; markrc=$?
   bash "$KIT/tooling/kit-vindicate.sh" --task T-r --class fail-open --real >/dev/null 2>&1
   # Rebuilt FROM SCRATCH, not updated in place. A mark that lived only in the database would
@@ -1424,7 +1430,12 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   reindex
   fx=$(Q "SELECT COALESCE(fixed_at,'NULL') FROM finding WHERE id='$fid';")
   fc=$(Q "SELECT COALESCE(fixed_commit,'NULL') FROM finding WHERE id='$fid';")
-  fnote=$(Q "SELECT COALESCE(fixed_note,'NULL') FROM finding WHERE id='$fid';")
+  # Read through --list, the reader this field was added for. Selecting the column directly
+  # proves the column is populated and says nothing about whether anything surfaces it, which
+  # is the whole complaint the note was filed under.
+  case "$(bash "$R" --list --task T-r 2>/dev/null)" in
+    *"(fixed: closed by the one-writer move)"*) fnote=1 ;; *) fnote=0 ;;
+  esac
   vd=$(Q "SELECT COALESCE(vindicated,'NULL') FROM finding WHERE id='$fid';")
   openc=$(Q "SELECT COUNT(*) FROM finding WHERE severity='critical' AND fixed_at IS NULL;")
 
@@ -1438,7 +1449,8 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   bash "$KIT/tooling/kit-vindicate.sh" --task T-r --class correctness --real >/dev/null 2>&1
   bash "$KIT/tooling/kit-vindicate.sh" --task T-r --class perf --false >/dev/null 2>&1
   pid=$(Q "SELECT id FROM finding WHERE class='perf' AND at='2000-01-03T00:00:00Z';")
-  bash "$R" --finding "$pid" --fixed --commit ccccccc >/dev/null 2>&1
+  SHA_PID=$(newsha pid)
+  bash "$R" --finding "$pid" --fixed --commit "$SHA_PID" >/dev/null 2>&1
   reindex
   c_rf=$(Q "SELECT COUNT(*) FROM finding WHERE vindicated=1 AND fixed_at IS NOT NULL;")
   c_ro=$(Q "SELECT COUNT(*) FROM finding WHERE vindicated=1 AND fixed_at IS NULL;")
@@ -1458,7 +1470,8 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
     | bash "$F" --task T-r2 --agent implementation-reviewer --json >/dev/null 2>&1
   reindex
   tid=$(Q "SELECT id FROM finding WHERE summary LIKE 'a critical on the OTHER task%';")
-  bash "$R" --finding "$tid" --fixed --commit ddddddd >/dev/null 2>&1
+  SHA_TID=$(newsha tid)
+  bash "$R" --finding "$tid" --fixed --commit "$SHA_TID" >/dev/null 2>&1
   reindex
   t2fx=$(Q "SELECT COALESCE(fixed_commit,'NULL') FROM finding WHERE id='$tid';")
   t1fx=$(Q "SELECT COALESCE(fixed_commit,'NULL') FROM finding WHERE id='$fid';")
@@ -1476,9 +1489,11 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   # first, the fix wins, and `--open` silently does nothing. That is what happened: green here,
   # red on ubuntu-latest, because a container is fast enough to put them in the same second.
   # Timestamps are sub-second now, and this asserts the property rather than the format.
-  bash "$R" --finding "$oid" --fixed --commit aaaaaaa >/dev/null 2>&1
+  SHA_A=$(newsha a)
+  bash "$R" --finding "$oid" --fixed --commit "$SHA_A" >/dev/null 2>&1
   bash "$R" --finding "$oid" --open >/dev/null 2>&1
-  bash "$R" --finding "$oid" --fixed --commit bbbbbbb >/dev/null 2>&1
+  SHA_B=$(newsha b)
+  bash "$R" --finding "$oid" --fixed --commit "$SHA_B" >/dev/null 2>&1
   reindex
   lastw=$(Q "SELECT COALESCE(fixed_commit,'NULL') FROM finding WHERE id='$oid';")
   # No two marks may share a timestamp -- if any do, the one that loses is decided by string
@@ -1500,11 +1515,40 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   # Both rows survive -- neither line is dropped -- but a mark on the shared base id is
   # withheld, because attaching it to one of them would be a guess that asserts a specific
   # defect was fixed.
-  bash "$R" --finding "2000-01-04T00:00:00Z:77087be7" --fixed --commit eeeeeee >/dev/null 2>&1
+  # REFUSED WHERE IT IS TYPED. This used to be accepted with exit 0 and a success message while
+  # every rebuild silently discarded it -- and the fixture asserted BOTH halves of that
+  # mismatch on adjacent lines without noticing it was documenting a false success.
+  HEADSHA=$(git rev-parse HEAD)
+  bash "$R" --finding "2000-01-04T00:00:00Z:77087be7" --fixed --commit "$HEADSHA" >/dev/null 2>&1
   colmark=$?
+  reindex
+  ambflag=$(Q "SELECT COUNT(*) FROM finding WHERE at='2000-01-04T00:00:00Z' AND id_ambiguous=1;")
+
+  # The indexer keeps its own refusal, and it is now the only way an ambiguous mark can arrive:
+  # written on a branch where the colliding line did not yet exist and merged in afterwards.
+  # Planted by hand for that reason -- kit-resolve refuses it at the keyboard, so a fixture that
+  # only went through the command could no longer reach this path at all.
+  printf '{"kind":"finding-fixed","at":"2030-06-02T00:00:00.000000Z","task":"T-r","finding":"2000-01-04T00:00:00Z:77087be7","fixed":1}\n' >> "$EV"
   reindex
   colfixed=$(Q "SELECT COUNT(*) FROM finding WHERE at='2000-01-04T00:00:00Z' AND fixed_at IS NOT NULL;")
   ambmeta=$(Q "SELECT value FROM meta WHERE key='finding_ambiguous_marks';")
+
+  # A SHA THAT DOES NOT RESOLVE IS NOT EVIDENCE. `deadbee` was accepted by the old code and by
+  # this fixture, which is how a mark citing a commit that never existed came to read as
+  # substantiated.
+  bash "$R" --finding "$oid" --fixed --commit deadbeefdeadbeef >/dev/null 2>&1; badsha=$?
+  # A mark whose commit later leaves the history is reported rather than left resolving to air.
+  printf '{"kind":"finding-fixed","at":"2030-06-01T00:00:00.000000Z","task":"T-r","finding":"%s","fixed":1,"commit":"%s"}\n' \
+    "$pid" "0000000000000000000000000000000000000001" >> "$EV"
+  reindex
+  missmeta=$(Q "SELECT value FROM meta WHERE key='finding_fix_commit_missing';")
+  # The mark carries its task, so a task timeline shows its findings being resolved. Compared
+  # against the number of marks made on T-r findings rather than a literal: EVERY one must carry
+  # it, and a literal would quietly stop covering the marks added later in this fixture.
+  marktask=$(Q "SELECT COUNT(*) FROM event WHERE kind='finding-fixed' AND task_id='T-r';")
+  marksonr=$(Q "SELECT COUNT(*) FROM event e WHERE e.kind='finding-fixed'
+                 AND EXISTS (SELECT 1 FROM finding f WHERE f.task_id='T-r'
+                              AND e.payload LIKE '%'||f.id||'%');")
 
   # An orphan mark ALREADY IN the log -- from a hand edit, or a merge that brought the mark
   # without the finding -- is reported. Applied as an UPDATE it would match nothing and exit 0,
@@ -1536,11 +1580,46 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   s_orph=$(grep -c 'name no known finding' STATUS.generated.md); s_orph=${s_orph:-0}
   s_amb=$(grep -c 'REFUSED as ambiguous' STATUS.generated.md); s_amb=${s_amb:-0}
 
+  # CLOSING A TASK IS NOT FIXING ITS CRITICALS, and a REFUTED critical is not outstanding work.
+  # A third task carries one of each: the gate used to filter `state='progress'`, so closing the
+  # task cleared it exactly as well as fixing the defect.
+  printf -- '---\nid: T-r3\ntitle: r3\ntier: T2\n---\nb\n' > .project/tasks/T-r3.md
+  git add -A && git commit -q --no-verify -m "chore: third task"
+  printf '%s' '{"findings":[{"class":"fail-open","severity":"critical","summary":"critical on a task that then gets closed"},{"class":"race","severity":"critical","summary":"critical that a reviewer later refuted"}]}' \
+    | bash "$F" --task T-r3 --agent implementation-reviewer --json >/dev/null 2>&1
+  bash "$KIT/tooling/kit-vindicate.sh" --task T-r3 --class race --false >/dev/null 2>&1
+  printf '{"task":"T-r3","kind":"done","at":"2030-07-01T00:00:00Z"}\n' >> "$EV"
+  reindex
+  r3state=$(Q "SELECT state FROM task WHERE id='T-r3';")
+  gatecount=$(Q "SELECT COUNT(*) FROM finding WHERE severity='critical' AND fixed_at IS NULL
+                  AND COALESCE(vindicated,1) <> 0;")
+  gateclosed=$(Q "SELECT COUNT(*) FROM finding f JOIN task t ON t.id=f.task_id
+                   WHERE f.severity='critical' AND f.fixed_at IS NULL
+                     AND COALESCE(f.vindicated,1) <> 0 AND t.state IN ('done','abandoned');")
+  gaterefuted=$(Q "SELECT COUNT(*) FROM finding WHERE severity='critical' AND fixed_at IS NULL
+                    AND vindicated=0;")
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  s_closed=$(grep -c 'already done or abandoned' STATUS.generated.md); s_closed=${s_closed:-0}
+  s_refuted=$(grep -c 'excluded as refuted' STATUS.generated.md); s_refuted=${s_refuted:-0}
+
+  # AN ABSENT COUNTER IS NOT A ZERO COUNTER. Reading them with ${x:-0} made a stale index assert
+  # that no mark had failed to apply -- the same fail-open as this section's critical, one level
+  # down, shipped by the fix for it.
+  sqlite3 .project/index.db "DELETE FROM meta WHERE key LIKE 'finding_%';" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  s_absent=$(grep -c 'ABSENT from this index' STATUS.generated.md); s_absent=${s_absent:-0}
+  reindex
+
   # THE CLEAN CASE MUST BE ABLE TO PRINT. Its line began with `-`, which bash printf parses as
   # an option, so it errored to stderr and emitted NOTHING -- an empty section, which reads as
   # no criticals. It had never run, in this case or in the failure case below.
+  # Its own commit: reusing SHA_FID here put several marks in the log carrying that SHA, and the
+  # "survives a rebuild" assertion selects the mark BY its commit -- so the subquery returned
+  # three timestamps and compared them against one. The message read "got X, wanted X" with the
+  # difference off the end of the line, which is its own small lesson about naming a condition.
+  SHA_ALL=$(newsha all)
   for c in $(Q "SELECT id FROM finding WHERE severity='critical' AND fixed_at IS NULL;"); do
-    bash "$R" --finding "$c" --fixed --commit fffffff >/dev/null 2>&1
+    bash "$R" --finding "$c" --fixed --commit "$SHA_ALL" >/dev/null 2>&1
   done
   reindex
   bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
@@ -1549,15 +1628,23 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   # THE UNMEASURABLE CASE. An index built before `fixed_at` existed passes the readability
   # check at the top of kit-status.sh, because `task` is intact -- only this section notices.
   # Silence there is the critical its own T3 round found.
+  # DROP COLUMN needs SQLite 3.35+, and its status was DISCARDED. On an older toolchain the
+  # column survived, the two assertions below went red, and they blamed the code for something
+  # that was never about the code -- the CRLF-guard failure again, where a check red for an
+  # unrelated reason stops being read.
   sqlite3 .project/index.db "ALTER TABLE finding DROP COLUMN fixed_at;" >/dev/null 2>&1
+  altrc=$?
   bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
   s_unmeas=$(grep -c 'NOT MEASURED' STATUS.generated.md); s_unmeas=${s_unmeas:-0}
   s_falseclean=$(grep -c 'none outstanding' STATUS.generated.md); s_falseclean=${s_falseclean:-0}
   # Same broken index: a listing must FAIL rather than print nothing and exit 0.
   bash "$R" --list --severity critical >/dev/null 2>&1; listrc=$?
   reindex
-  # ...and a genuinely empty result is a different statement, said rather than left blank.
-  bash "$R" --list --severity nosuchseverity >/dev/null 2>&1; listempty=$?
+  # ...and a genuinely empty result is a different statement, SAID rather than left blank. The
+  # first version asserted only exit 0 -- which was already true before the fix, so it could not
+  # fail for the thing it was named after. The message is what is checked now.
+  listemptymsg=$(bash "$R" --list --severity nosuchseverity 2>&1); listempty=$?
+  case "$listemptymsg" in *"not a failed query"*) listesaid=1 ;; *) listesaid=0 ;; esac
 
   # Probing a database that is not there must not CREATE one: `sqlite3 <path> <query>` does.
   # A stray empty index.db is later read as an index with no tasks in it.
@@ -1574,27 +1661,39 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   want "an unknown id is refused"              "$bogus" 2
   want "  ...and nothing is appended"          "$eva" "$evb"
   want "a known id is accepted"                "$markrc" 0
-  want "the mark survives a rebuild"           "$fx" "$(Q "SELECT at FROM event WHERE kind='finding-fixed' AND payload LIKE '%deadbee%';")"
-  want "  ...carrying its commit"              "$fc" "deadbee"
-  want "  ...and its note, which has a reader" "$fnote" "closed by the one-writer move"
+  want "the mark survives a rebuild"           "$fx" "$(Q "SELECT at FROM event WHERE kind='finding-fixed' AND payload LIKE '%'||'$SHA_FID'||'%';")"
+  want "  ...carrying its commit"              "$fc" "$SHA_FID"
+  want "  ...and its note, surfaced by --list" "$fnote" 1
   want "all four vindicated x fixed states"    "$four" 1
-  want "a mark on a second task applies"       "$t2fx" "ddddddd"
-  want "  ...without disturbing the first"     "$t1fx" "deadbee"
+  want "a mark on a second task applies"       "$t2fx" "$SHA_TID"
+  want "  ...without disturbing the first"     "$t1fx" "$SHA_FID"
   want "vindicated is untouched by fixing"     "$vd" 1
   want "one critical fixed leaves one open"    "$openc" 1
   want "--open retracts the fix"               "$fx2" "NULL"
   want "  ...without retracting the verdict"   "$vd2" 1
-  want "the last of three rapid marks wins"    "$lastw" "bbbbbbb"
+  want "the last of three rapid marks wins"    "$lastw" "$SHA_B"
   want "  ...no two marks share a timestamp"   "$nat" "$nmk"
   want "an orphan mark is named, not ignored"  "$orph" 1
   want "a colliding pair stays two rows"       "$ncol" 2
   want "  ...and the collision is counted"     "$colmeta" 1
-  want "a mark on that id is accepted"         "$colmark" 0
-  want "  ...but REFUSED, not applied"         "$colfixed" 0
-  want "  ...and the refusal is counted"       "$ambmeta" 1
-  want "a whole-second mark starts its second" "$t2keep" "ddddddd"
+  want "a mark on that id is REFUSED when typed" "$colmark" 2
+  want "  ...so nothing is marked fixed"       "$colfixed" 0
+  want "  ...and both rows are flagged"        "$ambflag" 2
+  want "a merged-in ambiguous mark is refused" "$ambmeta" 1
+  want "a SHA that does not resolve is refused" "$badsha" 2
+  want "a vanished fix commit is reported"     "$missmeta" 1
+  want "every mark carries its task"           "$marktask" "$marksonr"
+  want "the stale-index fixture was built"     "$altrc" 0
+  want "an empty listing SAYS it is empty"     "$listesaid" 1
+  want "a whole-second mark starts its second" "$t2keep" "$SHA_TID"
   want "a malformed --at is refused"           "$atbad" 2
   want "  ...and a legal one is not"           "$atgood" 0
+  want "the closing task is really closed"     "$r3state" "done"
+  want "  ...its critical still counts"        "$gateclosed" 1
+  want "  ...and status names it"              "$s_closed" 1
+  want "a refuted critical leaves the gate"    "$gaterefuted" 1
+  want "  ...and the exclusion is named"       "$s_refuted" 1
+  want "absent counters are not read as zero"  "$s_absent" 1
   want "status reports the orphan"             "$s_orph" 1
   want "status reports the refusal"            "$s_amb" 1
   want "a clean repo says so out loud"         "$s_none" 1

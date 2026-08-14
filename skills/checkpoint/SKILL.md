@@ -72,12 +72,26 @@ If a review call was later shown wrong, or right, say so:
 `kit-vindicate.sh --task <id> --class <class> --real|--false`. Unvindicated findings promote
 on raw counts, which launders reviewer noise into shared accelerators.
 
-When a finding has actually been ADDRESSED, record that too — it is a different question and
-`kit-vindicate` does not answer it: `kit-resolve.sh --finding <id> --fixed [--commit <sha>]`,
-with `--list --severity critical --unfixed` to get the ids. An unmarked finding counts as
-outstanding, so any gate on open criticals — the trial protocol's first pre-flight box, among
-others — reads the backlog as blocked until the fixes are recorded. Marking is not a claim
-that the work was good; it is a claim that it happened, and `--open` retracts it.
+Whether a finding has been ADDRESSED is a different question again, and `kit-vindicate` does not
+answer it. It is recorded with `kit-resolve.sh --finding <id> --fixed [--commit <sha>]`, and
+`kit-resolve.sh --list --severity critical --unfixed` prints the ids. An unmarked finding counts
+as outstanding, so a gate on open criticals — the trial protocol's first pre-flight box among
+them — reads the backlog as blocked until the fixes are recorded.
+
+**If you are an agent reading this: list the ids and PROPOSE the marks in your summary. Do not
+run `--fixed` on findings against your own work.** Marking clears the gate that gates you, and a
+session certifying its own output is the one signature that carries no information. Nothing
+mechanically stops you; this is a convention the operator enforces, like `Via:`.
+
+> Why this is spelled out: the first version of this paragraph simply told the reader to mark
+> findings fixed, in a file only the agent reads. That is the wrong-addressee defect the
+> provenance work found twice and split both CLAUDE files to prevent — repeated here by the
+> same hand that fixed it there. An approach reviewer found it.
+
+**For the operator:** you run `--fixed`, after deciding the fix is real. `--commit` must name a
+commit that resolves, and a mark whose commit later leaves the history is reported by
+`kit-index.sh`. `--open` retracts a mark. A revert is NOT detected — the commit still exists, so
+the mark still reads as addressed.
 
 ## 4. Decision-record check
 

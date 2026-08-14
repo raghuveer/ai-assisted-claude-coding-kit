@@ -21,8 +21,15 @@
   a value in your summary and stop there. A self-reported `via: kit` from the agent that
   did the work is the one value nobody should take on trust.
 
+- A finding is marked addressed with `kit-resolve.sh --finding ID --fixed`, which clears it from
+  the outstanding-criticals gate. **If you are an agent reading this: propose the mark in your
+  summary and stop.** A session certifying its own output is the one signature that carries no
+  information, and this is the same rule as `Via:` for the same reason.
+
 **For the operator, not the agent** — every instruction in this block is yours:
 
+- You run `kit-resolve.sh --fixed`, after deciding the fix is real. `--commit` must resolve, and
+  a mark whose commit later leaves the history is reported on rebuild. A REVERT is not detected.
 - You put `Via:` on the trailer, after deciding it.
 - Retract a wrong value with `Via: unknown` on a later commit, never with `Via: manual`;
   those mean different things and only one is a claim.

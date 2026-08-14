@@ -29,9 +29,15 @@ to abolish. Nobody can say what the defect WAS, so nobody can say it was fixed:
     2026-08-09T18:16:06Z:e789d333  fail-open    a-task-id-matching-no-task-file-is-count     security-reviewer/opus
     2026-08-09T18:20:02Z:04160de8  fail-open    nothing-invokes-kit-finding-so-the-findi     security-reviewer/opus
 
-Until they are resolved one way or another, four tasks stay red at the trial protocol's §0
+Until they are resolved one way or another, **three** tasks stay red at the trial protocol's §0
 pre-flight gate for reasons nobody can read, which is a gate that blocks without informing —
 the failure one step removed from the one just fixed.
+
+> This said "four" when filed. The nine findings span five tasks, but two of those are `done`,
+> and at the time the gate excluded anything not at `progress` — so only three blocked it. An
+> approach reviewer caught the arithmetic a day later. The gate no longer filters by task state
+> (closing a task was clearing it), so all five now count, which makes the original "four"
+> wrong in both directions at once.
 
 ## Why this is tractable, and where it stops being tractable
 

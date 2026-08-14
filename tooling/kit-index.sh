@@ -871,6 +871,12 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
     }
     END {
       for (i=1; i<=nv; i++) print v[i]
+      # Flag every row at a collided base, so the refusal is visible to kit-resolve.sh at the
+      # moment a mark is TYPED. Without it the tool says "recorded" and the indexer discards the
+      # mark on every rebuild -- a success message for something that never takes effect.
+      for (b in collbase) {
+        printf "UPDATE finding SET id_ambiguous=1 WHERE id=\047%s\047 OR (id > \047%s:\047 AND id < \047%s;\047);\n", b, b, b
+      }
       for (i=1; i<=nf; i++) {
         # A mark naming an id no finding has is the failure this whole change exists to make
         # impossible, so it is NAMED rather than run as an UPDATE that matches nothing and
@@ -1131,6 +1137,27 @@ sqlite3 "$NEW" < "$SQL" ||
 rm -f "$FAILED_MARK"
 mv -f "$NEW" "$DB" ||
   { kit_warn "could not replace ${DB#$ROOT/}; it was left unchanged."; build_failed; }
+
+# A fix mark names a commit. Nothing checked that the commit is still in this history, so a
+# branch that was rebased away, or a SHA that never existed, left the finding marked fixed
+# forever with its evidence pointing at nothing. Checked here rather than in SQL because only
+# git can answer it, and only for rows that carry a SHA -- a handful, not a walk of the log.
+#
+# WHAT THIS DOES NOT DETECT, said plainly: a REVERT. A reverted fix leaves its commit in
+# history and adds another undoing it, so the mark still resolves and still reads as addressed.
+# Deciding whether a later commit undoes an earlier one is not a lookup, and pretending this
+# covers it would be the false-rationale this kit exists to refuse.
+MISSING=0
+for _c in $(sqlite3 "$DB" "SELECT DISTINCT fixed_commit FROM finding
+                            WHERE fixed_commit IS NOT NULL AND fixed_commit <> '';" 2>/dev/null |
+            tr -d '\r'); do
+  git -C "$ROOT" cat-file -e "${_c}^{commit}" 2>/dev/null || MISSING=$((MISSING + 1))
+done
+sqlite3 "$DB" "INSERT OR REPLACE INTO meta VALUES('finding_fix_commit_missing','$MISSING');" 2>/dev/null
+if [ "$MISSING" -gt 0 ]; then
+  kit_warn "$MISSING fix mark(s) name a commit that is not in this history."
+  kit_warn "  The finding still reads as addressed and its evidence resolves to nothing."
+fi
 
 # Recovering these commits keeps derived status correct, but doing it quietly would hide a
 # merge flow that mangles trailers -- and the next thing that reads them (a CI gate, another

@@ -112,6 +112,12 @@ CREATE TABLE finding (
                                     -- "we checked". Derived from `finding-fixed` events, never
                                     -- written directly; see kit-resolve.sh.
   fixed_commit TEXT,                -- optional SHA of the commit that addressed it
+  id_ambiguous INTEGER,             -- 1 when another event shares this row's id base, i.e. two
+                                    -- DIFFERENT lines hashed alike. Marks on such a row are
+                                    -- refused, and the refusal has to be available where the
+                                    -- mark is TYPED, not only where it is applied -- otherwise
+                                    -- kit-resolve reports success for a mark every rebuild
+                                    -- then discards.
   fixed_note   TEXT                 -- why it is considered addressed. Sanitised and recorded
                                     -- from the first day and read by nothing for exactly as
                                     -- long: a write-only field is a field whose absence nobody

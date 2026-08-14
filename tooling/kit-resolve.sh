@@ -20,6 +20,22 @@
 # with two `fail-open` criticals, one fixed and one open, would read as clean the moment either
 # was marked -- a gate reporting no open criticals while one is open is worse than no gate.
 # So this keys on the finding's own id. See --list to get one.
+#
+# WHO MAY RUN THIS. Marking a finding addressed clears a gate. The session that wrote the code
+# is the one party that must not also certify it -- and the first version of this shipped the
+# instruction to do so into `skills/checkpoint/SKILL.md`, which is the file the AGENT reads.
+# That is the wrong-addressee defect the provenance work found twice and split both CLAUDE
+# files to prevent, repeated by the same hand that fixed it.
+#
+# **If you are an agent: propose the mark in your summary and stop.** Nothing here mechanically
+# stops you -- there is no identity to check against and inventing one would be theatre. It is a
+# convention the operator enforces, stated so it can be enforced, exactly as `Via:` is.
+#
+# ORDERING ACROSS MACHINES IS A KNOWN LIMIT. Two marks on one finding resolve last-write-wins
+# over `at`, which is a LOCAL wall clock -- and .gitattributes marks events.ndjson merge=union,
+# so two developers` clocks interleave in one file. Nothing here can establish a true order
+# between them. A monotonic counter collides across branches; a vector clock is apparatus this
+# kit has no other use for. Single-operator use is unaffected. A stated bound, not an oversight.
 set -uo pipefail
 . "$(dirname "$0")/kit-lib.sh"
 ROOT=$(kit_root) || exit 0
@@ -98,10 +114,40 @@ if db_readable; then
     kit_warn "  (ids are content-derived; they change only if the event line does)"
     exit 2
   fi
+  # REFUSED HERE, not silently discarded later. An id at a collided base cannot be attached to
+  # one of its findings without guessing, so the indexer withholds the mark -- and this used to
+  # print "kit: fixed recorded" anyway. A success message for something no rebuild will ever
+  # apply is worse than an error, because the operator stops thinking about it.
+  amb=$(sqlite3 -noheader "$DB" "SELECT COALESCE(id_ambiguous,0) FROM finding WHERE id='$fesc';" 2>/dev/null)
+  if [ "${amb:-0}" = 1 ]; then
+    kit_warn "'$finding' is AMBIGUOUS: another event hashes to the same id"
+    kit_warn "  a mark here would be a guess about which finding it addresses, so it is refused"
+    kit_warn "  (the indexer would withhold it on every rebuild; this fails now instead)"
+    exit 2
+  fi
+  # The task the finding belongs to, carried on the event so a task timeline shows its findings
+  # being resolved. Without it `event.task_id` is empty and the mark exists outside every
+  # per-task view in the kit.
+  ftask=$(sqlite3 -noheader "$DB" "SELECT COALESCE(task_id,'') FROM finding WHERE id='$fesc';" 2>/dev/null)
 else
   # No index is not permission to guess. The check is the point of the command.
   kit_warn "index at ${DB#$ROOT/} is missing or unreadable; run kit-index.sh first"
   exit 1
+fi
+
+# A SHA THAT DOES NOT RESOLVE IS NOT EVIDENCE. `--commit` was optional and unchecked, so a mark
+# with no evidence and a mark citing a commit that never existed were the same row -- and the
+# second is worse, because it reads as substantiated. Optional still; but if given, it must name
+# a commit in this repository.
+if [ -n "$commit" ]; then
+  if ! git -C "$ROOT" cat-file -e "${commit}^{commit}" 2>/dev/null; then
+    kit_warn "--commit '$commit' does not name a commit in this repository"
+    kit_warn "  a mark citing a SHA that does not resolve reads as evidence and is not"
+    exit 2
+  fi
+  # Stored in full. An abbreviation that is unambiguous today collides as the repository grows,
+  # and the mark outlives the ambiguity.
+  commit=$(git -C "$ROOT" rev-parse "${commit}^{commit}" 2>/dev/null)
 fi
 
 mkdir -p "$ROOT/$STATE_DIR"
@@ -113,7 +159,8 @@ mkdir -p "$ROOT/$STATE_DIR"
 # resolution -- two marks on one finding in the same second are order-ambiguous and the
 # retraction loses -- and `date -u` cannot produce it portably, because BSD date has no %N.
 _out=$(python3 "$(dirname "$0")/kit_findings.py" --resolve \
-         --finding "$finding" --fixed "$verdict" --commit "$commit" --note "$note") || {
+         --finding "$finding" --fixed "$verdict" --commit "$commit" --note "$note" \
+         --task "${ftask:-}") || {
   kit_warn "refusing to record: the event could not be serialised"; exit 1; }
 
 # The append is CHECKED, and the value is built before it. Unchecked, a full or unwritable

@@ -494,14 +494,27 @@ fi
 #
 # So: the exit status is READ, `--` ends option parsing, and the three states -- unreadable,
 # none, some -- are three different pieces of output.
+# A REFUTED critical is not outstanding work. `vindicated=0` means a reviewer was wrong, and
+# there was no honest way to retire such a finding -- `--open`/`--fixed` say whether it was
+# ADDRESSED, and "we did nothing because it was not a defect" is neither. It stays in the table,
+# is excluded from the gate, and is counted below so the exclusion is visible rather than
+# arithmetic nobody can see.
+CRITFALSE=$(q "SELECT COUNT(*) FROM finding
+                WHERE severity='critical' AND fixed_at IS NULL AND vindicated=0;")
 OPENCRIT=$(q "SELECT COALESCE(NULLIF(f.task_id,''),'(unattributed)')||'  '||COUNT(*)||
                      '  ['||COALESCE(NULLIF(t.state,''),'no task file')||']'
                 FROM finding f LEFT JOIN task t ON t.id = f.task_id
                WHERE f.severity='critical' AND f.fixed_at IS NULL
+                 AND COALESCE(f.vindicated,1) <> 0
                GROUP BY f.task_id ORDER BY COUNT(*) DESC;"); OCRC=$?
-CRITTOT=$(q "SELECT COUNT(*) FROM finding WHERE severity='critical' AND fixed_at IS NULL;")
-CRITPROG=$(q "SELECT COUNT(*) FROM finding f JOIN task t ON t.id=f.task_id
-               WHERE f.severity='critical' AND f.fixed_at IS NULL AND t.state='progress';")
+CRITTOT=$(q "SELECT COUNT(*) FROM finding WHERE severity='critical' AND fixed_at IS NULL
+              AND COALESCE(vindicated,1) <> 0;")
+# CLOSING A TASK IS NOT FIXING ITS CRITICALS. The gate filtered `state='progress'`, so a
+# critical on a done task did not count -- "fix it" and "close it" cleared the pre-flight
+# equally. Counted and named here, because it is the direction that hides work.
+CRITDONE=$(q "SELECT COUNT(*) FROM finding f JOIN task t ON t.id=f.task_id
+               WHERE f.severity='critical' AND f.fixed_at IS NULL
+                 AND COALESCE(f.vindicated,1) <> 0 AND t.state IN ('done','abandoned');")
 CRITALL=$(q "SELECT COUNT(*) FROM finding WHERE severity='critical';")
 printf '\n## Outstanding criticals\n\n'
 if [ "$OCRC" != 0 ]; then
@@ -511,9 +524,16 @@ if [ "$OCRC" != 0 ]; then
   printf -- '> only this section notices. Delete `%s` and run `kit-index.sh`.\n' "${DB#$ROOT/}"
 elif [ -n "$OPENCRIT" ]; then
   printf '%s\n' "$OPENCRIT" | sed 's/^/- /'
-  printf -- '\n_%s unfixed critical(s), %s of them on a task at `progress`. Mark one addressed with\n' \
-    "${CRITTOT:-0}" "${CRITPROG:-0}"
-  printf -- '`kit-resolve.sh --finding ID --fixed`; `--list --severity critical --unfixed` prints the ids._\n'
+  printf -- '\n_%s unfixed critical(s). The operator marks one addressed with\n' "${CRITTOT:-0}"
+  printf -- '`kit-resolve.sh --finding ID --fixed`; `--list --severity critical --unfixed` prints the ids.\n'
+  printf -- 'An agent proposes the mark and does not record it — clearing the gate that gates your\n'
+  printf -- 'own work is the one certification the author cannot give._\n'
+  if [ "${CRITDONE:-0}" != 0 ]; then
+    printf -- '\n> **%s of them sit on a task that is already done or abandoned.** Closing a task\n' "$CRITDONE"
+    printf -- '> does not address its criticals. They are counted here for that reason: the gate\n'
+    printf -- '> used to look only at `progress`, so closing the task cleared it as effectively\n'
+    printf -- '> as fixing the defect.\n'
+  fi
 else
   # Said explicitly. An empty section reads as "not measured" -- which is what this whole
   # section replaces -- and there is a real difference between no criticals and no marks.
@@ -525,9 +545,32 @@ fi
 # kit-status.sh, a hook or CI is read by nobody -- so the list above could be short for the one
 # reason that must never be silent: the evidence failed to land. Each count is a different
 # failure and they are not summed.
+# AN ABSENT COUNTER IS NOT A ZERO COUNTER. These are read with `${x:-0}`, and an index built
+# before they existed has no such key -- so the empty string became 0 and the file asserted
+# that no mark had failed to apply. The same fail-open as this section's own critical, one level
+# down, introduced by the fix for it. The keys are written unconditionally by kit-index.sh now,
+# so their ABSENCE means a stale index and is reported as one.
 FORPH=$(q "SELECT value FROM meta WHERE key='finding_orphan_marks';")
 FAMB=$(q "SELECT value FROM meta WHERE key='finding_ambiguous_marks';")
 FCOLL=$(q "SELECT value FROM meta WHERE key='finding_id_collisions';")
+FMISS=$(q "SELECT value FROM meta WHERE key='finding_fix_commit_missing';")
+if [ -z "$FORPH" ] || [ -z "$FAMB" ]; then
+  printf -- '\n> **Mark-failure counters are ABSENT from this index, not zero.** It was built\n'
+  printf -- '> before they existed, so whether any mark failed to apply is unknown here. Delete\n'
+  printf -- '> `%s` and run `kit-index.sh`.\n' "${DB#$ROOT/}"
+fi
+if [ "${FMISS:-0}" != 0 ]; then
+  printf -- '\n> **%s fix mark(s) name a commit that is not in this history.** The finding reads\n' "$FMISS"
+  printf -- '> as addressed and its evidence resolves to nothing — a rebased branch, or a SHA\n'
+  printf -- '> that never existed. Note that a REVERTED fix is NOT detected: its commit is still\n'
+  printf -- '> there, so the mark still resolves and still reads as addressed.\n'
+fi
+if [ "${CRITFALSE:-0}" != 0 ]; then
+  printf -- '\n> **%s unfixed critical(s) are excluded as refuted** (`vindicated=0`). A reviewer\n' "$CRITFALSE"
+  printf -- '> was wrong, so there is nothing to address — but they are named here rather than\n'
+  printf -- '> silently dropped, because an exclusion nobody can see is indistinguishable from a\n'
+  printf -- '> count that is simply wrong.\n'
+fi
 if [ "${FORPH:-0}" != 0 ]; then
   printf -- '\n> **%s finding-fixed mark(s) name no known finding and were NOT applied.** The\n' "$FORPH"
   printf -- '> finding they point at is not in this index, so whatever they record is not\n'
