@@ -83,6 +83,12 @@ if [ "$NCOMMITS" = 0 ]; then HISTORY="unavailable: no commits"
 elif [ "$NCOMMITS" = 1 ]; then HISTORY="degenerate: single-commit history"
 else HISTORY="ok"; fi
 
+NMERGES=$(git rev-list --count --merges HEAD 2>/dev/null || echo 0)
+# `git log --name-only` prints NO file list for a merge commit, so on a merge-heavy history every
+# per-file `commits` and `authors` here is a LOWER BOUND. The alternative, `-m`, walks each parent
+# separately and counts the same change twice -- an overcount traded for an undercount. Neither is
+# right, so the count stays as it is and the number of merges is published beside it: `merges 0`
+# means the counts are exact, `merges 4000` tells a reader exactly what to distrust.
 HIST=$(git log --format='C|%H|%ad|%ae' --date=short --name-only 2>/dev/null || true)
 
 # ---- 3. co-change: read, never recompute -----------------------------------------------------
@@ -120,24 +126,48 @@ SKIPBIN=0; SKIPUNREAD=0
 printf '%s\n' "$SUBJECT" | while IFS= read -r f; do
   [ -n "$f" ] || continue
   [ -f "$f" ] || { printf 'unreadable\t%s\n' "$f" >> "$FACTS.miss"; continue; }
+  # `--` on every one of these. A tracked file named `-n` or `--version` is legal in git and is
+  # parsed as OPTIONS by grep, head and awk -- so it would be miscounted as binary, or change
+  # the behaviour of the tool that reads it, rather than being scanned. Rare, and silent, which
+  # is the combination that makes it worth guarding rather than assuming.
+  #
   # A NUL byte means binary. Counted, never silently dropped.
-  if LC_ALL=C grep -qI . "$f" 2>/dev/null; then :; else
+  if LC_ALL=C grep -qI . -- "$f" 2>/dev/null; then :; else
     printf 'binary\t%s\n' "$f" >> "$FACTS.miss"; continue
   fi
   ext=${f##*/}; case "$ext" in *.*) ext=".${ext##*.}" ;; *) ext="(none)" ;; esac
+  # doc_shaped is a fact ABOUT THIS FILE -- its name and its path -- and never an inference about
+  # a directory. "This area has no rationale" is the claim design 1 died on; "this file is named
+  # like documentation" is checkable and is all that is asserted here.
+  docshaped=0
+  case "$f" in
+    docs/*|doc/*|*/docs/*|*/doc/*) docshaped=1 ;;
+  esac
+  case "${f##*/}" in
+    README*|readme*|CHANGELOG*|changelog*|CONTRIBUTING*|ADR-*|adr-*|RFC-*|rfc-*|*.md|*.rst|*.adoc) docshaped=1 ;;
+  esac
   scan=0
   case "$f" in
     *.sh|*.py|*.yml|*.yaml|*.sql|*.rs|*.go|*.ts|*.tsx|*.js|*.c|*.h|*.cpp|*.java|*.rb|*.pl) scan=1 ;;
     *.md|*.txt|*.json|*.lock) scan=0 ;;
-    *) case "$(head -c 2 "$f" 2>/dev/null)" in '#!') scan=1 ;; esac ;;
+    *) case "$(head -c 2 -- "$f" 2>/dev/null)" in '#!') scan=1 ;; esac ;;
   esac
-  awk -v path="$f" -v ext="$ext" -v scan="$scan" -v runsfile="$RUNS.tmp" '
+  # `--` goes BEFORE the program text. After it, `--` is a FILENAME, not an option terminator --
+  # awk then tries to open a file called `--`, every scan fails, and entry-facts.tsv comes out as
+  # a header with no rows. That is exactly what the first version of this guard did, and only
+  # looking at the output caught it: the loop's exit status was still fine.
+  awk -v path="$f" -v ext="$ext" -v scan="$scan" -v docshaped="$docshaped" -v runsfile="$RUNS.tmp" -- '
+    # A /* */ block whose interior lines are NOT prefixed with `*` used to end the run at the
+    # opening line: the most common C and Go layout survives only because gofmt writes the
+    # leading star. So the block is tracked as a STATE. Everything between `/*` and `*/` is a
+    # comment line with token `*`, whatever it starts with.
     function tok(l) {
+      if (inblock) { if (l ~ /\*\//) inblock = 0; return "*" }
+      if (l ~ /^[[:space:]]*\/\*/) { if (l !~ /\*\//) inblock = 1; return "*" }
       if (l ~ /^[[:space:]]*#/)   return "#"
       if (l ~ /^[[:space:]]*\/\//) return "//"
       if (l ~ /^[[:space:]]*--/)  return "--"
       if (l ~ /^[[:space:]]*\*/)  return "*"
-      if (l ~ /^[[:space:]]*\/\*/) return "*"
       return ""
     }
     { lines = NR
@@ -154,17 +184,30 @@ printf '%s\n' "$SUBJECT" | while IFS= read -r f; do
       if (run > 0) { printf "%s\t%d\t%d\t%d\t%s\n", path, start, NR, run, cur >> runsfile; blocks++ }
       # lines from NR, never `wc -l`: BSD wc pads its output with spaces and the field would
       # then carry them into the TSV.
-      printf "%s\t%s\t%d\t%d\t%d\n", path, ext, lines+0, cl+0, blocks+0
-    }' "$f" >> "$FACTS.tmp"
+      printf "%s\t%s\t%d\t%d\t%d\t%d\n", path, ext, lines+0, cl+0, blocks+0, docshaped+0
+    }' "$f" >> "$FACTS.tmp" || printf 'scanfail	%s
+' "$f" >> "$FACTS.miss"
 done
 
+SCANFAIL=0
 [ -f "$FACTS.miss" ] && {
   SKIPBIN=$(grep -c '^binary' "$FACTS.miss" || true)
   SKIPUNREAD=$(grep -c '^unreadable' "$FACTS.miss" || true)
+  SCANFAIL=$(grep -c '^scanfail' "$FACTS.miss" || true)
 }
 
+# The invariant that makes the table trustworthy: every subject file is either a row or a
+# counted exclusion. Without it a per-file awk that dies mid-loop removes a file from the census
+# silently, and the report still says `tracked_files N` -- a complete-looking table missing
+# things, which is the failure this whole tool exists to refuse. Reported, never fatal: the
+# artefacts are still worth having, and a reader who cannot see the discrepancy cannot judge it.
+ROWS=$(awk 'END{print NR}' "$FACTS.tmp")
+ACCOUNTED=$((ROWS + SKIPBIN + SKIPUNREAD + SCANFAIL))
+RECONCILED="ok"
+[ "$ACCOUNTED" = "$NFILES" ] || RECONCILED="MISMATCH: $ACCOUNTED accounted for, $NFILES tracked"
+
 # ---- 5. join history onto the per-file rows --------------------------------------------------
-printf 'path\text\tlines\tcomment_lines\tcomment_blocks\tcommits\tfirst\tlast\tauthors\tcochange_degree\n' > "$FACTS"
+printf 'path\text\tlines\tcomment_lines\tcomment_blocks\tcommits\tfirst\tlast\tauthors\tdoc_shaped\tcochange_degree\n' > "$FACTS"
 printf '%s\n' "$HIST" | awk -v facts="$FACTS.tmp" -v deg="$CCDEG" '
   BEGIN {
     n = split(deg, dl, "\n")
@@ -180,10 +223,10 @@ printf '%s\n' "$HIST" | awk -v facts="$FACTS.tmp" -v deg="$CCDEG" '
   END {
     while ((getline line < facts) > 0) {
       split(line, f, "\t")
-      printf "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%d\t%d\n",
+      printf "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%d\t%s\t%d\n",
         f[1], f[2], f[3], f[4], f[5],
         c[f[1]]+0, (first[f[1]]=="" ? "-" : first[f[1]]), (last[f[1]]=="" ? "-" : last[f[1]]),
-        au[f[1]]+0, degree[f[1]]+0
+        au[f[1]]+0, f[6], degree[f[1]]+0
     }
   }' | sort -t"$(printf '\t')" -k1,1 >> "$FACTS"
 
@@ -214,6 +257,9 @@ NMARKERS=$(printf '%s' "$MARKERS" | grep -c . || true)
   printf 'skipped kit-owned %d\n' "$KITOWNED"
   printf 'skipped binary %d\n' "$SKIPBIN"
   printf 'skipped unreadable %d\n' "$SKIPUNREAD"
+  printf 'skipped scanfail %d\n' "$SCANFAIL"
+  printf 'reconciled %s\n' "$RECONCILED"
+  printf 'merges %d\n' "$NMERGES"
   printf '\n## Marker files (ranked by path, ascending; all shown)\n\n'
   # An empty section is NOT an empty answer. Printing the heading and nothing under it reads
   # identically to a scan that never ran, which is the absent-is-not-zero failure this kit
@@ -230,6 +276,11 @@ NMARKERS=$(printf '%s' "$MARKERS" | grep -c . || true)
   printf -- '  here at any setting. On this kit'"'"'s own repository that is roughly a sixth of it.\n'
   printf -- '- A comment run is located, never interpreted. Whether it explains anything is a\n'
   printf -- '  judgement, and this script does not make it.\n'
+  printf -- '- Per-file `commits` and `authors` are LOWER BOUNDS when the history has merges, because\n'
+  printf -- '  a merge commit lists no files under `--name-only`. `merges` above says how much to\n'
+  printf -- '  distrust them; at `merges 0` they are exact.\n'
+  printf -- '- A `/* */` block is followed as a block, but any comment style this scanner does not\n'
+  printf -- '  know is simply not counted. It reports what it recognised, never that nothing is there.\n'
 } > "$REPORT"
 
 rm -f "$FACTS.tmp" "$RUNS.tmp" "$FACTS.miss"

@@ -2426,6 +2426,11 @@ en="$WORK.entry"; rm -rf "$en"; mkdir -p "$en/src"
     echo '// is caught by the exact-length assertion below rather than absorbed by it.'
     echo 'func edge() {}'; } > src/edge.go
 
+  # A doc-shaped file, so the doc_shaped column is exercised in BOTH states. The column is
+  # specified by ADR 0001 and was simply absent from the first implementation -- the table had
+  # ten columns where the design says eleven, and nothing here noticed, because no assertion
+  # named it. An unasserted column is an unimplemented column that happens to be documented.
+  mkdir -p docs && printf '# Note\n\nWhy the retry count is 7.\n' > docs/note.md
   git add -A && git commit -q --no-verify -m "chore: seed"
   printf 'package main\n\nconst maxRetries = 7\nvar _ = maxRetries\n' > src/retry.go
   git add -A && git commit -q --no-verify -m "feat: second commit"
@@ -2439,7 +2444,7 @@ en="$WORK.entry"; rm -rf "$en"; mkdir -p "$en/src"
   # PRESENCE. Exact values, not `!= 0`. Three source files are counted and the three files
   # kit-init.sh commits are excluded AND counted -- an exclusion nobody can see is
   # indistinguishable from a file that was missed.
-  grep -qx 'tracked_files 3'   "$R" || exit 1
+  grep -qx 'tracked_files 4'   "$R" || exit 1
   grep -qx 'skipped kit-owned 3' "$R" || exit 1
   grep -qx 'commits 2'         "$R" || exit 1
   grep -qE '^history (ok|degenerate|unavailable)' "$R" || exit 1
@@ -2454,6 +2459,12 @@ en="$WORK.entry"; rm -rf "$en"; mkdir -p "$en/src"
   # the case the whole mechanism exists to surface, and dropping it would read as "nothing to
   # ask about here".
   awk -F'\t' '$1=="src/retry.go" && $4==0 {f=1} END{exit !f}' "$F" || exit 1
+  # doc_shaped is field 10, and BOTH states are pinned: a file under a docs path is 1, a source
+  # file is 0. Asserting only the 1 would pass against a column hardcoded to 1.
+  awk -F'	' '$1=="docs/note.md" && $10==1 {f=1} END{exit !f}' "$F" || exit 1
+  awk -F'	' '$1=="src/retry.go" && $10==0 {f=1} END{exit !f}' "$F" || exit 1
+  # The census reconciles: every subject file is a row or a counted exclusion.
+  grep -qx 'reconciled ok' "$R" || exit 1
 
   # ABSENCE. Necessary, not sufficient -- every assertion above already failed for an
   # `exit 0` implementation.
