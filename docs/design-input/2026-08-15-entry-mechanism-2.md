@@ -71,7 +71,7 @@ currently suggests.
 
 ### B1. What the deterministic half emits
 
-`kit-entry.sh` (name in Open questions). **One row per tracked file, no grouping.** Two outputs under `paths.state`, both derived — and **three** `.gitignore` lines are added, not two: `entry-facts.tsv`, `entry-report.md`, and `entry-candidates.md` from §B2, which is equally disposable and equally derived. Missing the third is how a machine-specific artefact reaches a colleague's clone:
+`kit-entry.sh` (name in Open questions). **One row per tracked file, no grouping.** Two outputs under `paths.state`, both derived — and **four** `.gitignore` lines are added: `entry-facts.tsv`, `entry-report.md`, `entry-comment-runs.tsv`, and `entry-candidates.md` from §B2 — all four disposable, all four derived. Missing one is how a machine-specific artefact reaches a colleague's clone:
 
 - `entry-facts.tsv` — complete, one line per file: `path · ext · lines · comment_lines · comment_blocks · commits · first · last · authors · doc_shaped · cochange_degree`. Uncapped, cheap, greppable. **Header line names the columns; tab-separated; `LC_ALL=C` sort by `path`.**
 - `entry-report.md` — **bounded**, model-facing and human-readable. Every section is a top-K with `showing K of N` and the dropped count printed beside it (`LESSONS` §11, and the `Below threshold` precedent in `kit-accel.sh`).
@@ -85,10 +85,22 @@ sections whose ranking key is stated in the section heading itself:
 | section | ranking key, stated | cap |
 |---|---|---|
 | Totals and degeneracy states | none — fixed set, all printed | n/a |
-| Comment runs | run length, descending; `path` then `start` as tiebreak, `LC_ALL=C` | 40 |
 | Marker-file paths | `path`, ascending | all |
 | Co-change neighbours | `weight` descending, `dst` tiebreak | 5 per file, files by degree |
 | Extension histogram | count descending, extension tiebreak | all |
+
+**The comment-run section is NOT in the report — decided at the walkthrough, on the measurement.**
+It was a top-40 by run length, and the measurement below shows the cap is what loses sites: recall
+into that section is 60% and does not move between a 4-line and a 12-line threshold, while on
+prometheus the same cap keeps 4.3% of what was found. A capped ranked list is the tool pre-forming
+the answer with 4% of the data, which is decision 1 violated through a sort key. It is replaced by
+an **uncapped third artefact**:
+
+- `entry-comment-runs.tsv` — one line per run, `path · start · end · length · token`, sorted by
+  `path` then `start` under `LC_ALL=C`. **No ranking, no cap, no threshold applied on the way out**
+  (the ≥N filter is a column the reader can apply, not a gate the tool applies). The model reads it
+  with `Grep` — by path when it is looking at a file, by length when it wants the big blocks — and
+  chooses its own ordering.
 
 **Report line grammar, for every field any fixture asserts on.** One record per line, no wrapping:
 
@@ -96,9 +108,9 @@ sections whose ranking key is stated in the section heading itself:
     commits <N>
     history <ok|degenerate: single-commit history|unavailable: not a git repository>
     cochange <ok N pairs, M of T files|empty: indistinguishable from withheld / disabled / no history / no index>
-    run <path>:<start>-<end> <length>
+    comment_runs <N in M files>
     marker <path>
-    skipped <binary|oversize|unreadable> <N>
+    skipped <binary|oversize|unreadable|kit-owned> <N>
 
 A fixture asserting on anything not in this list is asserting on prose, which is how the first
 revision's fixture came to grep a TSV column name out of a markdown file.
@@ -216,16 +228,22 @@ comment, `src/cache.go` carrying a **12-line** rationale block, and `src/edge.go
 | `grep -qx 'tracked_files 2'` | the kit-owned exclusion is dropped (yields 5) or added twice |
 | `grep -qx 'skipped kit-owned 3'` | the exclusion stops being counted |
 | `grep -qx 'commits 2'` | history reading is removed |
-| `grep -qE '^run src/cache\.go:[0-9]+-[0-9]+ 12$'` | the run scanner is removed |
-| **`! grep -q '^run src/edge\.go:'`** | the threshold drops below 10 |
+| `grep -qP '^src/cache\.go\t\d+\t\d+\t12\t' entry-comment-runs.tsv` | the run scanner is removed |
+| **`grep -qP '^src/edge\.go\t\d+\t\d+\t9\t'`** in the same file | runs shorter than 10 stop being emitted |
+| `grep -qE '^comment_runs 2 in 2 files'` in the report | the report stops counting what the TSV holds |
 | `grep -qE '^history (ok\|degenerate\|unavailable)'` | the degeneracy state stops being emitted |
 | `grep -qE '^cochange (ok\|empty)'` | the four-way co-change ambiguity is no longer named |
 | `grep -qE '^src/retry\.go\t' entry-facts.tsv` and its `comment_lines` field is `0` | zero-comment files are skipped instead of reported as zero |
 
-The pair `cache.go` **must** appear at exactly 12 and `edge.go` **must not** appear pins the
-threshold from both sides. The first revision asserted `1[0-9]` on a 12-line block, which stays
-green for any threshold at or below 12 — the assertion could not fail in the direction the
-threshold moves, which is `LESSONS` §1 inside the fixture written to satisfy it.
+**The 9-line block is now asserted PRESENT, not absent, and that inversion is the point.** Under
+the first revision the tool applied a ≥10 gate, so `edge.go` had to be missing; the assertion was
+written as `1[0-9]` on a 12-line block, which stays green for any threshold at or below 12 — it
+could not fail in the direction the threshold moves, `LESSONS` §1 inside the fixture written to
+satisfy it. Now the tool applies **no** threshold on the way out, so a 9-line run must appear with
+its true length, and the measurement is why: two of ten blind-nominated rationale sites sit in
+runs of 3 and 5 lines, and `kit-guard.sh:25-31` and `kit-trailers.sh:73-81` are real rationale that
+any ≥10 gate discards permanently. A filter the reader applies is recoverable; a filter the writer
+applies is not. Both exact lengths are pinned, so a scanner that miscounts by one is red.
 
 **Absence assertions (necessary, not sufficient), by count not listing:** task files under `paths.tasks` equal before and after; `SELECT COUNT(*) FROM task` unchanged after a reindex; no line in either artefact matching the task-file grammar.
 
@@ -299,12 +317,31 @@ per-file comment counts are already uncapped in `entry-facts.tsv`, and the model
 without any ranking decision being taken on its behalf. That is the change to weigh at the
 walkthrough, and it is a smaller design than either raising the cap or deleting the localiser.
 
-**Registered pass condition, replacing condition 1.** The localiser is kept **only if** it puts
-**≥6 of 10** blind-nominated sites into the top-40 — which it does, exactly, today — *and* the
-operator accepts 60% into the artefact plus ~20% reachable only by uncapping. If 60% is judged
-insufficient, the fallback above applies: drop localisation, keep the census. **I am not raising
-the cap to improve this number in the same document that measured it** — that is tuning after the
-fact, and the cap's real value belongs in a trial where the token cost is visible.
+**Registered pass condition, restated after the walkthrough decision.** The 60% figure was a
+property of the *top-40 report section*, and that section no longer exists. With the runs emitted
+uncapped and unthresholded to `entry-comment-runs.tsv`, **every one of the ten in-scope nominated
+sites is reachable** — including `kit-guard.sh:25-31` and `kit-index.sh:736-748`, whose longest
+overlapping runs are 3 and 5 lines and which no ≥10 gate could ever have returned. Recall into the
+artefact goes from 6/10 to **10/10 in scope**, not by tuning anything, but by deleting the filter
+and the cap that were losing them.
+
+So the condition becomes: **the localiser is kept if the uncapped runs file is small enough to
+grep and complete enough to trust.** Completeness is now structural — no threshold is applied on
+the way out, so a site is missing only if the scanner cannot see it, which is a bug rather than a
+setting. The live risk moves entirely to volume, and the pass condition is therefore a size
+budget, registered before the first external run: **`entry-comment-runs.tsv` must stay under
+50,000 lines on the first real subject**, or the tool applies a minimum length, states it in the
+report, and counts what it dropped. Measured: **588 runs here, 6,301 on actix-web, 17,230 on
+prometheus** — about 10 runs per tracked file across three subjects of very different size and
+language, so the budget corresponds to roughly a 5,000-file subject. The 20,000-file monorepo
+this design names would exceed it, which makes the drop-and-count path real rather than
+theoretical. The prometheus scan also emitted null-byte warnings, so the binary skip the spec
+already requires is load-bearing and 17,230 is an upper bound.
+
+**What remains out of reach, and it is not a tuning problem.** Two of the twelve nominated sites —
+`docs/DESIGN-NOTES.md:398-433` and `.gitattributes:1-19` — are not code comments at all. No
+comment scanner reaches them at any setting. A sixth of this repository's load-bearing rationale
+lives outside the mechanism, permanently, and the report must not imply otherwise.
 
 **What this does to the invention's status.** It is demoted from "the replacement for the rationale
 map" to *one input among the census, with a measured 60% recall and a known blind spot for

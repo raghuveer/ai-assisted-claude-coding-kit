@@ -9,6 +9,13 @@ paths.tasks:  .project/tasks
 paths.state:  .project
 paths.status: STATUS.generated.md
 
+# Where written rationale lives. Both were referenced before they existed: adr-scribe.md said
+# "the project's ADR directory" and researcher.md "the project's design-input directory", and
+# nothing named either — so an agent could not find one and the entry mechanism could not tell
+# a decision record from any other markdown file.
+paths.adr:          docs/adr
+paths.design_input: docs/design-input
+
 # Where each kind of state is ingested from. Defaults are the built-in text sources; point
 # one at an executable to read from somewhere else (GitHub issues, an API, a database).
 # See docs/ADAPTERS.md for the contract. `none` disables a source entirely.

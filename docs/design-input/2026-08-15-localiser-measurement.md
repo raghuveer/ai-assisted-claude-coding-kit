@@ -47,3 +47,23 @@ At min=10 prometheus yields 921 runs and the cap of 40 keeps **4.3%**; at min=5 
 1515 and the cap keeps **2.6%**. So on a large subject the artefact discards 96-97% of what
 the scanner found, while on this 170-file repository recall into that same artefact is
 already stuck at 60%. Both facts point at the cap rather than the threshold.
+
+## Uncapped, unthresholded volume — the walkthrough decision
+
+With no cap and no minimum length applied by the tool, every in-scope nominated site is
+reachable (recall 10/10), because the two that no >=10 gate could return -- longest
+overlapping runs of 3 and 5 lines -- are now emitted. The cost is file size:
+
+```
+this repo (170 files):        588 runs
+actix-web (444 files):      6,301 runs
+prometheus (1,665 files):  17,230 runs
+```
+
+Roughly 10 runs per tracked file across three subjects of very different size and language.
+The registered budget of 50,000 lines therefore corresponds to about a 5,000-file subject
+before the tool must apply a minimum length, state it, and count what it dropped. A 20,000-
+file monorepo -- the case the design names -- would exceed it, so that path is real and not
+theoretical. NOTE the scanner emitted "ignored null byte" warnings on prometheus: binary or
+UTF-16 files reached the reader, so the real tool needs the binary skip its own spec already
+requires, and 17,230 is an upper bound rather than an exact count.

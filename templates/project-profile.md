@@ -9,6 +9,13 @@ paths.tasks:  .project/tasks
 paths.state:  .project
 paths.status: STATUS.generated.md
 
+# Where written rationale lives. Point these at whatever your project already uses; the kit
+# reads them, it does not impose the layout. Agents refer to "the project's ADR directory"
+# and "the project's design-input directory" and these keys are what make those phrases
+# resolve to something.
+paths.adr:          docs/adr
+paths.design_input: docs/design-input
+
 # Where each kind of state is ingested from. Defaults are the built-in text sources; point
 # one at an executable to read from somewhere else (GitHub issues, an API, a database).
 # See docs/ADAPTERS.md for the contract. `none` disables a source entirely.
