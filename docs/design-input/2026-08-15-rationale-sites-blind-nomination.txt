@@ -1,0 +1,12 @@
+tooling/kit-index.sh:789-825  Deleting it invites the "simpler" positional `at:n` finding id back, which silently reattaches every fix mark to a neighbouring finding whenever an event merges in out of order.
+tooling/kit-index.sh:736-748  Deleting it invites folding the split 16-bit FNV multiply back to `h * 16777619` and dropping `LC_ALL=C`, making finding ids differ per platform and locale.
+tooling/schema.sql:25-41  Deleting it invites re-adding the `WHERE via='kit'` filter that was already tried, which makes a recorded escape disappear from the only report that shows escapes.
+tooling/kit-status.sh:272-283  Deleting it invites removing `WHERE id IS NOT NULL` as unreachable dead defence, so one NULL task id makes `NOT IN` never true and hides every orphaned escape.
+docs/DESIGN-NOTES.md:398-433  Deleting it invites adding a minimum edge weight, tightening `hub_pct` to 5-10%, or dropping the `max_degree` self-check — each measured as harmful.
+tooling/kit-index.sh:154-190  Deleting it invites re-splitting the tier rule downstream or accepting bracket globs, so a malformed floor sorts below every real tier and under-tiering stops being reported.
+tooling/kit-lib.sh:17-24  Deleting it invites removing the `sub(/\r$/)` as redundant, which parses fine under git-bash gawk and silently breaks every profile value on POSIX awk.
+tooling/kit-guard.sh:25-31  Deleting it invites passing paths via `awk -v` and switching to `realpath`, which strips Windows separators before normalisation and fails on files that do not exist yet.
+tooling/schema.sql:129-153  Deleting it invites summing the four token counters or treating `context` as cost, producing totals up to 215x wrong, and joining an agent label to a non-`subagent` row.
+tooling/kit-trailers.sh:73-81  Deleting it invites keeping only `grep` or only `interpret-trailers`, reintroducing one of two mirror-image bugs — prose read as a trailer, or stranded trailers silently absent.
+.gitattributes:1-19  Deleting it invites dropping `*.md text eol=lf` as cosmetic, so drift tests compare a CRLF tree against an LF expectation and CRs land in committed `event.payload` rows.
+tooling/commit-msg:4-10  Deleting it invites symlinking the hook or inlining validation, breaking per-clone `KIT_TOOLING` resolution and re-forking rules that CI checks separately.
