@@ -288,6 +288,17 @@ simply does not. No matcher and no threshold recovers them; only reading the fil
 **And the concentration never improves:** one file holds 10 of 40 slots at every threshold, so a
 quarter of the model's budget goes to `kit-status.sh` on a 170-file repository.
 
+**The cap on a real subject, now measured too.** At a 10-line threshold prometheus yields **921
+runs** and the cap of 40 keeps **4.3%** of them; at 5 lines it yields 1,515 and the cap keeps 2.6%.
+actix-web: 287 and 477. So the artefact discards 96-97% of what the scanner found on a large
+subject, while on this 170-file repository recall into that same artefact is already stuck at 60%.
+Both numbers indict the cap, and neither is an argument for moving it here — a cap set to make a
+recall figure look better, in the document that measured the recall, is worth nothing. What it is
+an argument for is that **the top-K report is the wrong delivery mechanism for this input**: the
+per-file comment counts are already uncapped in `entry-facts.tsv`, and the model can `Grep` them
+without any ranking decision being taken on its behalf. That is the change to weigh at the
+walkthrough, and it is a smaller design than either raising the cap or deleting the localiser.
+
 **Registered pass condition, replacing condition 1.** The localiser is kept **only if** it puts
 **≥6 of 10** blind-nominated sites into the top-40 — which it does, exactly, today — *and* the
 operator accepts 60% into the artefact plus ~20% reachable only by uncapping. If 60% is judged

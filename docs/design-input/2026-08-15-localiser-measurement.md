@@ -27,3 +27,23 @@ nominated sites and the longest run overlapping each:
   tooling/schema.sql:129-153  longest overlapping run = 25
   tooling/kit-trailers.sh:73-81  longest overlapping run = 9
   tooling/commit-msg:4-10  longest overlapping run = 11
+
+## Volume on external subjects (slower sweep, completed after the table above)
+
+Recall figures reproduced identically by an independent second pass, which is why these
+volume numbers are trusted from the same run.
+
+```
+ min  kit runs  recall@40  recall@all  actix runs  prom runs
+   5       182       6/10        9/10         477       1515
+   6       142       6/10        8/10         419       1251
+   7       124       6/10        8/10         357       1113
+   8       104       6/10        8/10         325       1022
+  10        72       6/10        7/10         287        921
+  12        47       6/10        6/10         246        869
+```
+
+At min=10 prometheus yields 921 runs and the cap of 40 keeps **4.3%**; at min=5 it yields
+1515 and the cap keeps **2.6%**. So on a large subject the artefact discards 96-97% of what
+the scanner found, while on this 170-file repository recall into that same artefact is
+already stuck at 60%. Both facts point at the cap rather than the threshold.
