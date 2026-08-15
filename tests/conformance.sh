@@ -2379,6 +2379,172 @@ rm -rf "$fx"
 fi
 fi
 
+if step "entry analysis reports an undocumented choice and writes no task"; then
+# ADR 0001. The entry mechanism turns a codebase into FACTS, anchored to files, and writes no
+# task anywhere. Both halves are asserted here, and the presence half is why this step exists:
+# design 1's fixture asserted only absences, so a kit-entry.sh consisting of `exit 0` passed it.
+#
+# The fixture holds three source files chosen to pin the scanner from both directions:
+# retry.go carries an undocumented constant (a real choice, no explanation), cache.go carries a
+# 12-line rationale block, edge.go a 9-line one. The 9-line block must appear AT ITS TRUE
+# LENGTH: the tool applies no minimum on the way out, because two of ten independently
+# nominated rationale sites in this repository sit in runs of 3 and 5 lines and any >=10 gate
+# discards them permanently. A filter the reader applies is recoverable; one the writer applies
+# is not.
+#
+# No `grep -P`: BSD grep on the macOS runner does not have it, and the TSV field checks are awk.
+en="$WORK.entry"; rm -rf "$en"; mkdir -p "$en/src"
+( cd "$en" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+
+  printf 'package main\n\nconst maxRetries = 7\n' > src/retry.go
+  { echo 'package main'; echo
+    echo '// Cache entries are evicted on write, not on read, because a read-path eviction'
+    echo '// walks the whole map under the same lock the request holds. Measured at 40ms of'
+    echo '// added tail latency on a 50k-entry cache, which is worse than the memory it saves.'
+    echo '// The obvious simplification -- evict lazily when a reader finds a stale entry --'
+    echo '// was tried and reverted: it moves the walk onto the hot path rather than removing'
+    echo '// it, and it makes eviction time depend on read traffic, so a quiet cache never'
+    echo '// evicts at all and a busy one evicts twice. Do not reintroduce it without a'
+    echo '// benchmark on a cache of at least 50k entries, and read the revert first.'
+    echo '// The write-path walk is bounded by the batch size, which is why it is acceptable'
+    echo '// here and would not be acceptable on the read path.'
+    echo '// See also the eviction test, which fails if this becomes lazy again.'
+    echo '// Twelve lines, deliberately: this block is the fixture for run-length 12.'
+    echo 'func evict() {}'; } > src/cache.go
+  { echo 'package main'; echo
+    echo '// Nine lines, deliberately. This block exists to prove the scanner applies no'
+    echo '// minimum length of its own: it must appear in the runs file at length 9, not be'
+    echo '// filtered out. Real rationale in this repository lives in runs this short --'
+    echo '// kit-guard.sh carries three lines and kit-index.sh five -- so a scanner that'
+    echo '// drops short runs drops exactly the rationale a reader most needs, while'
+    echo '// reporting a clean list that looks complete. That failure is invisible: the'
+    echo '// output is well-formed and simply missing things, which is the shape this'
+    echo '// whole suite exists to refuse. Nine comment lines, counted: an off-by-one here'
+    echo '// is caught by the exact-length assertion below rather than absorbed by it.'
+    echo 'func edge() {}'; } > src/edge.go
+
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  printf 'package main\n\nconst maxRetries = 7\nvar _ = maxRetries\n' > src/retry.go
+  git add -A && git commit -q --no-verify -m "feat: second commit"
+
+  before=$(ls .project/tasks 2>/dev/null | wc -l | tr -d ' ')
+  bash "$KIT/tooling/kit-entry.sh" >/dev/null 2>&1 || exit 1
+
+  R=.project/entry-report.md; F=.project/entry-facts.tsv; C=.project/entry-comment-runs.tsv
+  [ -f "$R" ] && [ -f "$F" ] && [ -f "$C" ] || exit 1
+
+  # PRESENCE. Exact values, not `!= 0`. Three source files are counted and the three files
+  # kit-init.sh commits are excluded AND counted -- an exclusion nobody can see is
+  # indistinguishable from a file that was missed.
+  grep -qx 'tracked_files 3'   "$R" || exit 1
+  grep -qx 'skipped kit-owned 3' "$R" || exit 1
+  grep -qx 'commits 2'         "$R" || exit 1
+  grep -qE '^history (ok|degenerate|unavailable)' "$R" || exit 1
+  grep -qE '^cochange (ok|empty)' "$R" || exit 1
+  grep -qx 'comment_runs 2 in 2 files' "$R" || exit 1
+
+  # Both run lengths pinned exactly, so a scanner off by one is red, and so is one that
+  # silently reimposes a minimum length and drops the 9.
+  awk -F'\t' '$1=="src/cache.go" && $4==12 {f=1} END{exit !f}' "$C" || exit 1
+  awk -F'\t' '$1=="src/edge.go"  && $4==9  {f=1} END{exit !f}' "$C" || exit 1
+  # The undocumented choice is REPORTED as a zero, never omitted. A file with no explanation is
+  # the case the whole mechanism exists to surface, and dropping it would read as "nothing to
+  # ask about here".
+  awk -F'\t' '$1=="src/retry.go" && $4==0 {f=1} END{exit !f}' "$F" || exit 1
+
+  # ABSENCE. Necessary, not sufficient -- every assertion above already failed for an
+  # `exit 0` implementation.
+  after=$(ls .project/tasks 2>/dev/null | wc -l | tr -d ' ')
+  [ "$before" = "$after" ] || exit 1
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  [ "$(sqlite3 .project/index.db 'SELECT COUNT(*) FROM task;' | tr -d '\015 ')" = 0 ] || exit 1
+  # No artefact may contain a line that reads as a task file's own grammar.
+  grep -qE '^(id|tier|state): ' "$R" "$F" "$C" && exit 1
+  exit 0 )
+check $? "entry analysis reports the choice, counts its exclusions, and writes no task"
+rm -rf "$en"
+fi
+
+if step "greenfield and an imported history are the same mechanism, not special cases"; then
+# The task's first acceptance criterion is that ONE mechanism handles all three starting
+# conditions -- greenfield being brownfield with an empty inventory, modernization being
+# brownfield plus a stack delta. That claim is cheap to make and was, in the design, entirely
+# untested: the branches existed and had never once executed.
+#
+# Three cases, because a state that is always the same value is not a state:
+#   A  greenfield        no subject files at all      -> tracked_files 0, and it must not hang
+#   B  imported history  files, exactly one commit    -> history degenerate, facts still full
+#   C  the same repo     after a second commit        -> history ok
+# C is what stops B passing for a script with `history degenerate` hardcoded. Without it the
+# other two assertions are satisfied by a constant.
+#
+# Case A is also the `awk` with no file operands hazard, which this repo has been bitten by:
+# an awk invoked with zero files reads stdin and waits forever, and a suite that hangs is
+# read as a slow machine rather than as a defect.
+gf="$WORK.green"; gi="$WORK.import"; rm -rf "$gf" "$gi"; mkdir -p "$gf" "$gi"
+R=.project/entry-report.md; F=.project/entry-facts.tsv; C=.project/entry-comment-runs.tsv
+( cd "$gf" || exit 1
+  # --- A. greenfield: the kit is adopted and nothing else exists yet ---
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  git add -A && git commit -q --no-verify -m "chore: kit only"
+  bash "$KIT/tooling/kit-entry.sh" >/dev/null 2>&1 || exit 1
+  grep -qx 'tracked_files 0' "$R" || exit 1
+  grep -qx 'comment_runs 0 in 0 files' "$R" || exit 1
+  grep -qx 'markers 0' "$R" || exit 1
+  # The facts file is a HEADER and no rows -- not an empty file, which would be
+  # indistinguishable from a run that died before writing anything.
+  [ "$(awk 'END{print NR}' "$F")" = 1 ] || exit 1
+  [ "$(awk 'END{print NR}' "$C")" = 0 ] || exit 1
+  exit 0 )
+gfa=$?
+# NOT `( ... ) || exit 1`. At top level that `exit` terminates the whole suite: the step prints
+# its heading, nothing else, no verdict and no tally, and CI sees a non-zero status with no FAIL
+# line to explain it. A mutation found this -- emptying the facts header made case A fail, and
+# the run vanished instead of reporting. Each case's status is captured and both are handed to
+# `check`, which is the only thing that records a result.
+( cd "$gi" || exit 1
+  # --- B. a vendor import: the kit files and the whole subject in ONE commit ---
+  # It has to be one commit. Adopting, committing, then adding the sources is a TWO-commit
+  # repository and reports `history ok` -- which is what the first version of this fixture
+  # actually built, so it asserted `degenerate` against a repo that was not.
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  mkdir -p src
+  printf 'package main\n// one\n// two\n// three\nfunc a() {}\n' > src/a.go
+  printf 'package main\nfunc b() {}\n' > src/b.go
+  git add -A && git commit -q --no-verify -m "chore: vendor import"
+  bash "$KIT/tooling/kit-entry.sh" >/dev/null 2>&1 || exit 1
+  grep -qx 'tracked_files 2' "$R" || exit 1
+  grep -qx 'commits 1' "$R" || exit 1
+  grep -qx 'history degenerate: single-commit history' "$R" || exit 1
+  # The history is degenerate; the FILE FACTS are not. A single-commit subject must still get
+  # its census, or "modernization is brownfield plus a delta" is false at the first subject
+  # that arrives as a vendor drop.
+  awk -F'\t' '$1=="src/a.go" && $4==3 {f=1} END{exit !f}' "$C" || exit 1
+
+  # --- C. the same repository, one commit later ---
+  # Without this, B is satisfied by a script with the string hardcoded. A state that only ever
+  # takes one value is not a state.
+  printf 'package main\nfunc b() { _ = 1 }\n' > src/b.go
+  git add -A && git commit -q --no-verify -m "feat: second"
+  bash "$KIT/tooling/kit-entry.sh" >/dev/null 2>&1 || exit 1
+  grep -qx 'history ok' "$R" || exit 1
+  grep -qx 'commits 2' "$R" || exit 1
+  exit 0 )
+gib=$?
+[ "$gfa" = 0 ] && [ "$gib" = 0 ]
+check $? "greenfield reports zeroes without hanging, a one-commit import reports degenerate history, and a second commit clears it"
+[ "$gfa" = 0 ] || echo "  ^ the greenfield case failed"
+[ "$gib" = 0 ] || echo "  ^ the imported-history case failed"
+rm -rf "$gf" "$gi"
+fi
+
 if step "validate.py"; then
 (cd "$KIT" && { python3 validate.py >/dev/null 2>&1 || python validate.py >/dev/null 2>&1; })
 check $? "validate.py exits 0"
@@ -2450,10 +2616,16 @@ echo "  commits: $(git rev-list --count HEAD)"
 #      `.claude/project-profile.md`; and `git cat-file -p` of the two blobs differs by
 #      exactly the six added lines and nothing else. A full fresh-clone run was 64 passed,
 #      1 failed, that one being this check -- so nothing else moved with it.
-EXPECT_HEAD=9a77d5945b008a5af1474dee1f4e8a174e59252b
+#   4. 2026-08-15: kit-init.sh now adds kit-entry.sh's four artefacts to the adoption
+#      .gitignore, and .gitignore is in the seed commit. PREDICTED before the run rather than
+#      diagnosed after it -- the mechanism is identical to 2 and 3, and a check whose next
+#      failure you can name in advance is a check that is understood. Evidence, same discipline:
+#      exactly one blob differs between the seed trees (`.gitignore`), its content differs by
+#      exactly the four added lines, and the run was 67 passed with this as the only failure.
+EXPECT_HEAD=d75b07d81cbc4c0053578d9614cbbaf5e9238790
 # The seed alone, so a mismatch says WHICH half moved: seed intact means this script changed,
 # seed moved means a file kit-init.sh commits did.
-EXPECT_SEED=04d8b0bc070e5d8d57b4a8dbd5d84ae3bc21430e
+EXPECT_SEED=db3377a9af5aefd3879d228ccb9e78d8f5f5a12b
 fi
 
 if step "trailer hook" fixture; then

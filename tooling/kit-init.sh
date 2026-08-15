@@ -81,6 +81,15 @@ grep -qxF 'STATUS.generated.md' "$GI" 2>/dev/null || echo 'STATUS.generated.md' 
 # Cluster packs are a snapshot of the index for one plan. Committing them would put a
 # stale copy of derived state in the repo — the second-truth problem this design avoids.
 grep -qxF '.project/packs/' "$GI" 2>/dev/null || echo '.project/packs/' >> "$GI"
+# kit-entry.sh's four artefacts, for the same reason and one more: they are a snapshot of ONE
+# machine's working copy at one moment, and nothing detects them going stale against the tree.
+# This was found by a fixture rather than by inspection -- the adoption .gitignore did not carry
+# these lines, so a subject's next `git add -A` committed the report and the facts table, which
+# then changed the commit count the report itself derives. A derived artefact that alters the
+# measurement it reports is the second-truth problem with a feedback loop attached.
+for _e in entry-facts.tsv entry-comment-runs.tsv entry-report.md entry-candidates.md; do
+  grep -qxF ".project/$_e" "$GI" 2>/dev/null || echo ".project/$_e" >> "$GI"
+done
 echo "updated .gitignore"
 
 # events.ndjson is append-only and shared. Without a union merge, two developers

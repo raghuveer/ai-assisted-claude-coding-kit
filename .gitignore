@@ -3,3 +3,11 @@
 .project/index.db*
 STATUS.generated.md
 .project/packs/
+
+# kit-entry.sh output. All four are derived from the tree and the history: delete them, run
+# again, lose nothing. Committing them would put a machine-local snapshot of somebody's working
+# copy into every clone, and it would go stale against the tree with nothing detecting it.
+.project/entry-facts.tsv
+.project/entry-comment-runs.tsv
+.project/entry-report.md
+.project/entry-candidates.md
