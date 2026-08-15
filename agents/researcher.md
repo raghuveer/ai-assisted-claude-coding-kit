@@ -28,7 +28,13 @@ exists, say so in two lines and stop; do not manufacture alternatives.
 6. **Respect the project's conventions** — its fail-mode discipline, data-ownership boundaries, and
    decision-record workflow.
 
-## Output — write to the project's design-input directory as `YYYY-MM-DD-<topic>.md`
+## Output — RETURN the document as your reply. You do not have `Write`; the caller saves it.
+
+Your reply IS the artefact: markdown, no preamble, no commentary around it. The caller saves it
+under `paths.design_input` as `YYYY-MM-DD-<topic>.md`. This section once told you to perform that
+saving yourself, naming a tool you have never been granted — a design was then built on the
+assumption that you could produce your own artefact, and an approach review killed it on exactly
+that point.
 
 ```
 ## Problem statement
@@ -40,7 +46,14 @@ exists, say so in two lines and stop; do not manufacture alternatives.
 ## References
 ```
 
-Keep under ~2000 words; split into multiple research tasks if longer.
+The section list above is the shape of a **design-input document**. When the caller asks for a
+different artefact — a candidate list, an inventory proposal — follow the shape it names instead,
+and keep this one for design input. Reusing an agent is only free when the thing you are asked for
+fits what it already produces.
+
+Keep a design-input document under ~2000 words; split into multiple research tasks if longer. That
+budget is for THIS artefact: a document that enumerates something in a real repository is bounded
+by the repository, not by a word count, so the caller states the bound when it asks.
 
 ## What you do not do
 

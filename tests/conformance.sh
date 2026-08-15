@@ -226,6 +226,41 @@ for a in "$KIT"/agents/*.md; do
   fi
 done
 check $ungranted "no Bash-less agent is instructed to execute a script"
+
+# The same shape for Write, and it is here because the Bash-only version above missed a live
+# defect for months. `researcher.md` is granted Read, Grep, Glob, WebFetch, WebSearch and its
+# Output section told it to WRITE a document to a directory. A design was built on the
+# assumption that researcher could produce its own artefact, an approach review killed that
+# design on exactly this point, and this step -- which exists to catch an agent told to use a
+# tool it does not have -- said nothing, because it only ever looked for Bash.
+#
+# The matcher has to be narrower than "mentions write". Three lines in the no-Write agents
+# talk about writes without instructing one: approach-reviewer and security-reviewer discuss
+# check-then-act races ("separated from its write by an await"), and researcher says "Do not
+# write the decision record". So a line must name write/create/save AND a file-ish object
+# (a directory, a path, a .md) AND not be a prohibition. A prohibition that trips this check
+# would train the next author to delete the prohibition, which is the wrong repair.
+#
+# KNOWN LIMIT, found by this check firing on its own fix: it matches TEXT, so prose that
+# quotes the forbidden shape trips it. The sentence in researcher.md explaining what the old
+# instruction said had to be reworded to stop describing the defect in the defect's own words.
+# That is a real cost and it is stated rather than hidden, because the next author will hit it
+# and the wrong repair is to weaken the matcher. `T-20260809-lint-the-kit-for-untrusted-text-interpol`
+# is the same class one level up.
+ungrantedw=0
+for a in "$KIT"/agents/*.md; do
+  tools=$(tr -d '\r' < "$a" | sed -n 's/^tools:[[:space:]]*//p' | head -1)
+  case "$tools" in *Write*|*Edit*) continue ;; esac
+  hit=$(tr -d '\r' < "$a" |
+        grep -inE '(write|writes|create|save)[^.]*(director|\.md|file path|to a file)' |
+        grep -viE 'do not|does not|never |rather than|instead of|without ' |
+        grep -viE '(the )?(caller|orchestrator|operator|human)[^.]*(write|save|create)' | head -1)
+  if [ -n "$hit" ]; then
+    echo "  $(basename "$a") has no Write but is told to produce a file: ${hit%%:*}"
+    ungrantedw=1
+  fi
+done
+check $ungrantedw "no Write-less agent is instructed to produce a file"
 fi
 
 if step "a script broken by an apostrophe names the apostrophe"; then

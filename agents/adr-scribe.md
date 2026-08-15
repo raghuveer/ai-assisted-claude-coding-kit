@@ -1,6 +1,6 @@
 ---
 name: adr-scribe
-description: Use after `approach-reviewer` returns APPROVED on a non-trivial design and the operator's walkthrough is done, or when the operator explicitly requests a decision record. Drafts a new ADR in the project's format. Never edits existing ADRs except the Status field.
+description: Use after `approach-reviewer` returns APPROVED on a non-trivial design and the operator's walkthrough is done; when an entry-analysis question has been answered and the answer is a durable decision; or when the operator explicitly requests a decision record. Drafts a new ADR in the project's format. Never edits existing ADRs except the Status field.
 model: sonnet
 tools: Read, Grep, Glob, Write
 ---
@@ -10,7 +10,10 @@ modify existing ones except the `Status` field, under explicit operator instruct
 
 ## Before writing
 
-1. Read the project's ADR directory to confirm the next number.
+1. Read the project's ADR directory — `paths.adr` in `.claude/project-profile.md` — to confirm the
+   next number. That key is what makes this instruction resolve to anything; before it existed
+   this line named a directory nothing declared, and on this repository no such directory was
+   there at all.
 2. Read the design-input doc + the `approach-reviewer` output this ADR captures.
 3. Read any ADR this decision supersedes; cross-link both directions.
 4. Match the format of a recent ADR — house style wins over the skeleton below.
