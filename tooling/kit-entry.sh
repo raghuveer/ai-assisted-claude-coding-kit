@@ -82,13 +82,20 @@ if [ "${1:-}" = "--check" ]; then
   # The paste boundary. A title is single-quoted, so the only character that can end the quoting
   # is a single quote; the rest are refused because a reader who trusts this check should not have
   # to also read every line for shell syntax.
+  #
+  # The capture is `[^']*`, NOT `[^\n]*`. Inside a BSD sed bracket expression `\n` is not a
+  # newline -- it is the two characters backslash and n -- so `[^\n]*` means "not a backslash and
+  # not the letter n", and the capture stops at the first `n` in the title. The substitution then
+  # never matches, no title is extracted, this loop inspects nothing, and every unsafe title is
+  # accepted. It passed on ubuntu (GNU sed) and failed on macos-latest, which is the only reason
+  # it was caught: this laptop has GNU tools and cannot see BSD behaviour at all.
   while IFS= read -r t; do
     case "$t" in
       *\'*|*\`*|*'$'*|*';'*|*'|'*|*'&'*|*'<'*|*'>'*|*'('*|*')'*)
         kit_warn "candidate title is not safe to paste: $t"; bad=1 ;;
     esac
   done <<EOF
-$(sed -n "s/.*kit-task\.sh --title '\([^\n]*\)' *--tier.*/\1/p" < "$P")
+$(sed -n "s/.*kit-task\.sh --title '\([^']*\)'.*/\1/p" < "$P")
 EOF
   if [ "$bad" = 0 ]; then
     printf 'kit: proposal conforms -- %s question(s), %s candidate(s), none filed by this check\n' "$nq" "$ncand"
