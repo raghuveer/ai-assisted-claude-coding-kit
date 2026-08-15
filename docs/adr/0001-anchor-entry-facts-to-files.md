@@ -106,6 +106,19 @@ accepted because the curated version was wrong, not merely expensive.
   convention exists to bound — and is recorded as the second instance of it in this design,
   distinguished only in that a mechanical fix exists and is cheap (`kit-task.sh --title-file`,
   filed separately) and has not yet landed.
+
+  > **Superseded 2026-08-15, during implementation.** This is now enforced. The premise — "the
+  > tool never sees the titles" — was true of the design as written, where the tool wrote facts
+  > and the model wrote the proposal with nothing reading it back. Building the proposal half
+  > added a reader: the orchestrator writes the file, then `kit-entry.sh --check` validates it,
+  > and at that point the titles are in front of a deterministic tool. It refuses any candidate
+  > title containing a quote, backtick, `$`, `;`, `|`, `&`, `<`, `>` or parenthesis, and a
+  > conformance step proves each refusal against a mutation that removes the check.
+  >
+  > Recorded rather than edited away, because the reasoning was sound and the conclusion still
+  > became false — an artefact's boundaries change when something new reads it, and a
+  > convention worth writing down is worth re-checking when the shape moves. **The hold above
+  > is NOT superseded and remains convention.**
 - **A sixth of this repository's load-bearing rationale is permanently outside the mechanism's
   reach.** The blind ground-truth set used to measure the localiser named twelve sites; two —
   `docs/DESIGN-NOTES.md:398-433` and `.gitattributes:1-19` — are not code comments at all, and

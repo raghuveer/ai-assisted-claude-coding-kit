@@ -235,3 +235,44 @@ Two corollaries that keep costing us when they are skipped:
 - **State applicability in both directions.** Anything shared says what it is unsuitable for, not
   only what it does. An asset that advertises only its strengths gets loaded where it does harm,
   and the person loading it has no way to know.
+
+---
+
+## 12. The harness that reports its own success is the one to distrust
+
+§1 is about a check that cannot fail. This is its neighbour and it bit **five times in a single
+session** on 2026-08-15: a *harness* — the scaffolding around a check — reporting success for work
+it never performed. The check was fine every time. The thing driving it lied.
+
+| Shape | What happened |
+|---|---|
+| A mutation that never applied | `sed`/`python` replacements silently matched nothing. The suite then ran against **unmutated** code and printed PASS, which reads as "the mutation survived" — the exact opposite of the truth. Three separate times, on three different mutations. |
+| An edit script reporting the attempt, not the effect | It appended to its success list on *finding* the target line, not on *replacing* it. Reported `applied: [emit, header, join]` having changed one of the three. |
+| A status read from the wrong process | `cmd \| tr '\n' ' '; rc=$?` captures `tr`'s status. Four refusal cases all reported `rc=0` while the script had correctly exited 1. |
+| A step selected but not exercised | `--only "deterministic fixture"` ran the fixture's chain prefix and printed `0 passed, 0 failed`. The assertion lives in a *later* step of the same chain, so the filter selected the setup and none of the checking. |
+
+**Why it recurs:** every one of these reports on the *intent* of an operation rather than its
+*effect*. `sed` exits 0 when it matches nothing. A shell pipeline's `$?` belongs to its last stage.
+Appending to a list inside an `if` records that the branch was taken, not that the work landed.
+None of them are bugs in the tool; they are the tool answering a question that was never asked.
+
+**The test:** after any step that is supposed to change something, ask *what would be different if
+it had done nothing* — then check that, not the exit code. A mutation harness must verify the
+mutation is present before it believes a survival. Print the count and read it.
+
+**In practice:**
+
+```sh
+n=$(grep -c 'mutated_token' file); [ "$n" -ge 1 ] || { echo "MUTATION DID NOT APPLY"; exit 1; }
+cmd > out.txt 2>&1; rc=$?          # status first, formatting afterwards
+```
+
+Treat **zero checks executed as a harness error, never as a result** — a run of `0 passed, 0
+failed` is a run that measured nothing, and `--only` on a chained step can produce exactly that.
+
+**And the one that proves the point:** the leading-dash family from §1 — after a program text, `--` is a
+*filename*, not an option terminator — was written into this repository's comments and then
+repeated by the same author, twice, within an hour. Once it broke `kit-entry.sh` so completely
+that `entry-facts.tsv` came out as a header with zero rows, and once it broke every `awk` in a
+validator. **Both times the exit status stayed clean and only reading the output caught it.**
+Documenting a trap does not stop you falling into it; a check that looks at the result does.

@@ -34,6 +34,69 @@ ROOT=$(kit_root) || { kit_warn "not a git repository"; exit 2; }
 kit_active "$ROOT" || { kit_warn "kit not adopted here (no .claude/project-profile.md)"; exit 2; }
 cd "$ROOT" || exit 1
 
+# ---- --check: validate a proposal a model returned, before a human reads it -------------------
+# Dispatched early, like kit-finding.sh's --vocab, because it neither reads the tree nor writes an
+# artefact. It READS one file and returns a status.
+#
+# The format it enforces is docs/ENTRY-PROPOSAL.md. Two of the rules are load-bearing rather than
+# cosmetic:
+#
+#   A question carries NO checkbox. A checkbox is a thing to tick and be done with; a question is
+#   a thing to answer. This task exists because an undocumented design choice must be raised as a
+#   QUESTION and never filed as work, and a tickbox beside one invites exactly the closing-without-
+#   answering that the rule forbids.
+#
+#   A candidate title must be SAFE TO PASTE. ADR 0001 records the charset restriction as enforced
+#   by nobody, on the grounds that "the tool never sees the titles" -- true of the design as
+#   written, because the tool wrote facts and the model wrote the proposal. It is false here: the
+#   orchestrator writes the file and this reads it back, so the shell metacharacters that would
+#   execute at paste time can be refused rather than requested. Read the ADR knowing that.
+#
+# It does NOT enforce the hold. Nothing here stops anyone running kit-task.sh before a single
+# question is answered, and a check that validated the shape and let the list be filed anyway
+# would look like a gate while gating nothing.
+if [ "${1:-}" = "--check" ]; then
+  P=${2:-}
+  [ -n "$P" ] || { kit_warn "usage: kit-entry.sh --check <proposal-file>"; exit 2; }
+  [ -f "$P" ] || { kit_warn "no such proposal file: $P"; exit 2; }
+  bad=0
+  qline=$(grep -n '^## Open questions' -- "$P" | head -1 | cut -d: -f1)
+  cline=$(grep -n '^## Candidate tasks' -- "$P" | head -1 | cut -d: -f1)
+  uline=$(grep -n '^## Could not determine' -- "$P" | head -1 | cut -d: -f1)
+  [ -n "$qline" ] || { kit_warn "no '## Open questions' section"; bad=1; }
+  [ -n "$cline" ] || { kit_warn "no '## Candidate tasks' section"; bad=1; }
+  [ -n "$uline" ] || { kit_warn "no '## Could not determine' section -- an analysis silent about its own gaps reads as complete"; bad=1; }
+  if [ -n "$qline" ] && [ -n "$cline" ]; then
+    [ "$qline" -lt "$cline" ] ||
+      { kit_warn "questions must come BEFORE candidates: a reader meets the unknowns first"; bad=1; }
+    if awk -v a="$qline" -v b="$cline" 'NR>a && NR<b && /^[[:space:]]*[-*][[:space:]]*\[[ xX]\]/ {found=1} END{exit !found}' < "$P"; then
+      kit_warn "a question carries a checkbox -- a question is answered, not ticked"; bad=1
+    fi
+  fi
+  ncand=0; nq=0
+  [ -n "$cline" ] && ncand=$(awk -v a="$cline" 'NR>a && /^[[:space:]]*-[[:space:]]*\[[ xX]\]/ {n++} END{print n+0}' < "$P")
+  [ -n "$qline" ] && [ -n "$cline" ] && nq=$(awk -v a="$qline" -v b="$cline" 'NR>a && NR<b && /^[[:space:]]*[0-9]+\./ {n++} END{print n+0}' < "$P")
+  nlines=$(grep -c 'kit-task\.sh --title' -- "$P" || true)
+  [ "$ncand" = "$nlines" ] ||
+    { kit_warn "$ncand candidate(s) but $nlines kit-task.sh line(s) -- every candidate carries the literal line the operator runs"; bad=1; }
+  # The paste boundary. A title is single-quoted, so the only character that can end the quoting
+  # is a single quote; the rest are refused because a reader who trusts this check should not have
+  # to also read every line for shell syntax.
+  while IFS= read -r t; do
+    case "$t" in
+      *\'*|*\`*|*'$'*|*';'*|*'|'*|*'&'*|*'<'*|*'>'*|*'('*|*')'*)
+        kit_warn "candidate title is not safe to paste: $t"; bad=1 ;;
+    esac
+  done <<EOF
+$(sed -n "s/.*kit-task\.sh --title '\([^\n]*\)' *--tier.*/\1/p" < "$P")
+EOF
+  if [ "$bad" = 0 ]; then
+    printf 'kit: proposal conforms -- %s question(s), %s candidate(s), none filed by this check\n' "$nq" "$ncand"
+    exit 0
+  fi
+  exit 1
+fi
+
 PROFILE=$(kit_profile "$ROOT")
 STATE=$(kit_cfg "$PROFILE" paths.state ".project")
 TASKS=$(kit_cfg "$PROFILE" paths.tasks ".project/tasks")

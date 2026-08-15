@@ -2479,6 +2479,56 @@ check $? "entry analysis reports the choice, counts its exclusions, and writes n
 rm -rf "$en"
 fi
 
+if step "a proposal that cannot be pasted safely is refused, and a question is not a checkbox"; then
+# The judgement half of the entry mechanism produces prose, and a fixture cannot gate a model.
+# What it CAN gate is the file the orchestrator wrote from that prose, which is what --check reads.
+#
+# Two of these are the design's own rules rather than formatting taste. A question carries no
+# checkbox, because the task this serves says an undocumented choice is a QUESTION and never work,
+# and a tickbox invites closing instead of answering. And a candidate title must survive being
+# pasted into a shell -- ADR 0001 recorded that as enforced by nobody, on the grounds that the tool
+# never sees the titles, which stopped being true the moment the tool read the written proposal.
+pr="$WORK.prop"; rm -rf "$pr"; mkdir -p "$pr"
+( cd "$pr" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  { echo '## Open questions'; echo
+    echo '1. Why is the retry count 7?'; echo '   evidence: src/retry.go:3'; echo '   answer:'; echo
+    echo '## Candidate tasks'; echo
+    echo '- [ ] Document the retry budget'
+    echo "      kit-task.sh --title 'Document the retry budget' --tier T1"; echo
+    echo '## Could not determine'; echo
+    echo '- co-change: empty'; } > good.md
+
+  bash "$KIT/tooling/kit-entry.sh" --check good.md >out.txt 2>&1 || exit 1
+  grep -q 'proposal conforms' out.txt || exit 1
+  # It said "none filed by this check", so prove it: no task file appeared.
+  [ "$(ls .project/tasks 2>/dev/null | wc -l | tr -d ' ')" = 0 ] || exit 1
+
+  # Each refusal separately, because one boolean over six conditions cannot say which broke.
+  want() { bash "$KIT/tooling/kit-entry.sh" --check "$1" >/dev/null 2>&1; [ "$?" = 1 ] || { echo "  not refused: $2"; return 1; }; }
+  sed "s/Document the retry budget' --tier/Document \`whoami\` budget' --tier/" good.md > backtick.md
+  sed "s/Document the retry budget' --tier/Document \$(id) budget' --tier/"    good.md > dollar.md
+  sed "s/Document the retry budget' --tier/Doc; rm -rf . budget' --tier/"      good.md > semi.md
+  sed 's/^1\. Why/- [ ] Why/'            good.md > tickbox.md
+  grep -v 'Could not determine'          good.md > nogaps.md
+  grep -v 'kit-task.sh --title'          good.md > noline.md
+  rc=0
+  want backtick.md 'a backtick in a title'      || rc=1
+  want dollar.md   'a $(...) in a title'        || rc=1
+  want semi.md     'a semicolon in a title'     || rc=1
+  want tickbox.md  'a checkbox on a question'   || rc=1
+  want nogaps.md   'no could-not-determine'     || rc=1
+  want noline.md   'a candidate with no kit-task.sh line' || rc=1
+  # A usage error is NOT a refusal: exit 2 means the question could not be asked.
+  bash "$KIT/tooling/kit-entry.sh" --check /nonexistent >/dev/null 2>&1; [ "$?" = 2 ] || rc=1
+  exit $rc )
+check $? "a conforming proposal passes, six malformed ones are refused, and --check files nothing"
+rm -rf "$pr"
+fi
+
 if step "greenfield and an imported history are the same mechanism, not special cases"; then
 # The task's first acceptance criterion is that ONE mechanism handles all three starting
 # conditions -- greenfield being brownfield with an empty inventory, modernization being
