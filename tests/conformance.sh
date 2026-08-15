@@ -2407,10 +2407,18 @@ echo "  commits: $(git rev-list --count HEAD)"
 #      indexer builds into `index.db.new` and marks a failed build with `index.db.failed`.
 #   2. templates/project-profile.md now documents which tier.rule globs are refused, and
 #      kit-init.sh copies that template into the fixture's first commit.
-EXPECT_HEAD=ff40e675370db48da64177309438fdae84eca5ec
+#   3. 2026-08-15: templates/project-profile.md gained `paths.adr` and `paths.design_input`
+#      (ADR 0001). Same cause as 2 -- kit-init.sh copies the template into the seed commit.
+#      The cause was established BEFORE re-pinning, as this comment requires, and the
+#      evidence is: the previous commit still PASSED on the old pins, so the suite was not
+#      broken; `git ls-tree -r` of the old and new seed trees differ in EXACTLY ONE blob,
+#      `.claude/project-profile.md`; and `git cat-file -p` of the two blobs differs by
+#      exactly the six added lines and nothing else. A full fresh-clone run was 64 passed,
+#      1 failed, that one being this check -- so nothing else moved with it.
+EXPECT_HEAD=9a77d5945b008a5af1474dee1f4e8a174e59252b
 # The seed alone, so a mismatch says WHICH half moved: seed intact means this script changed,
 # seed moved means a file kit-init.sh commits did.
-EXPECT_SEED=df86de1fe6afabc9ae1b501764f9341bd55c1dd0
+EXPECT_SEED=04d8b0bc070e5d8d57b4a8dbd5d84ae3bc21430e
 fi
 
 if step "trailer hook" fixture; then
