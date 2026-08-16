@@ -98,3 +98,58 @@ The answer was 11, and nine of the eleven are this.
 Related: the same bare-counter era is why `summary` became required
 (`docs/LESSONS.md`), and why seven findings recorded on 2026-08-10 all read `fail-open|major|bash`
 and could not be told apart.
+
+## Chosen approach, 2026-08-16 — operator selected "make the gate count what it can act on"
+
+Recorded before implementation, because the shape of this fix is the whole argument and a later
+reader must be able to see what was rejected as well as what was built.
+
+**The population, measured rather than assumed.** Cross-tab of the 17 unfixed criticals:
+
+| | on a `done` task | on a `progress` task |
+|---|---|---|
+| has `summary` (assessable) | 6 | 2 |
+| no `summary` (unassessable) | 2 | 7 |
+
+So **only 9 are the policy question**. The other 8 are readable and decidable by ordinary review —
+a backlog problem, not a gate problem, and they need no mechanism at all. Six of those sit on
+`T-20260814-one-entry-mechanism-brownfield-is-the-ge`, which is closed.
+
+**REJECTED — mark them `--fixed` with a note.** Clears the gate in one command and writes a false
+statement into an append-only committed log. `--fixed` means *fixed*; using it for *unassessable*
+is precisely the laundering this gate exists to prevent, and `kit-index.sh` would then report them
+as addressed forever.
+
+**REJECTED — a standing query exclusion** (`AND summary IS NOT NULL`). This was the first shape
+proposed and it is wrong: it silently exempts **every future** critical that lacks a summary, so a
+reviewer omitting the field would slip past the gate. It converts a bounded historical problem
+into an unbounded hole, which is a strictly worse trade than the thing it fixes.
+
+**CHOSEN — an explicit per-finding disposition.** Each of the nine is named individually and
+deliberately, with a reason, by the operator. The gate then excludes only what was marked. This
+keeps the exclusion bounded, auditable, and readable as what it is: a blind spot, not a clean bill.
+
+Design, mirroring the `finding-fixed` path exactly rather than inventing a parallel one:
+
+- `kit_findings.py` gains an `unassessable_event()` serialiser emitting
+  `{"kind":"finding-unassessable","at":…,"finding":…,"reason":…,"actor":…}`. `--reason` is
+  REQUIRED and non-empty — a disposition without a stated reason is the thing being avoided.
+- `kit-resolve.sh --unassessable ID --reason TEXT`, alongside `--fixed`. Operator-invoked.
+- `schema.sql` gains `unassessable_at` and `unassessable_reason`, derived from those events every
+  rebuild, never written directly — same rule as `fixed_at`.
+- `kit-preflight.sh --criticals` excludes `unassessable_at IS NOT NULL`. **The predicate has ONE
+  home and the exclusion goes there**, per the comment already on it.
+- `kit-status.sh` reports the count as a NAMED, PERMANENT blind spot — "N unassessable (predate
+  the summary field)" — never folded into zero.
+- `kit-event.sh` gains `finding-unassessable` to its refusal list, because it becomes a kind the
+  indexer acts on. The check added on 2026-08-16 derives that list from the indexer, so omitting
+  this turns conformance red rather than reopening the forge.
+
+**Orthogonality, stated because two columns have already been conflated here.** `vindicated`
+answers *was it real*; `fixed_at` answers *was it addressed*; `unassessable_at` answers *can it be
+judged at all*. Three facts, three columns. Reusing `vindicated=0` would claim these nine were
+refuted, which nobody established — the same error as filing not-relevant work as `abandoned`.
+
+**What the agent may NOT do.** Build the mechanism, yes. **Apply the nine marks, no** — that is an
+operator action for the same reason `--fixed` is, and a session clearing the gate that gates its
+own work is the one certification that carries no information.
