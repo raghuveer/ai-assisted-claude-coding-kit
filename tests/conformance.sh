@@ -2624,6 +2624,13 @@ if step "greenfield and an imported history are the same mechanism, not special 
 # brownfield plus a stack delta. That claim is cheap to make and was, in the design, entirely
 # untested: the branches existed and had never once executed.
 #
+# THIS STEP COVERS TWO OF THE THREE. Greenfield and an imported history are here. MODERNIZATION IS
+# NOT: its source-to-target delta lives in the solution overlay, which is unbuilt, so there is
+# nothing to express it with and nothing to assert. Deferred by the operator on 2026-08-16 rather
+# than quietly counted as covered -- see T-20260815-ac6-modernization-delta-is-claimed-but-u. An
+# earlier version of this comment named all three conditions above a step that tests two, which is
+# the shape where a reader checks the box because the comment said so.
+#
 # Three cases, because a state that is always the same value is not a state:
 #   A  greenfield        no subject files at all      -> tracked_files 0, and it must not hang
 #   B  imported history  files, exactly one commit    -> history degenerate, facts still full
