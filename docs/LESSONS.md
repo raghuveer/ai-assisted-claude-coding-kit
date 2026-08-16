@@ -93,6 +93,16 @@ the parsing subsystem ceases to exist along with its whole defect class.
 
 **Ask for the data; do not scrape it. The cheapest component to secure is the one you deleted.**
 
+> **Correction, 2026-08-16 — the premise above is false, and the lesson survives it.** "Reviewers
+> cannot run commands" was believed because their frontmatter and `--allowedTools` said so.
+> Neither binds: a reviewer launched with exactly `--allowedTools "Read,Grep,Glob"` ran `Bash`
+> (`SECURITY.md` §3). So the harvester was not forced on us by a boundary — it was forced on us by
+> a boundary we *assumed*, which is a more uncomfortable origin for five defects than the one
+> originally written here. The conclusion is unchanged and now rests on better ground: ask for
+> structured data because scraping prose breeds defects, not because the reviewer is caged. Had
+> the cage been checked, this section would have been shorter by five defects **or** the design
+> would have been chosen for the right reason.
+
 ---
 
 ## 6. Models for judgement; deterministic code for data

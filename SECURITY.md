@@ -158,9 +158,14 @@ that supports binding, bind.
 
 - **No single JSON writer for the whole event log.** Findings go through `kit_findings.py`; the
   other kinds do not. `kit-event.sh`, `kit-checkpoint.sh`, `kit-spend.sh` and `kit-vindicate.sh`
-  build their lines with `printf`, and the accelerator export builds its own. `kit-event.sh`
-  escapes its two fields but splices its third argument in as raw JSON; `kit-vindicate.sh` escapes
-  **nothing**. *Demonstrated:* `kit-vindicate.sh --task T-x --class 'style","kind":"spend",…'`
+  build their lines with `printf`, and the accelerator export builds its own. They are not equally
+  exposed, and the difference is the point: **`kit-spend.sh` escapes** every interpolated field
+  through its own `esc()`, in both the shell and the awk writer; **`kit-checkpoint.sh`** escapes
+  nothing but interpolates only machine values (a timestamp, a SHA, a count); **`kit-event.sh`**
+  escapes its two fields and then splices its third argument in as **raw JSON**; and
+  **`kit-vindicate.sh` escapes nothing at all** while taking both its fields from the command
+  line. That last one is the live hole.
+  *Demonstrated:* `kit-vindicate.sh --task T-x --class 'style","kind":"spend",…'`
   appended a line carrying a second `kind` key and a fabricated `tok_in`. The two readers of that
   file then disagree about what it says — the awk indexer takes the first match and records a
   `vindication`, while a JSON parser takes the last and sees a `spend`; the same log reads as 11
