@@ -17,6 +17,25 @@
 #
 #     it reads a prompt on stdin and writes the reviewer's whole reply to stdout.
 #
+# WHAT `--cmd` DOES NOT PREVENT -- read this before trusting a review's independence.
+# Whatever tool restriction you put in that command is a REQUEST to the harness, not a
+# boundary this script imposes. Demonstrated 2026-08-16: a reviewer launched with exactly
+# `--allowedTools "Read,Grep,Glob" --disallowedTools "ReportFindings"` ran `Bash` anyway --
+# the session transcript shows the `tool_use` with `is_error: false`. So:
+#
+#   - A reviewer CAN read anything the operator can read, run shell commands, and in
+#     principle edit the code it is reviewing. `agents/*-reviewer.md` saying "read-only by
+#     design" is behavioural shaping and nothing more.
+#   - Nothing here compares the tools an agent declared against the tools it used. The one
+#     violation seen was noticed only because the reviewer disclosed it unprompted.
+#   - What IS enforced: the reply is written to a file and validated, never executed, and
+#     `kit-guard.sh` refuses Write/Edit/NotebookEdit outside the project root -- though that
+#     hook does not match `Bash`, so a shell command is not covered.
+#
+# If a review's independence has to survive an uncooperative reviewer, isolate the process
+# (a container, a copy with no remote per `kit-preflight.sh --isolated`) and diff the tree
+# afterwards. Do not rely on the flag. `SECURITY.md` §3 carries the full account.
+#
 # ATTEMPTS ARE BOUNDED and the bound is not a formality: a reviewer that cannot satisfy the
 # contract in N tries will not satisfy it in twenty, and an unbounded loop against a paid
 # endpoint is a bill, not a retry. When the attempts run out the failure is RECORDED as a

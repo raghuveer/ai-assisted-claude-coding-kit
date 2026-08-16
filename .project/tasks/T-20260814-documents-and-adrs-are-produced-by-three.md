@@ -54,7 +54,14 @@ Two design points worth settling:
 
 - [ ] A document produced by the pipeline can be reviewed by an agent whose findings are recorded
       through the same door as every other finding.
-- [ ] The reviewer is read-only, enforced at invocation rather than requested in prose.
+- [ ] The reviewer is read-only **by declaration**, and the task states plainly that this is a
+      convention rather than a mechanism. *Amended 2026-08-16.* This criterion originally read
+      "enforced at invocation rather than requested in prose" — it was written against the
+      `SECURITY.md` claim that `--allowedTools` binds, which was disproved and moved to
+      `SECURITY.md` §3 under `T-20260815-security-md-claims-allowedtools-enforces`. As written it
+      could only be met falsely, so it is corrected rather than left to be ticked on a premise
+      that no longer holds. If a real gate is wanted here, it is separate work with its own
+      criterion: it must FAIL when removed.
 - [ ] Anything mechanically checkable is checked mechanically and is not this agent's job.
 - [ ] The finding class used for an unanchored claim is decided and is in the one vocabulary home.
 - [ ] Conformance asserts the new agent's inlined vocabulary against `--vocab`, as it does for

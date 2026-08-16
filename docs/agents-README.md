@@ -69,6 +69,21 @@ Nothing is composed or generated. Agents read `.claude/project-profile.md` at sp
 the project layer is edited in one place and never built. Plugin agents and a project's own
 `.claude/agents/` coexist, so a project can add its own without touching these.
 
+### `tools:` is a declaration, not a boundary
+
+The frontmatter `tools:` line — `Read, Grep, Glob` on the three reviewers, `Bash` on `coder` and
+`tester` — states what an agent is **asked** to hold. **Nothing in this kit verifies it binds, and
+on 2026-08-16 it was demonstrated not to.** A reviewer launched with exactly
+`--allowedTools "Read,Grep,Glob"` ran `Bash` successfully; its transcript carries the `tool_use`
+with `is_error: false`. Whether a grant is honoured is a property of the harness and its version,
+not of these files.
+
+Read `tools:` as routing and intent — it documents the role, keeps an agent from being handed
+capabilities its method never needs, and is the line to change when that method changes. Do not
+read it as a capability boundary, do not cite it as one in a design, and do not let a review
+conclude "the reviewer could not have edited this" from it. `SECURITY.md` §3 carries the full
+account.
+
 > **Superseded in 0.2.0.** Through 0.1 the agents were composed per project by a
 > `sync-agents.ps1` build step that wrote `.claude/agents/`. That step is retired — the script
 > is kept as `legacy-sync-agents.ps1` for reference and is not wired up. The per-session

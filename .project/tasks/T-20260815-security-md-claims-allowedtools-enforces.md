@@ -34,20 +34,56 @@ reader looking for the real control. The kit's own stated reason for read-only r
 
 ## Acceptance criteria
 
-- [ ] The claim moves out of "What is enforced mechanically" and into the convention-only section,
+- [x] The claim moves out of "What is enforced mechanically" and into the convention-only section,
       beside "nothing stops a committer self-certifying", **or** an actual gate is built and the
       claim stays. Not both, and not neither.
-- [ ] If a gate is built it can FAIL, and a test proves it: a reviewer invocation that attempts a
+      → **Moved.** `SECURITY.md` §3 opens with "Reviewer read-only is a convention", carries the
+      transcript evidence, and states that neither frontmatter nor `--allowedTools` binds. No gate
+      was built; see the next criterion for why that is a deliberate choice and not a shortfall.
+- [~] If a gate is built it can FAIL, and a test proves it: a reviewer invocation that attempts a
       write or a shell command is refused, and the test is red when the gate is removed. A gate
       that merely re-states `--allowedTools` is the same defect with more words.
-- [ ] The sweep, not the instance (`LESSONS` §4): every other claim in the "enforced mechanically"
+      → **Not applicable: no gate was built**, so there is nothing for this to hold to. Recorded
+      `[~]`, not ticked, because a criterion satisfied by an absent component is satisfied by
+      nothing. **The gate is still wanted and is separate work** — the only shape that would bind
+      is a PreToolUse hook denying `Bash` in the reviewer's own session, which means changing how
+      the operator spawns reviewers, not changing this repository's documents. Proposed as a
+      follow-up task rather than smuggled in here.
+- [x] The sweep, not the instance (`LESSONS` §4): every other claim in the "enforced mechanically"
       section is re-verified by demonstration rather than by reading, and each one that turns out
       to be convention moves. The section currently also claims one JSON writer,
       sanitise-then-assert, aggregate-only export, and that no model output is executed.
-- [ ] `agents/*-reviewer.md` frontmatter `tools:` is stated for what it is — a declaration the
+      → **Swept, 2026-08-16. Six claims; two failed, one was vacuous, four held.** Each surviving
+      entry now carries its demonstration inline. Findings:
+      · **one JSON writer — FALSE.** Five shell sites build JSON with `printf`.
+        `kit-vindicate.sh --class 'style","kind":"spend",…'` appended a line with a duplicate
+        `kind` and a fabricated `tok_in`; the awk indexer read it as a `vindication`, a JSON parser
+        as a `spend`, so one log counts 11 or 12 spend events depending on the reader. Claim
+        narrowed to findings and fix-marks; the gap is now §4. **Filed separately — see Notes.**
+      · **solution overlay never exported — VACUOUS.** Zero `overlay` references in `tooling/`;
+        the component is unbuilt, so nothing could export one. Moved to §4 as untested.
+      · **sanitise-then-assert — HELD, mutation-proven.** Injection neutered; with `sanitise()`
+        stubbed to `return text` the write was refused. The control can fail.
+      · **aggregate-only export — HELD, demonstrated.** 316 finding rows seeded with client
+        markers in `summary`, `file_path` and `task_id`; zero markers in the export.
+      · **no model output executed — HELD, but by search only.** Labelled as the weakest entry in
+        the section, in its own entry, rather than sharing the confidence of the other four.
+      · **writes confined to root — HELD, and it can fail.** Outside path exits 2, inside exits 0;
+        a `Bash` payload exits 0 unexamined, which §3 already said and this confirmed.
+- [x] `agents/*-reviewer.md` frontmatter `tools:` is stated for what it is — a declaration the
       harness may or may not enforce — wherever the kit relies on it.
-- [ ] Whatever the outcome, the operator's runbook for spawning reviewers says plainly what is and
+      → `docs/agents-README.md` gains "**`tools:` is a declaration, not a boundary**" in the
+      Structure section that documents the frontmatter, and `SECURITY.md` §3 and §4 say the same.
+      **Deliberately NOT added to the reviewer prompts themselves.** Those files say "read-only by
+      design", which is a true statement of intent; telling a reviewer in its own system prompt
+      that the restriction does not bind would weaken the behavioural shaping that is currently
+      the only thing working. The kit *relies* on the grant in its documents, not in the prompts.
+- [x] Whatever the outcome, the operator's runbook for spawning reviewers says plainly what is and
       is not prevented, so the next session does not re-derive this from a transcript.
+      → `tooling/kit-review-record.sh` gains a "WHAT `--cmd` DOES NOT PREVENT" block in its header,
+      which is the one place that knows how a reviewer is invoked. It names what a reviewer can
+      still do, what is genuinely enforced, and what to do instead when independence has to
+      survive an uncooperative reviewer (isolate the process, diff the tree).
 
 ## Notes
 
@@ -67,3 +103,15 @@ The verification method is cheap and repeatable and should go in the task's own 
 `claude -p --allowedTools "Read,Grep,Glob"`, ask for a shell command, then read the session
 transcript under `~/.claude/projects/<mangled-path>/<session>.jsonl` for `tool_use` entries and
 their `is_error`. Do not take the agent's own account of what it ran.
+
+## Sweep spillover — proposed, not filed
+
+Two defects surfaced by the sweep that are **not** this task's to fix. Filed separately per the
+"file don't fold" rule; recorded here so they are not lost if the operator defers them.
+
+1. **`kit-vindicate.sh` interpolates `--task` and `--class` into JSON unescaped**, and
+   `kit-event.sh` splices its third argument in as raw JSON. This is the critical that
+   `kit_findings.py` was built to close, still live in the paths the fix did not cover.
+   Reproduction is one line and is in `SECURITY.md` §4.
+2. **A PreToolUse gate that would actually bind a reviewer to read-only** — the work AC2 above
+   describes but does not require. It changes the reviewer invocation, not this repository.
