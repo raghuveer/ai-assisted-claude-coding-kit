@@ -60,7 +60,7 @@ document says these files are agent-writable by construction.
 
 ## Acceptance criteria
 
-- [ ] **The contradiction is resolved explicitly and recorded**, because the two answers lead to
+- [x] **The contradiction is resolved explicitly and recorded**, because the two answers lead to
       different systems and this is an architecture decision, not a patch:
       · **(a) adapters are trusted** — then the profile is a trust boundary and must be treated as
         one: named in `SECURITY.md` §1, and something must make an agent-authored change to it
@@ -73,13 +73,13 @@ document says these files are agent-writable by construction.
       cheapest structural fix is to stop feeding a redirect and pass statements in a way the CLI
       does not interpret, rather than extending a blacklist. **A blacklist that gained `.shell`
       would be the same defect with a longer regex.**
-- [ ] **A test proves both holes closed and FAILS when the fix is reverted**: an adapter that
+- [x] **A test proves both holes closed and FAILS when the fix is reverted**: an adapter that
       `touch`es a marker must not produce it, and an adapter emitting `.shell` must not produce
       its marker. Assert on the marker's absence *and* prove the harness would notice its presence.
-- [ ] **The profile's status as an input is stated wherever it is relied on** — `SECURITY.md` §1
+- [x] **The profile's status as an input is stated wherever it is relied on** — `SECURITY.md` §1
       gains a row or an existing row is corrected, and §2's "no model output is executed" is
       restated to account for indirect execution or moved.
-- [ ] **`docs/ADAPTERS.md` states the contract's security posture** — what an adapter may assume
+- [x] **`docs/ADAPTERS.md` states the contract's security posture** — what an adapter may assume
       about its caller, and what the caller assumes about it. That document is how a third adapter
       gets written; today it would be written against the friendlier of two contradictory answers.
 
