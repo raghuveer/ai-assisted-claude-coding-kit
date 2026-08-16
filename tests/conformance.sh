@@ -703,6 +703,10 @@ dx="$WORK.dotcmd"; rm -rf "$dx"; mkdir -p "$dx/.claude" "$dx/.project/tasks"
   # HALF 1 -- adapter output reaches the database. If this stops being true the step is
   # measuring nothing, so it fails rather than skipping.
   printf '#!/usr/bin/env bash\n[ "$1" = emit ] && echo "INSERT OR REPLACE INTO meta(key,value) VALUES(\047probe\047,\0471\047);"\nexit 0\n' > .claude/probe.sh
+  # Tracked, per ADR 0003 -- otherwise the adapter never executes and BOTH halves below pass on a
+  # refusal instead of on the property they name. The dot-command half in particular would then
+  # be asserting that a command which never ran did not run.
+  git add .claude/probe.sh >/dev/null 2>&1
   bash "$KIT/tooling/kit-index.sh" >/dev/null 2>p.err || exit 1
   [ "$(sqlite3 .project/index.db "SELECT value FROM meta WHERE key='probe';" | tr -d '\015')" = 1 ] || exit 1
 
@@ -1008,6 +1012,11 @@ ax="$WORK.apos"; rm -rf "$ax"; mkdir -p "$ax/.claude" "$ax/.project/tasks"
   # the fix: an ingest.extra adapter is in neither the mtime WATCH list nor the fingerprint
   # loop, so its failure is exactly the one that used to go quiet after announcing itself once.
   printf '#!/usr/bin/env bash\nexit 0\n' > .claude/bad.sh
+  # TRACKED, because ADR 0003 makes an untracked adapter refuse to run. This fixture is about
+  # what happens when an adapter emits bad SQL, so the adapter has to reach execution at all --
+  # otherwise the step would pass for the wrong reason, on a refusal rather than on the failure
+  # it exists to test. Adding it is what a real project does with an adapter it intends to use.
+  git add .claude/bad.sh >/dev/null 2>&1
   { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
     echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"
     echo "ingest.extra: .claude/bad.sh"; echo "---"; } > .claude/project-profile.md

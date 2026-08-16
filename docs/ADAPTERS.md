@@ -34,7 +34,41 @@ ingest.commits: git        # git    | none
 ingest.extra:   <path>     # repeatable; always additive, never replaces a built-in
 ```
 
-`none` disables a source. Paths are relative to the repository root unless absolute.
+`none` disables a source.
+
+### Where an adapter may live — enforced, not advised
+
+**A path must be repository-relative, and the file must be tracked by git.** Both are refused by
+`run_adapter` before anything executes, and a conformance step proves all three directions —
+untracked refused, absolute refused, and a tracked adapter still running.
+
+```
+ingest.extra: tools/my-adapter.sh     # ok, once `git add`ed
+ingest.extra: /opt/thing/adapter.sh   # REFUSED — not repo-relative
+ingest.extra: ../shared/adapter.sh    # REFUSED — climbs out of the repository
+ingest.extra: tools/new.sh            # REFUSED until tracked — an untracked file is in no diff
+```
+
+**Why.** The kit does not merely read what an adapter prints — it **executes** it, as a process
+and again by feeding its stdout to the `sqlite3` CLI. The profile naming it sits inside the
+project root, where `kit-guard.sh` permits every write by design, so without this an agent could
+write an adapter and a profile line in one turn and get code execution on the next index. And
+`kit-index.sh --if-stale` runs at the start of every session.
+
+**The bound, stated so nobody reads more into it.** This binds a confused agent, a profile copied
+between projects, and an ad-hoc path. It does **not** bind a determined one: `git add` is a `Bash`
+call and the hook matcher is `Write|Edit|NotebookEdit`. `SECURITY.md` §4 keeps the sandbox gap;
+ADR 0003 records the decision, the alternatives, and this limit.
+
+**What is still convention.** That the tracked adapter is the one the *project* intended — as
+recorded in the solution overlay or an ADR — is not checked by anything. Nothing compares the
+profile against the overlay today, because the overlay is not yet built. Until it is, the
+documented choice binds by review rather than by mechanism.
+
+### Writing your own
+
+An adapter is ordinary code that runs with the operator's permissions. Treat authoring one as
+authoring privileged code: it emits SQL that is executed against the index.
 
 Built-in sources run inline rather than through a process boundary. A bare process spawn
 costs ~0.2s on Windows and the indexer runs at the start of every session, so paying three

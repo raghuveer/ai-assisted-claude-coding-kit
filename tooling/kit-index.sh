@@ -120,7 +120,7 @@ run_adapter() {
   esac
   if ! git -C "$ROOT" ls-files --error-unmatch -- "$1" >/dev/null 2>&1; then
     kit_warn "ingest adapter '$1' is not tracked by git; refusing to run it"
-    kit_warn "  an uncommitted adapter has been reviewed by nobody. Commit it, or correct the"
+    kit_warn "  an untracked adapter is in no diff and no review. \`git add\` it, or correct the"
     kit_warn "  ingest.* value in the profile. (ADR 0003)"
     return 2
   fi
