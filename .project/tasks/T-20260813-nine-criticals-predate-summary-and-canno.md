@@ -77,9 +77,9 @@ be reachable for any finding recorded after the contract, where a summary is req
 
 - [ ] Each of the nine is either linked to a named defect with the evidence for the link, or
       recorded as unassessable — and which of the two is visible per finding, not aggregated.
-- [ ] `kit-status.sh` reports unassessable findings as their own count. A repository with
+- [x] `kit-status.sh` reports unassessable findings as their own count. A repository with
       unassessable criticals never prints "none outstanding".
-- [ ] The unassessable route is unreachable for a finding that carries a summary. A fixture
+- [x] The unassessable route is unreachable for a finding that carries a summary. A fixture
       proves the refusal, not just the acceptance.
 - [ ] The two indistinguishable `correctness` findings on
       `T-20260808-a-task-id-matching-no-task-file-is-count` are NOT linked to specific defects.
@@ -153,3 +153,28 @@ refuted, which nobody established — the same error as filing not-relevant work
 **What the agent may NOT do.** Build the mechanism, yes. **Apply the nine marks, no** — that is an
 operator action for the same reason `--fixed` is, and a session clearing the gate that gates its
 own work is the one certification that carries no information.
+
+## Status 2026-08-16 — mechanism built, three criteria still open
+
+**AC2 and AC3 are met.** `kit-status.sh` reports unassessable findings as their own count and a
+repository holding them never prints a bare "none outstanding" — the notice sits OUTSIDE the
+not-empty branch precisely so it appears when the list is empty, which is when it matters most.
+AC3 was **not** met by the first implementation and is now: `kit-resolve.sh` refuses
+`--unassessable` on any finding that carries a summary, and the conformance step proves the
+REFUSAL as well as the acceptance. Without that the route was a general-purpose way to clear the
+criticals gate rather than a narrow hatch for rows whose text does not survive — the laundering
+this task exists to prevent, rebuilt by its own fix. Mutation-proven: making the refusal
+unreachable turns the step red.
+
+**AC1, AC4 and AC5 remain open, and two of them are the operator's.**
+
+- **AC1** needs the nine marks applied, each visibly linked-or-unassessable per finding. The
+  mechanism exists; recording them is an operator action for the same reason `--fixed` is.
+- **AC4** — that the two indistinguishable `correctness` findings on
+  `T-20260808-a-task-id-matching-no-task-file-is-count` are NOT linked to specific defects — is a
+  judgement about which of two identical rows is which, and the design must keep refusing to
+  guess. Nothing to build; something to check once the marks are applied.
+- **AC5** — `TRIAL-PROTOCOL` §0 stating what an unassessable critical means for the gate — is
+  mine and is not done. Note §0 currently calls `kit-preflight.sh --criticals` rather than
+  restating the rule, which is why it did not go stale when the third state was added; the box
+  still needs to say what the third state means for a trial.

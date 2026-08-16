@@ -69,7 +69,7 @@ document says these files are agent-writable by construction.
         running an arbitrary path from a file an agent can write is itself the defect.
       An ADR is the right home; `paths.adr` exists. Do not fix the symptom and leave the table
       saying one thing and the code another.
-- [ ] **Dot-commands cannot reach `sqlite3` from adapter output**, whichever branch is chosen — the
+- [x] **Dot-commands cannot reach `sqlite3` from adapter output**, whichever branch is chosen — the
       cheapest structural fix is to stop feeding a redirect and pass statements in a way the CLI
       does not interpret, rather than extending a blacklist. **A blacklist that gained `.shell`
       would be the same defect with a longer regex.**

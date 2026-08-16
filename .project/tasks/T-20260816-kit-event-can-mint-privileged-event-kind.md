@@ -38,21 +38,21 @@ vocabulary the accelerators are derived from.
 
 ## Acceptance criteria
 
-- [ ] **A privileged kind cannot be minted through the generic writer.** `finding`, `finding-gap`
+- [x] **A privileged kind cannot be minted through the generic writer.** `finding`, `finding-gap`
       and `finding-fixed` — and any future kind the indexer acts on rather than merely records —
       are refused by `kit-event.sh`, or the indexer ignores them unless they carry proof they came
       through `kit_findings.py`. Decide which, and say why in the change.
-- [ ] **The decision names the boundary rather than blacklisting today's kinds.** A hardcoded list
+- [x] **The decision names the boundary rather than blacklisting today's kinds.** A hardcoded list
       of three strings is a list that goes stale the next time a kind is added. Prefer a rule the
       indexer can state — e.g. kinds that mutate a row are a closed set the generic writer cannot
       address — over an enumeration in a second file.
-- [ ] **A test forges each privileged kind through `kit-event.sh` and asserts the index is
+- [x] **A test forges each privileged kind through `kit-event.sh` and asserts the index is
       unchanged**, and goes RED when the refusal is removed. Assert on the *database state*, not on
       the script's exit code: a refusal that exits 2 while still appending is the failure mode.
-- [ ] **`SECURITY.md` §2's JSON-writer claim is corrected to whatever survives.** As written —
+- [x] **`SECURITY.md` §2's JSON-writer claim is corrected to whatever survives.** As written —
       "Every `finding`, `finding-gap` and `finding-fixed` line is serialised by `kit_findings.py`" —
       it is false, and it is the claim that *replaced* the last false claim in that slot.
-- [ ] **The operator-only convention on fix-marks is stated where it can be relied on, or admitted
+- [x] **The operator-only convention on fix-marks is stated where it can be relied on, or admitted
       as unenforced.** `.claude/CLAUDE.md` and `skills/checkpoint/SKILL.md` both present it as a
       rule; today any writer can bypass it. Convention is an acceptable answer — an undocumented
       bypass is not.

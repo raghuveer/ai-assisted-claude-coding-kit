@@ -166,6 +166,30 @@ if db_readable; then
   # being resolved. Without it `event.task_id` is empty and the mark exists outside every
   # per-task view in the kit.
   ftask=$(sqlite3 -noheader "$DB" "SELECT COALESCE(task_id,'') FROM finding WHERE id='$fesc';" 2>/dev/null)
+
+  # UNASSESSABLE IS FOR FINDINGS THAT CANNOT BE READ, AND FOR NOTHING ELSE. A finding carrying a
+  # summary says what it was, so it can be judged -- addressed, refuted, or left open. Allowing
+  # this mark on one would turn a narrow escape hatch for rows that predate the `summary` column
+  # into a general-purpose way of clearing the criticals gate, which is the laundering the whole
+  # disposition exists to avoid. The route is closed by the DATA, not by asking the operator to
+  # use it responsibly.
+  if [ "$unass" = 1 ]; then
+    fsum=$(sqlite3 -noheader "$DB" "SELECT COALESCE(summary,'') FROM finding WHERE id='$fesc';" 2>&1)
+    case "$fsum" in
+      *"no such column"*|*"Error"*|*"error"*)
+        kit_warn "cannot read the summary of '$finding' -- refusing rather than guessing"
+        printf '%s\n' "$fsum" | sed 's/^/  /' >&2
+        kit_warn "  an index older than the summary column fails here; rebuild it"
+        exit 2 ;;
+    esac
+    if [ -n "$fsum" ]; then
+      kit_warn "'$finding' carries a summary, so it CAN be judged -- refusing --unassessable"
+      kit_warn "  summary: $fsum"
+      kit_warn "  this mark is only for findings whose text does not survive. Use --fixed once"
+      kit_warn "  addressed, or kit-vindicate.sh --false if it was never a real defect."
+      exit 2
+    fi
+  fi
 else
   # No index is not permission to guess. The check is the point of the command.
   kit_warn "index at ${DB#$ROOT/} is missing or unreadable; run kit-index.sh first"

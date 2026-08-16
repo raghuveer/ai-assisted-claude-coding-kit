@@ -868,7 +868,21 @@ ua="$WORK.unassess"; rm -rf "$ua"; mkdir -p "$ua/.claude" "$ua/.project/tasks"
   [ "$(cksum .project/events.ndjson)" = "$pre" ] ||
     { printf '    ^ a refused mark still appended to the log\n' >&2; exit 1; }
 
-  # 3. MARKED, IT LEAVES THE GATE -- and is still reported.
+  # 3. A FINDING THAT CARRIES A SUMMARY CANNOT TAKE THIS MARK. Without this the route is a
+  # general-purpose way to clear the criticals gate rather than a narrow hatch for rows whose
+  # text does not survive. The refusal is proved, not just the acceptance -- a mechanism tested
+  # only on the case it should allow is untested on the case that matters.
+  pre2=$(cksum .project/events.ndjson)
+  bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --unassessable \
+       --reason "trying to launder a readable finding" >/dev/null 2>&1 &&
+    { printf '    ^ a finding WITH a summary accepted --unassessable\n' >&2; exit 1; }
+  [ "$(cksum .project/events.ndjson)" = "$pre2" ] ||
+    { printf '    ^ the refused mark still appended\n' >&2; exit 1; }
+
+  # 4. WITH THE SUMMARY GONE, THE MARK IS ACCEPTED, IT LEAVES THE GATE -- and is still reported.
+  # The summary is cleared directly because the nine real rows predate the column entirely;
+  # there is no supported route that produces a summary-less finding today, which is the point.
+  sqlite3 .project/index.db "UPDATE finding SET summary='' WHERE id='$fid';" || exit 1
   bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --unassessable \
        --reason "predates the summary column; not recoverable" >/dev/null 2>&1 || exit 1
   bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1 || exit 1

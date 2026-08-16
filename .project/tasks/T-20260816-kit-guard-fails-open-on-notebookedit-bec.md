@@ -53,22 +53,22 @@ tool the matcher gains.
 
 ## Acceptance criteria
 
-- [ ] **The guard examines every tool its matcher fires on.** `NotebookEdit` payloads are resolved
+- [x] **The guard examines every tool its matcher fires on.** `NotebookEdit` payloads are resolved
       and refused outside the root, exactly as `Write` and `Edit` are. Extract the path by trying
       each key the matched tools can carry, rather than assuming one name.
-- [ ] **A behavioural test replaces the string check**, table-driven over the matcher's tools: for
+- [x] **A behavioural test replaces the string check**, table-driven over the matcher's tools: for
       **each** tool, an outside path exits 2 and an inside path exits 0. It must go RED when the
       `notebook_path` handling is removed — prove that by removing it, not by asserting it exists.
       The existing `:2245` string assertion may stay as a *separate* protocol check, but it does
       not count toward this criterion.
-- [ ] **The matcher and the extractor cannot drift apart silently.** Either derive the key list
+- [x] **The matcher and the extractor cannot drift apart silently.** Either derive the key list
       from one place, or add a check that fails when the matcher names a tool the extractor has no
       key for. Today they are two lists in two files agreeing by luck.
-- [ ] **Whatever else the harness can write with is enumerated and recorded** — at minimum decide
+- [x] **Whatever else the harness can write with is enumerated and recorded** — at minimum decide
       about `MultiEdit` (if this harness version has it, it is not in the matcher at all) and any
       MCP-provided write tool. Absent ones go in `SECURITY.md` §4 as known-absent rather than being
       silently out of scope.
-- [ ] **`SECURITY.md` §2 is corrected before or with the fix**, and returns to a mechanical claim
+- [x] **`SECURITY.md` §2 is corrected before or with the fix**, and returns to a mechanical claim
       only with the behavioural test named as its evidence, per §5 rule 8.
 
 ## Notes
