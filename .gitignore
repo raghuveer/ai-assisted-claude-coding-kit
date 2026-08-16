@@ -11,3 +11,9 @@ STATUS.generated.md
 .project/entry-comment-runs.tsv
 .project/entry-report.md
 .project/entry-candidates.md
+
+# Python bytecode. kit_findings.py is imported by tests and by hand; the cache it leaves
+# is a build artefact, and one swept in by `git add -A` turned three CI jobs red because the
+# exec-bit gate reads every path under tooling/.
+__pycache__/
+*.pyc
