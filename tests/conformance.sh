@@ -717,6 +717,56 @@ check $? "an adapter's dot-command is parsed as SQL, never executed as a shell"
 rm -rf "$dx"
 fi
 
+if step "only a committed, repo-relative adapter runs"; then
+# ADR 0003 option C. The project chooses WHICH adapter; the kit constrains whether something
+# nobody chose can run. The profile sits inside the root where kit-guard.sh permits every write
+# by design, so an agent could write an adapter and a profile line in one turn and get execution
+# on the next index -- and kit-index.sh --if-stale is step 1 of task-context, so that is ordinary
+# use rather than a contrived trigger.
+#
+# THREE ASSERTIONS, and the middle one is why the other two mean anything: a guard that refused
+# every adapter would satisfy both refusals and silently delete the ADAPTERS.md seam.
+#
+# What this does NOT prove, per ADR 0003: an agent holding Bash can git add and commit, and the
+# guard does not match Bash. This binds a confused agent, a copied profile and an ad-hoc path.
+ac="$WORK.adapt"; rm -rf "$ac"; mkdir -p "$ac/.claude" "$ac/.project/tasks" "$ac/tools-x"
+( cd "$ac" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email fixture@x; git config user.name fixture
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"
+    echo "ingest.extra: tools-x/adapter.sh"; echo "---"; } > .claude/project-profile.md
+
+  # 1. UNTRACKED -- the shape an agent produces. It must not execute.
+  printf '#!/usr/bin/env bash\ntouch "EXECUTED-UNTRACKED"\n' > tools-x/adapter.sh
+  rm -f EXECUTED-UNTRACKED
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  [ -e EXECUTED-UNTRACKED ] &&
+    { printf '    ^ an untracked adapter executed\n' >&2; exit 1; }
+
+  # 2. TRACKED -- the seam still works. Without this the step passes on a guard that refuses
+  #    everything, which would be a worse defect than the one being fixed.
+  printf '#!/usr/bin/env bash\n[ "$1" = emit ] && echo "INSERT OR REPLACE INTO meta(key,value) VALUES(\047adapterprobe\047,\0471\047);"\nexit 0\n' > tools-x/adapter.sh
+  git add -A >/dev/null 2>&1; git commit -qm fixture >/dev/null 2>&1
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1 || exit 1
+  [ "$(sqlite3 -noheader .project/index.db \
+       "SELECT value FROM meta WHERE key='adapterprobe';" | tr -d '\015')" = 1 ] ||
+    { printf '    ^ a committed adapter did NOT run; the seam is broken\n' >&2; exit 1; }
+
+  # 3. ABSOLUTE -- names code this repository does not contain, so no review here saw it.
+  sed 's|ingest.extra: tools-x/adapter.sh|ingest.extra: /tmp/kit-adapter-abs.sh|' \
+    .claude/project-profile.md > p.tmp && mv p.tmp .claude/project-profile.md
+  printf '#!/usr/bin/env bash\ntouch "%s/EXECUTED-ABS"\n' "$PWD" > /tmp/kit-adapter-abs.sh
+  rm -f EXECUTED-ABS
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  [ -e EXECUTED-ABS ] &&
+    { printf '    ^ an absolute-path adapter executed\n' >&2; exit 1; }
+  rm -f /tmp/kit-adapter-abs.sh
+  exit 0 )
+check $? "untracked and absolute adapters are refused, a committed one still runs"
+rm -rf "$ac"
+fi
+
 if step "the write guard refuses every tool its matcher fires on"; then
 # The guard matched Write|Edit|NotebookEdit and read only "file_path". NotebookEdit names its
 # target "notebook_path", so the extraction came back empty, the no-target branch fail-opened,

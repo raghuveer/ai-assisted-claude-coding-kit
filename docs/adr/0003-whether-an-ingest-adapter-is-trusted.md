@@ -1,6 +1,6 @@
 # ADR 0003: Whether an ingest adapter is trusted, and what the profile is
 
-- **Date:** 2026-08-16   **Status:** Proposed — awaiting the operator   **Supersedes:** —   **Related:** [[0001-anchor-entry-facts-to-files]]
+- **Date:** 2026-08-16   **Status:** **Accepted — Option C**   **Supersedes:** —   **Related:** [[0001-anchor-entry-facts-to-files]]
 
 Serves AC1 of `T-20260816-an-in-root-profile-write-gives-an-agent-`, which asks for this decision
 to be resolved **explicitly and recorded** rather than patched. The patch half (dot-commands) is
@@ -104,8 +104,40 @@ Keep the per-project choice, make the integrity mechanical, and be explicit abou
 
 ## Decision
 
-**Not taken — this is the operator's.** The recommendation is Option C. What must be true of
-whichever is chosen:
+**Option C, taken by the operator 2026-08-16 and implemented the same day.**
+
+`run_adapter` now refuses, before executing anything:
+
+1. **A path that is not repo-relative** — absolute, drive-qualified, or containing `..`. It names
+   code this repository does not contain, so no review of this project can have seen it.
+2. **A file not tracked by git.** This is the part that answers *"does the kit mandate the
+   documented choice"*: a declaration an agent invented mid-session names an untracked file and
+   does not run. Being tracked means it is in a diff someone can read.
+
+Proved by the conformance step `only a committed, repo-relative adapter runs`, which asserts all
+three directions — untracked refused, absolute refused, **and a committed adapter still running**.
+The third is not padding: a guard that refused every adapter would satisfy both refusals while
+silently deleting the `ADAPTERS.md` seam, which is a worse defect than the one being fixed.
+Mutation-proven — making the tracked check unreachable turns the step red.
+
+`SECURITY.md` §1 is corrected: the row now says the kit **executes** the adapter, as a process and
+again by feeding stdout to the `sqlite3` CLI, and names the constraint.
+
+### What is enforced, and what is still convention — the answer to "is this only prose"
+
+| Property | How it holds |
+|---|---|
+| The adapter is repo-relative | **Mechanism.** Refused in `run_adapter`, conformance-proved |
+| The adapter file is committed | **Mechanism.** Same |
+| The *committed* adapter is the one the project intended | **Convention.** Nothing compares the profile against the overlay or an ADR |
+| An agent cannot arrange for its own adapter to run | **Not held.** `git add && git commit` is a `Bash` call and the guard does not match `Bash` |
+
+The third row is the one to build next and it is **not buildable yet**: the solution overlay does
+not exist, so there is nothing for the profile to be checked against. When it does, the check is
+"the `ingest.*` values match what the overlay declares" — the same overlay↔profile drift already
+flagged as a risk. Until then, the documented choice binds by review, not by mechanism.
+
+What must be true of whichever option is chosen:
 
 - The contradiction between `SECURITY.md` §1 and the code is resolved in **one** direction and
   both are made to agree.

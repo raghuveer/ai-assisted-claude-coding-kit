@@ -99,6 +99,31 @@ run_adapter() {
   if [ ! -x "$_ap" ] && [ ! -f "$_ap" ]; then
     kit_warn "ingest adapter not found: $1"; return 2
   fi
+  # ADR 0003, option C: the project chooses WHICH adapter; the kit constrains WHETHER something
+  # nobody chose can run. Two refusals, both structural, both provable by a test.
+  #
+  # 1. REPO-RELATIVE ONLY. An absolute path -- or one climbing out with `..` -- names code the
+  #    repository does not contain, so no review of this project can ever have seen it.
+  # 2. TRACKED BY GIT. An adapter file that is not committed has been reviewed by nobody. This is
+  #    the part that answers "does the kit mandate the documented choice": a declaration an agent
+  #    invented mid-session names an untracked file and does not execute.
+  #
+  # WHAT THIS DOES NOT DO, stated here because the comment it replaced overclaimed in the other
+  # direction: an agent holding `Bash` can `git add` and commit, and kit-guard.sh does not match
+  # Bash. So this binds a CONFUSED agent, a profile copied between projects, and an ad-hoc path --
+  # not a determined one. SECURITY.md section 4 keeps the sandbox gap; ADR 0003 keeps the bound.
+  case "$1" in
+    /*|?:*|*..*)
+      kit_warn "ingest adapter '$1' is not repo-relative; refusing to run it"
+      kit_warn "  ADR 0003: an adapter must live in this repository, where a review can see it"
+      return 2 ;;
+  esac
+  if ! git -C "$ROOT" ls-files --error-unmatch -- "$1" >/dev/null 2>&1; then
+    kit_warn "ingest adapter '$1' is not tracked by git; refusing to run it"
+    kit_warn "  an uncommitted adapter has been reviewed by nobody. Commit it, or correct the"
+    kit_warn "  ingest.* value in the profile. (ADR 0003)"
+    return 2
+  fi
   _out=$(KIT_ROOT="$ROOT" KIT_PROFILE="$PROFILE" KIT_STATE_DIR="$STATE_DIR" \
          KIT_TASKS_DIR="$TASKS_DIR" KIT_ADOPT="$ADOPT" KIT_DB="$DB" \
          bash "$_ap" "$2" 2>/dev/null) || {

@@ -36,7 +36,7 @@ wish list is worse than none.
 | Agent output (findings, verdicts, summaries) | **no** | Model text that reaches a log, a database, or a report |
 | Git trailer text | **no** | Arbitrary text from history, written before any gate existed |
 | Task files | **no** | Text files anyone with commit access may author |
-| Ingest adapter output | **no** | An executable named in the profile; the kit runs it and reads what it prints |
+| Ingest adapter **process and output** | **no** | An executable named in the profile. The kit **executes** it — as a process, and again by feeding its stdout to the `sqlite3` CLI. It does not merely read what it prints. Constrained per ADR 0003: the path must be repo-relative and the file must be tracked by git, so an adapter an agent invented does not run. |
 | Externally supplied accelerator content | **no** | Enters as a hypothesis (`[seeded]`), never as authority |
 | The project profile | **partly** | Authored by the operator, but its values are interpolated into globs and queries |
 
