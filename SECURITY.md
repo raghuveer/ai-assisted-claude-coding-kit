@@ -55,11 +55,25 @@ handled with the posture given to a form field on a public web page, never more.
 > separable. Two claims did not survive the sweep: reviewer read-only moved to §3, and the
 > JSON-writer claim is narrowed below with its remainder recorded in §4.
 
-**Findings and fix-marks have one JSON writer.** Every `finding`, `finding-gap` and
-`finding-fixed` line is serialised by `kit_findings.py` with `json.dumps`. This is the fix for a
-critical found twice: `printf`-built JSON interpolated `lang`, `pattern`, `domain` and `file`
-unescaped into an append-only committed log, and because the awk reader takes the first match, a
-crafted field could inject a key the indexer would then prefer over the real one.
+**The generic writer cannot mint a kind the indexer acts on.** `kit-index.sh` either **mutates a
+row** for an event kind or merely **records** it. The four it mutates for — `finding`,
+`finding-fixed`, `spend`, `vindication` — each have a writer that validates, and
+`tooling/kit-event.sh`, which validates nothing, now refuses them.
+*Demonstrated by a conformance step, and it can fail:* `the generic event writer cannot mint a
+kind the indexer acts on` **derives** the list from the indexer's own `k=="…"` branches rather
+than restating it, so teaching the indexer a fifth acting kind without guarding it goes red. It
+asserts on the log being byte-identical, not on an exit code — a refusal that exits non-zero and
+appends anyway is the failure worth catching — and it also requires an ordinary kind to still
+record, so a guard that refused everything cannot pass.
+*Corrected 2026-08-16.* The claim here was "every `finding`, `finding-gap` and `finding-fixed`
+line is serialised by `kit_findings.py`". That was false:
+`kit-event.sh T-x finding-fixed '{"finding":"<id>","fixed":1}'` set `fixed_at` on a real finding
+after a reindex, forging the artefact `.claude/CLAUDE.md` reserves to the operator, with
+`kit_findings.py` never invoked.
+*Still true of `finding-gap`, and stated rather than glossed:* the indexer only records it, so it
+is **not** in the refused set and the generic writer can still emit one. `kit-status.sh` counts
+those rows, so a forged one inflates a reported figure. That is reporting integrity, not
+privilege — and it is a smaller claim than the one this paragraph used to make.
 
 **This is narrower than the claim it replaces.** The old wording — "every event line", "the shell
 builds no JSON" — was false: `kit-event.sh`, `kit-checkpoint.sh`, `kit-spend.sh`,
@@ -148,6 +162,15 @@ command" is procedure. For trial work this is why the subject copy must have **n
 **Nothing stops an actor with commit access writing `Via: kit`,** or marking their own findings
 fixed. Both are conventions the operator enforces. The kit records *who* — fix marks carry an
 actor — so the claim is auditable after the fact, which is the most a text-file system can offer.
+
+**Narrowed, not solved, 2026-08-16.** The *back door* to a fix-mark is closed — `kit-event.sh`
+refuses `finding-fixed`, so a forged one no longer reaches the database through the generic
+writer (§2). The *front door* is untouched: `kit-resolve.sh --fixed` runs for whoever invokes it,
+and `.claude/CLAUDE.md` and `skills/checkpoint/SKILL.md` both instruct an agent to propose the
+mark and stop — instructions, not gates. The recorded actor comes from
+`git config user.email`, which is the **repository's** identity rather than the party that ran the
+command, so it does not distinguish an agent-applied mark from the operator's. Treat the audit
+trail as evidence of *what* was marked, never of *who* decided it.
 
 **A system prompt is not a security boundary.** Observed here directly: across four live reviewer
 runs the output contract was ignored three times — a reporting tool was called, a reply arrived

@@ -778,6 +778,55 @@ check $? "every matched tool is refused outside the root and allowed inside it"
 rm -rf "$gt"
 fi
 
+if step "the generic event writer cannot mint a kind the indexer acts on"; then
+# kit-event.sh takes the KIND as a free argument and splices its third argument in as raw JSON,
+# validating neither. Before the refusal it was a skeleton key:
+#   kit-event.sh T-x finding-fixed '{"finding":"<id>","fixed":1}'
+# set fixed_at on a real finding after a reindex, with kit_findings.py never invoked -- forging
+# the one artefact .claude/CLAUDE.md reserves to the operator. The same route minted findings
+# whose class and severity were outside kit-finding.sh --vocab.
+#
+# THE LIST IS DERIVED, NOT RESTATED. kit-index.sh's `k=="..."` branches are the authority for
+# which kinds it MUTATES a row for, as against merely recording. This step reads them out of the
+# indexer and requires kit-event.sh to refuse each one, so teaching the indexer to act on a fifth
+# kind without guarding it here goes red instead of quietly reopening the hole. A list copied
+# into this file would drift the way the guard's tool keys drifted from its matcher.
+#
+# ASSERTED ON STATE, NOT ON EXIT CODE. A refusal that exits 2 and appends anyway is the failure
+# mode worth catching, so the log must be byte-identical afterwards.
+ex="$WORK.evkind"; rm -rf "$ex"; mkdir -p "$ex/.claude" "$ex/.project/tasks"
+( cd "$ex" || exit 1
+  git init -q -b main 2>/dev/null
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"; echo "---"
+  } > .claude/project-profile.md
+
+  kinds=$(grep -oE 'k=="[a-z-]+"' "$KIT/tooling/kit-index.sh" |
+          sed 's/k=="//; s/"$//' | sort -u)
+  [ -n "$kinds" ] || { printf '    ^ no acting kinds found in kit-index.sh; nothing was tested\n' >&2; exit 1; }
+
+  bash "$KIT/tooling/kit-event.sh" T-probe note >/dev/null 2>&1   # a kind it may write
+  before=$(cksum .project/events.ndjson 2>/dev/null)
+  [ -n "$before" ] || { printf '    ^ the writer did not create a log; the rest proves nothing\n' >&2; exit 1; }
+
+  for k in $kinds; do
+    bash "$KIT/tooling/kit-event.sh" T-forge "$k" '{"finding":"x","fixed":1}' >/dev/null 2>&1
+    after=$(cksum .project/events.ndjson 2>/dev/null)
+    [ "$after" = "$before" ] || {
+      printf '    ^ kit-event.sh wrote a %s line; the indexer acts on that kind\n' "$k" >&2; exit 1; }
+  done
+
+  # And the recorder still records. A guard that refused everything would pass every assertion
+  # above while making the script useless -- the same shape as a write guard that blocks its own
+  # project root.
+  bash "$KIT/tooling/kit-event.sh" T-probe via >/dev/null 2>&1 || exit 1
+  [ "$(cksum .project/events.ndjson)" != "$before" ] || {
+    printf '    ^ a non-acting kind was refused too; the guard is too broad\n' >&2; exit 1; }
+  exit 0 )
+check $? "acting kinds are refused, ordinary kinds still record"
+rm -rf "$ex"
+fi
+
 if step "a failed build leaves the previous index alone and keeps saying so"; then
 # Two halves of one defect. `fl` was the only value on the task INSERT not passed through
 # q(), so `tier.rule: src/** T3','x` ended the SQL literal early: the statement failed, the
