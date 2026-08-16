@@ -49,7 +49,7 @@ reader looking for the real control. The kit's own stated reason for read-only r
       is a PreToolUse hook denying `Bash` in the reviewer's own session, which means changing how
       the operator spawns reviewers, not changing this repository's documents. Proposed as a
       follow-up task rather than smuggled in here.
-- [x] The sweep, not the instance (`LESSONS` §4): every other claim in the "enforced mechanically"
+- [ ] The sweep, not the instance (`LESSONS` §4): every other claim in the "enforced mechanically"
       section is re-verified by demonstration rather than by reading, and each one that turns out
       to be convention moves. The section currently also claims one JSON writer,
       sanitise-then-assert, aggregate-only export, and that no model output is executed.
@@ -70,7 +70,7 @@ reader looking for the real control. The kit's own stated reason for read-only r
         the section, in its own entry, rather than sharing the confidence of the other four.
       · **writes confined to root — HELD, and it can fail.** Outside path exits 2, inside exits 0;
         a `Bash` payload exits 0 unexamined, which §3 already said and this confirmed.
-- [x] `agents/*-reviewer.md` frontmatter `tools:` is stated for what it is — a declaration the
+- [ ] `agents/*-reviewer.md` frontmatter `tools:` is stated for what it is — a declaration the
       harness may or may not enforce — wherever the kit relies on it.
       → `docs/agents-README.md` gains "**`tools:` is a declaration, not a boundary**" in the
       Structure section that documents the frontmatter, and `SECURITY.md` §3 and §4 say the same.
@@ -78,7 +78,7 @@ reader looking for the real control. The kit's own stated reason for read-only r
       design", which is a true statement of intent; telling a reviewer in its own system prompt
       that the restriction does not bind would weaken the behavioural shaping that is currently
       the only thing working. The kit *relies* on the grant in its documents, not in the prompts.
-- [x] Whatever the outcome, the operator's runbook for spawning reviewers says plainly what is and
+- [ ] Whatever the outcome, the operator's runbook for spawning reviewers says plainly what is and
       is not prevented, so the next session does not re-derive this from a transcript.
       → `tooling/kit-review-record.sh` gains a "WHAT `--cmd` DOES NOT PREVENT" block in its header,
       which is the one place that knows how a reviewer is invoked. It names what a reviewer can
@@ -115,3 +115,39 @@ Two defects surfaced by the sweep that are **not** this task's to fix. Filed sep
    Reproduction is one line and is in `SECURITY.md` §4.
 2. **A PreToolUse gate that would actually bind a reviewer to read-only** — the work AC2 above
    describes but does not require. It changes the reviewer invocation, not this repository.
+
+## T2 review, 2026-08-16 — REVISE and REJECT. Three ACs un-ticked.
+
+Two blind reviewers, run before closing. Verdicts **REVISE** (implementation) and **REJECT**
+(security). Every critical below was then reproduced independently before being accepted.
+
+**All five claims left in §2 are false.** The sweep that AC3 asked for was performed by checking
+which scripts emit those event kinds *by literal name*, not which paths can *produce* them:
+
+- **one JSON writer (findings/fix-marks)** — `kit-event.sh T-fake finding-fixed '{"finding":"<id>",
+  "fixed":1,...}'` forged a fix-mark; after reindex `fixed_at` went NULL → set. `kit_findings.py`
+  never ran. A fix-mark is the artefact `.claude/CLAUDE.md` reserves to the operator.
+- **every string is sanitised** — same route bypasses the sanitiser AND the closed vocabulary.
+- **export cannot return project text** — `lang`/`pattern` are unconstrained free text and cross
+  intact. `sanitise()` does not strip `|`; the export splits sqlite3 output on `|`, so a crafted
+  `pattern` forged `"n":9999` (truth 35) and emitted a line that is **not valid JSON**.
+- **writes confined (Write, Edit, NotebookEdit)** — `NotebookEdit` carries `notebook_path`, not
+  `file_path`. Guard exits 2 on Write-outside and **0 on NotebookEdit-outside**: fails open on a
+  tool §2 names explicitly.
+- **no model output is executed** — an adapter script plus one `ingest.events` profile line, both
+  written *inside* the root where the guard permits by design, executed on the next `kit-index.sh`.
+
+**The defect is one shape repeated.** Every `*Demonstrated:*` line seeded inputs the control
+handles: the export demo seeded three columns the query does not select; the guard demo exercised
+`Write` and inferred `NotebookEdit`. New §5 rule 8 — "a check that passes on hostile input and on
+benign input alike proves nothing" — is violated by the evidence directly above it.
+
+AC3, AC4 and AC5 are un-ticked, having been ticked on that failed sweep. AC4 fails on
+`docs/MEASUREMENTS.md:57-64`, which still asserts the grant binds and rests a recorded measurement
+on it. AC5 fails because the reviewer runbook is `skills/verify-ladder/SKILL.md`, not a header
+comment in `kit-review-record.sh`.
+
+**AC1 stands.** Neither reviewer disputed the relocation of the `--allowedTools` claim to §3.
+
+**The one load-bearing fact nobody can re-run:** the original transcript showing the reviewer's
+`Bash` call. Both reviewers flagged that every restatement of it rests on the author's word.
