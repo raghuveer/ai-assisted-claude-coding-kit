@@ -276,3 +276,19 @@ repeated by the same author, twice, within an hour. Once it broke `kit-entry.sh`
 that `entry-facts.tsv` came out as a header with zero rows, and once it broke every `awk` in a
 validator. **Both times the exit status stayed clean and only reading the output caught it.**
 Documenting a trap does not stop you falling into it; a check that looks at the result does.
+
+**A partial cure, found the same day.** "This machine cannot see BSD" was true of `sed` semantics
+and false of a whole class of argument handling: `POSIXLY_CORRECT=1` disables GNU's argument
+permutation and its tolerance for non-POSIX constructs, so GNU tools reproduce BSD behaviour for
+free. Run against `kit-entry.sh` it caught two shipped defects in a minute, both of which had
+already turned CI red on macos-latest and neither of which was visible locally:
+
+    $ POSIXLY_CORRECT=1 grep -n 'pattern' -- file
+    grep: --: No such file or directory          # `--` after the pattern is a FILENAME on BSD
+    $ POSIXLY_CORRECT=1 awk -v list="$MULTILINE" ...
+    awk: fatal: POSIX does not allow physical newlines in string values
+
+The second was the worse one: `entry-facts.tsv` came out as a header with no rows, the entire
+census silently empty, on one of the two platforms CI runs. **Use it before pushing anything that
+shells out** — it is not a full BSD emulator, but it converts a class of "only CI can tell me"
+into "I can tell right now".

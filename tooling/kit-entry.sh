@@ -60,9 +60,9 @@ if [ "${1:-}" = "--check" ]; then
   [ -n "$P" ] || { kit_warn "usage: kit-entry.sh --check <proposal-file>"; exit 2; }
   [ -f "$P" ] || { kit_warn "no such proposal file: $P"; exit 2; }
   bad=0
-  qline=$(grep -n '^## Open questions' -- "$P" | head -1 | cut -d: -f1)
-  cline=$(grep -n '^## Candidate tasks' -- "$P" | head -1 | cut -d: -f1)
-  uline=$(grep -n '^## Could not determine' -- "$P" | head -1 | cut -d: -f1)
+  qline=$(grep -n -- '^## Open questions' "$P" | head -1 | cut -d: -f1)
+  cline=$(grep -n -- '^## Candidate tasks' "$P" | head -1 | cut -d: -f1)
+  uline=$(grep -n -- '^## Could not determine' "$P" | head -1 | cut -d: -f1)
   [ -n "$qline" ] || { kit_warn "no '## Open questions' section"; bad=1; }
   [ -n "$cline" ] || { kit_warn "no '## Candidate tasks' section"; bad=1; }
   [ -n "$uline" ] || { kit_warn "no '## Could not determine' section -- an analysis silent about its own gaps reads as complete"; bad=1; }
@@ -211,9 +211,16 @@ if [ -f "$DB" ] && command -v sqlite3 >/dev/null 2>&1; then
     # numerator and denominator were different populations. Both sides are now the same set.
     CCDEG=$(sqlite3 "$DB" "SELECT REPLACE(src,'f:',''), COUNT(*) FROM cochange GROUP BY src;" 2>/dev/null | tr -d '\015')
     ccall=$(printf '%s\n' "$CCDEG" | grep -c '|' || true)
-    ccfiles=$(printf '%s\n' "$CCDEG" | awk -F'|' -v subj="$SUBJECT" '
-      BEGIN { n=split(subj,S,"\n"); for (i=1;i<=n;i++) if (S[i] != "") keep[S[i]]=1 }
+    # The subject list goes through a FILE, not through `-v`. Passing it as a variable is a POSIX
+    # violation the moment it contains a newline -- `awk: fatal: POSIX does not allow physical
+    # newlines in string values` -- and this list is one path per line. gawk accepts it, POSIX awk
+    # and BSD awk do not, so the intersect silently produced nothing and the report printed
+    # `954 pairs,  of 82 files` with the numerator missing entirely.
+    printf '%s\n' "$SUBJECT" > "$FACTS.subj"
+    ccfiles=$(printf '%s\n' "$CCDEG" | awk -F'|' -v subjfile="$FACTS.subj" '
+      BEGIN { while ((getline line < subjfile) > 0) if (line != "") keep[line]=1 }
       $1 != "" && ($1 in keep) { c++ } END { print c+0 }')
+    rm -f "$FACTS.subj"
     CC="ok $ccpairs pairs, $ccfiles of $NFILES files"
     [ "$ccall" = "$ccfiles" ] ||
       CC="$CC (the graph also holds $((ccall - ccfiles)) file(s) outside the census: history reaches further back than the tree)"
@@ -252,7 +259,7 @@ printf '%s\n' "$SUBJECT" | while IFS= read -r f; do
   # `.gitkeep` vanished from the census under a label saying it was unreadable, and the
   # reconciliation still balanced, which is what made it quiet. `-I` is what detects binary; the
   # pattern only has to match a line, and an empty pattern matches a blank one.
-  if [ ! -s "$f" ] || LC_ALL=C grep -qI '' -- "$f" 2>/dev/null; then :; else
+  if [ ! -s "$f" ] || LC_ALL=C grep -qI -- '' "$f" 2>/dev/null; then :; else
     printf 'binary\t%s\n' "$f" >> "$FACTS.miss"; continue
   fi
   ext=${f##*/}; case "$ext" in *.*) ext=".${ext##*.}" ;; *) ext="(none)" ;; esac
@@ -328,10 +335,16 @@ RECONCILED="ok"
 
 # ---- 5. join history onto the per-file rows --------------------------------------------------
 printf 'path\text\tlines\tcomment_lines\tcomment_blocks\tcommits\tfirst\tlast\tauthors\tdoc_shaped\tcochange_degree\n' > "$FACTS"
-printf '%s\n' "$HIST" | awk -v facts="$FACTS.tmp" -v deg="$CCDEG" '
+# `deg` comes through a FILE, for the same reason as the subject list above: `-v` may not carry a
+# physical newline under POSIX, and the co-change degrees are one per line. gawk allows it; POSIX
+# awk and BSD awk abort the whole program, which meant entry-facts.tsv came out as a HEADER WITH NO
+# ROWS -- the entire census silently empty, on one of the two platforms CI runs.
+printf '%s\n' "$CCDEG" > "$FACTS.deg"
+printf '%s\n' "$HIST" | awk -v facts="$FACTS.tmp" -v degfile="$FACTS.deg" '
   BEGIN {
-    n = split(deg, dl, "\n")
-    for (i = 1; i <= n; i++) { split(dl[i], d, "|"); if (d[1] != "") degree[d[1]] = d[2] }
+    while ((getline line < degfile) > 0) {
+      split(line, d, "|"); if (d[1] != "") degree[d[1]] = d[2]
+    }
   }
   /^C\|/ { split($0, p, "|"); date = p[3]; who = p[4]; next }
   NF && date != "" {
@@ -403,5 +416,5 @@ NMARKERS=$(printf '%s' "$MARKERS" | grep -c . || true)
   printf -- '  know is simply not counted. It reports what it recognised, never that nothing is there.\n'
 } > "$REPORT"
 
-rm -f "$FACTS.tmp" "$RUNS.tmp" "$FACTS.miss"
+rm -f "$FACTS.tmp" "$RUNS.tmp" "$FACTS.miss" "$FACTS.deg" "$FACTS.subj"
 printf '%s\n%s\n%s\n' "${FACTS#$ROOT/}" "${RUNS#$ROOT/}" "${REPORT#$ROOT/}"
