@@ -85,9 +85,15 @@ adapter_path() {
 # run_adapter <spec> <verb> -- invoke an external ingester. `emit` writes SQL to stdout,
 # `fingerprint` writes a short opaque string describing the current state of the source.
 #
-# The statement filter is a net, not a security boundary: an adapter is trusted code named
-# in a committed, reviewed profile, and it necessarily emits SQL that gets executed. The
-# filter catches an adapter that accidentally reshapes the database, not one that means to.
+# The statement filter is a net, not a security boundary. It catches an adapter that
+# accidentally reshapes the database, not one that means to.
+#
+# WHETHER AN ADAPTER IS TRUSTED IS AN OPEN QUESTION, and this comment used to answer it --
+# "an adapter is trusted code named in a committed, reviewed profile". SECURITY.md section 1
+# says the opposite, classing ingest adapter output as NOT trusted. Both cannot hold, and the
+# disagreement is why nobody looked: the profile naming the executable is a file any agent
+# with Write can author, inside the root the guard permits by design. Recorded as
+# T-20260816-an-in-root-profile-write-gives-an-agent-; do not re-answer it here in a comment.
 run_adapter() {
   _ap=$(adapter_path "$1") || return 1
   if [ ! -x "$_ap" ] && [ ! -f "$_ap" ]; then
@@ -104,7 +110,25 @@ run_adapter() {
      grep -qiE '(^|[[:space:];])(attach|detach|pragma|drop|alter|vacuum)[[:space:]]'; then
     kit_warn "ingest adapter $1 emitted a schema-altering statement; refusing"; return 2
   fi
-  printf '%s\n' "$_out"
+  if [ "$2" = emit ]; then
+    # INDENT EVERY EMITTED LINE BY ONE SPACE. sqlite3 reads a line whose FIRST character is `.`
+    # as a dot-command -- .shell, .system, .import, .load, .output -- and this output reaches the
+    # CLI through a file redirect (`sqlite3 "$NEW" < "$SQL"` further down), not through a driver.
+    # An adapter emitting `.shell touch x` therefore ran a shell. Verified 2026-08-16.
+    #
+    # One leading space closes the whole channel without naming a single command: sqlite3 stops
+    # treating the line as a dot-command and parses it as SQL, which fails loudly and non-zero,
+    # and the `||` on that redirect already treats a non-zero sqlite3 as a failed build. Leading
+    # whitespace is insignificant to SQL, so nothing legitimate is altered.
+    #
+    # This is deliberately NOT another entry in the filter above -- that filter is a blacklist
+    # and could not see any of those five dot-commands. A blacklist that gained `.shell` would
+    # be the same defect with a longer regex. `fingerprint` output is not SQL and is not
+    # indented, or the comparison it feeds would never match.
+    printf '%s\n' "$_out" | sed 's/^/ /'
+  else
+    printf '%s\n' "$_out"
+  fi
 }
 
 # --if-stale: skip the rebuild when nothing it derives from has changed. task-context runs

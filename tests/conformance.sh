@@ -681,6 +681,42 @@ check $? "bad rule refused and recorded, lost file fails closed, empty file does
 rm -rf "$gx"
 fi
 
+if step "an ingest adapter cannot reach sqlite3's dot-commands"; then
+# Adapter stdout is fed to the sqlite3 CLI through a file redirect, not through a driver, so a
+# line whose FIRST character is `.` was a dot-command rather than SQL. `.shell touch x` ran a
+# shell with the operator's permissions, on a path an agent can reach: the profile naming the
+# adapter is an ordinary in-root file, and kit-guard.sh permits every in-root write by design.
+# The refusal filter is a blacklist of schema-altering STATEMENTS and could not see `.shell`,
+# `.system`, `.import`, `.load` or `.output`. The fix indents emitted lines by one space, which
+# closes the channel without naming a command; sqlite3 then parses them as SQL and fails.
+#
+# TWO HALVES, and half 1 is why half 2 means anything. An absent marker proves nothing if the
+# adapter never ran -- so half 1 shows adapter output genuinely reaching the database, and only
+# then does half 2's absence say the dot-command was refused rather than never attempted.
+dx="$WORK.dotcmd"; rm -rf "$dx"; mkdir -p "$dx/.claude" "$dx/.project/tasks"
+( cd "$dx" || exit 1
+  git init -q -b main 2>/dev/null
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"
+    echo "ingest.extra: .claude/probe.sh"; echo "---"; } > .claude/project-profile.md
+
+  # HALF 1 -- adapter output reaches the database. If this stops being true the step is
+  # measuring nothing, so it fails rather than skipping.
+  printf '#!/usr/bin/env bash\n[ "$1" = emit ] && echo "INSERT OR REPLACE INTO meta(key,value) VALUES(\047probe\047,\0471\047);"\nexit 0\n' > .claude/probe.sh
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>p.err || exit 1
+  [ "$(sqlite3 .project/index.db "SELECT value FROM meta WHERE key='probe';" | tr -d '\015')" = 1 ] || exit 1
+
+  # HALF 2 -- the same channel carrying a dot-command executes nothing. The build FAILS, which
+  # is the intended outcome: an indented dot-command is not valid SQL, and fail-closed on a
+  # malformed adapter is the behaviour the surrounding code already relies on.
+  printf '#!/usr/bin/env bash\n[ "$1" = emit ] && printf ".shell touch PWNED-DOTCMD\\n"\nexit 0\n' > .claude/probe.sh
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>q.err && exit 1
+  [ -e PWNED-DOTCMD ] && exit 1
+  exit 0 )
+check $? "an adapter's dot-command is parsed as SQL, never executed as a shell"
+rm -rf "$dx"
+fi
+
 if step "a failed build leaves the previous index alone and keeps saying so"; then
 # Two halves of one defect. `fl` was the only value on the task INSERT not passed through
 # q(), so `tier.rule: src/** T3','x` ended the SQL literal early: the statement failed, the
