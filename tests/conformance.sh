@@ -717,6 +717,67 @@ check $? "an adapter's dot-command is parsed as SQL, never executed as a shell"
 rm -rf "$dx"
 fi
 
+if step "the write guard refuses every tool its matcher fires on"; then
+# The guard matched Write|Edit|NotebookEdit and read only "file_path". NotebookEdit names its
+# target "notebook_path", so the extraction came back empty, the no-target branch fail-opened,
+# and a NotebookEdit anywhere on disk went through unexamined -- while SECURITY.md listed the
+# tool by name under "enforced mechanically". Write outside exited 2; NotebookEdit outside
+# exited 0.
+#
+# The check that was supposed to cover this greps hooks.json for the matcher STRING. That
+# passes while the guard is broken, and would pass on a guard that refused nothing at all. It
+# is a fine protocol assertion and stays where it is; it is not a behavioural one, so this step
+# exercises the guard instead of reading it.
+#
+# BOTH DIRECTIONS PER TOOL. A guard that refused everything would pass an outside-only test and
+# make the kit unusable, so each tool must also be allowed inside the root.
+gt="$WORK.guard"; rm -rf "$gt"; mkdir -p "$gt"
+( cd "$gt" || exit 1
+  git init -q -b main 2>/dev/null
+  : > inside.txt
+
+  # Both probe paths are absolute and derived from git's OWN spelling of the root, not from
+  # $PWD. On msys, Windows Temp is reachable as both /tmp/... and /c/Users/.../Temp/... -- two
+  # spellings of one directory that `pwd -P` cannot collapse, because the alias is a mount and
+  # not a symlink. A relative probe resolved against $PWD then lands in the other spelling and
+  # the guard refuses it: fail-CLOSED, and a property of where this fixture happens to sit
+  # rather than of the guard. Using one spelling for both sides tests inside-versus-outside,
+  # which is what this step is for.
+  root=$(git rev-parse --show-toplevel 2>/dev/null) ||
+    { printf '    ^ fixture is not a git repository; the guard would exit 0 unexamined\n' >&2; exit 1; }
+  inside="$root/inside.txt"
+  outside="$root/../kit-guard-probe-outside.txt"
+
+  for pair in "Write file_path" "Edit file_path" "NotebookEdit notebook_path"; do
+    # shellcheck disable=SC2086
+    set -- $pair; t=$1; k=$2
+    printf '{"tool_name":"%s","tool_input":{"%s":"%s"}}' "$t" "$k" "$outside" |
+      bash "$KIT/tooling/kit-guard.sh" >/dev/null 2>&1
+    [ $? = 2 ] || { printf '    ^ %s outside the root was NOT refused\n' "$t" >&2; exit 1; }
+    printf '{"tool_name":"%s","tool_input":{"%s":"%s"}}' "$t" "$k" "$inside" |
+      bash "$KIT/tooling/kit-guard.sh" >/dev/null 2>&1
+    [ $? = 0 ] || { printf '    ^ %s inside the root WAS refused\n' "$t" >&2; exit 1; }
+  done
+
+  # The drift check AC3 asks for. The matcher lives in hooks.json and the key mapping lives in
+  # kit-guard.sh; they agreed by luck until they did not. Adding a fourth tool to the matcher
+  # without teaching the guard its key now fails here rather than failing open in production.
+  mt=$(grep -o '"matcher": "[^"]*"' "$KIT/hooks/hooks.json" | head -1 |
+       sed 's/.*"matcher": "//; s/"$//')
+  [ -n "$mt" ] || { printf '    ^ could not read the PreToolUse matcher\n' >&2; exit 1; }
+  for t in $(printf '%s' "$mt" | tr '|' ' '); do
+    case " Write Edit NotebookEdit " in
+      *" $t "*) ;;
+      *) printf '    ^ hooks.json matches %s but this step has no key for it, so the guard\n' "$t" >&2
+         printf '      is untested for it -- add the tool key here and to kit-guard.sh\n' >&2
+         exit 1 ;;
+    esac
+  done
+  exit 0 )
+check $? "every matched tool is refused outside the root and allowed inside it"
+rm -rf "$gt"
+fi
+
 if step "a failed build leaves the previous index alone and keeps saying so"; then
 # Two halves of one defect. `fl` was the only value on the task INSERT not passed through
 # q(), so `tier.rule: src/** T3','x` ended the SQL literal early: the statement failed, the

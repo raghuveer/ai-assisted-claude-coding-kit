@@ -8,7 +8,7 @@ project text, no model output is ever executed, and writes are confined to the p
 Five things are convention rather than mechanism and are
 named as such — **reviewer read-only**, the write-guard never seeing `Bash`, nothing stopping a
 committer self-certifying their own work, prompt text being behavioural shaping and not access
-control, and SQL taking escaped values rather than bound parameters. Seven things are simply
+control, and SQL taking escaped values rather than bound parameters. Eight things are simply
 absent, listed in §4, of which the sandbox gap for the two Bash-holding agents is the largest.
 §5 is the rule set for anyone extending the kit.
 
@@ -98,13 +98,22 @@ that reason. It holds only for the absence it searched for: a construct not on t
 added later, would not be caught by anything. A test that tried to execute a crafted finding and
 observed it *not* run would be the real check, and does not exist.
 
-**Writes are confined to the project root.** `kit-guard.sh` refuses `Write`, `Edit` and
-`NotebookEdit` outside it.
-*Demonstrated, and it can fail:* a payload naming `C:\Windows\Temp\pwn.txt` exits **2** with
-"refusing write outside project root"; the same payload naming `README.md` exits **0**. A guard
-that refused both, or neither, would pass a test that only checked one.
-*Its limit is in §3:* the hook matcher is `Write|Edit|NotebookEdit`, so a `Bash` payload deleting
-that same outside path exits 0 unexamined — verified, not assumed.
+**Writes are confined to the project root, for the three tools the hook matches.**
+`kit-guard.sh` refuses `Write`, `Edit` and `NotebookEdit` outside it.
+*Demonstrated by a conformance step, and it can fail:* `the write guard refuses every tool its
+matcher fires on` drives all three tools in **both** directions — an absolute path outside the
+root must exit **2**, one inside must exit **0**. A guard that refused everything would pass an
+outside-only test and make the kit unusable, which is why both directions are asserted. Reverting
+the fix turns the step red.
+*Corrected 2026-08-16, and it was false when first written here.* The guard read only
+`"file_path"`, while `NotebookEdit` names its target `"notebook_path"` — so extraction returned
+empty, the documented no-target branch fail-opened, and `NotebookEdit` was waved through
+unexamined anywhere on disk. The evidence line that stood here exercised `Write` and *inferred*
+the other two. The check that was meant to cover it greps `hooks.json` for the matcher **string**,
+which passes while the guard is broken; that assertion remains as a protocol check and is not
+evidence for this claim.
+*Its limit is in §3:* the matcher is `Write|Edit|NotebookEdit`, so a `Bash` payload deleting that
+same outside path exits 0 unexamined — verified, not assumed.
 
 ---
 
@@ -179,6 +188,14 @@ that supports binding, bind.
   one, stores one or could export one. The exclusion is not a control that holds; it is a
   property with nothing to hold against yet, and it must be demonstrated when the overlay is
   built rather than inherited from this line.
+- **The write-tool inventory is enumerated, not assumed — and it is a moving target.** The guard
+  covers the three tools in the matcher. `MultiEdit` is **not present in the harness this kit was
+  last checked against** (2026-08-16) and is therefore not in the matcher; if a future version
+  reintroduces it, it writes unguarded until added. The same applies to any write tool an MCP
+  server contributes, which the kit cannot enumerate at all because the set is per-installation.
+  A conformance step now fails when the matcher names a tool the guard has no key for, so drift
+  in that direction is caught; **drift in the other direction — a new tool nobody adds to the
+  matcher — is not, and cannot be from inside this repository.**
 - **No secret scanning** over agent definitions, task files or the event log.
 - **No sandbox for tool-using agents.** `coder` and `tester` hold `Bash` and run in the
   operator's environment with the operator's permissions. There is no separate process, no

@@ -12,15 +12,27 @@ set -uo pipefail
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 PAYLOAD=$(cat)
 
-# First match, not last. A greedy .* walks to the FINAL "file_path" in the payload, so
-# writing a file whose own content mentions file_path checked that inner value instead of
-# the real target. grep -o emits matches in order; head -1 takes the tool's own argument.
+# EVERY KEY THE MATCHED TOOLS CAN CARRY, not just one. The hook matcher is
+# Write|Edit|NotebookEdit, but this read only "file_path" -- and NotebookEdit names its target
+# "notebook_path". So P came back empty for it, the no-target branch below took the fail-open
+# path, and a NotebookEdit anywhere on disk was waved through unexamined while SECURITY.md
+# claimed the tool was refused. Write outside the root exited 2; NotebookEdit outside exited 0.
+#
+# This list is the ONE place the mapping lives, and tests/conformance.sh asserts that the hook
+# matcher names no tool absent from it -- so adding a fourth tool to hooks.json without teaching
+# this line goes red instead of quietly failing open. Two lists in two files agreeing by luck is
+# what produced the defect.
+#
+# First match, not last. A greedy .* walks to the FINAL key in the payload, so writing a file
+# whose own content mentions file_path checked that inner value instead of the real target.
+# grep -o emits matches in order; head -1 takes the tool's own argument. The alternation keeps
+# that property: the first occurrence of EITHER key is still the tool's own.
 # The trailing sed undoes JSON's doubled backslashes.
 P=$(printf '%s' "$PAYLOAD" |
-    grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]*"' |
+    grep -oE '"(file_path|notebook_path)"[[:space:]]*:[[:space:]]*"[^"]*"' |
     head -1 |
     sed 's/^.*:[[:space:]]*"//; s/"$//; s/\\\\/\\/g')
-[ -n "$P" ] || exit 0                      # no file_path in payload: nothing to check
+[ -n "$P" ] || exit 0                      # no target key in payload: nothing to check
 
 # Canonical form: forward slashes, /c/... for drive letters, relative anchored at cwd,
 # and "." / ".." resolved lexically. Lexical rather than realpath because a Write targets
