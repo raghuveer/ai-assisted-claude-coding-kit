@@ -118,12 +118,29 @@ CREATE TABLE finding (
                                     -- mark is TYPED, not only where it is applied -- otherwise
                                     -- kit-resolve reports success for a mark every rebuild
                                     -- then discards.
-  fixed_note   TEXT                 -- why it is considered addressed. Sanitised and recorded
+  fixed_note   TEXT,                -- why it is considered addressed. Sanitised and recorded
                                     -- from the first day and read by nothing for exactly as
                                     -- long: a write-only field is a field whose absence nobody
                                     -- notices, which for the one piece of free text explaining
                                     -- a closure is the whole value. Surfaced by
                                     -- kit-resolve.sh --list.
+  unassessable_at     TEXT,         -- NULL judgeable | timestamp the operator recorded that it
+                                    -- CANNOT be judged from what survives. A THIRD fact, not a
+                                    -- synonym for either neighbour: `vindicated` says whether
+                                    -- it was real, `fixed_at` whether it was addressed, this
+                                    -- whether either question can be answered at all. Nine
+                                    -- criticals predate the `summary` column, so the criticals
+                                    -- gate could never reach zero -- permanently red, or
+                                    -- bypassed, and a gate bypassed once is bypassed always.
+                                    -- Marking them fixed would have written a false statement
+                                    -- into an append-only committed log; excluding summary-less
+                                    -- rows by query would have exempted every FUTURE one.
+                                    -- Derived from `finding-unassessable` events, never written
+                                    -- directly -- same rule as fixed_at.
+  unassessable_reason TEXT          -- why it cannot be judged. NOT optional at the writer:
+                                    -- kit_findings.py refuses a blank one, because a
+                                    -- disposition that removes a finding from a gate without
+                                    -- saying why is the laundering this column exists to avoid.
 );
 
 -- What a unit of work actually cost. One row per transcript -- the session's for the main

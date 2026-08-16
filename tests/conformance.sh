@@ -827,6 +827,67 @@ check $? "acting kinds are refused, ordinary kinds still record"
 rm -rf "$ex"
 fi
 
+if step "an unassessable critical leaves the gate and stays in the record"; then
+# Nine criticals predate the `summary` column, so the pre-flight gate could never reach zero:
+# permanently red, or bypassed -- and a gate bypassed once is bypassed always. Two shapes were
+# rejected before this one. Marking them `--fixed` writes a false statement into an append-only
+# committed log. Excluding summary-less rows by query would exempt every FUTURE critical whose
+# summary is missing, turning a bounded historical problem into an unbounded hole.
+#
+# So the exclusion is per-finding and deliberate: the operator marks one unassessable WITH A
+# REASON, and only marks leave the gate. The three properties below are what make that honest
+# rather than a clearance, and all three are asserted because any one alone can pass while the
+# mechanism is a laundering machine.
+ua="$WORK.unassess"; rm -rf "$ua"; mkdir -p "$ua/.claude" "$ua/.project/tasks"
+( cd "$ua" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email fixture@x; git config user.name fixture
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"; echo "---"
+  } > .claude/project-profile.md
+  printf -- '---\nid: T-g\ntitle: g\ntier: T1\n---\nb\n' > .project/tasks/T-g.md
+
+  printf '%s' '{"findings":[{"class":"fail-open","severity":"critical","summary":"a critical recorded for the gate fixture"}]}' |
+    bash "$KIT/tooling/kit-finding.sh" --task T-g --agent security-reviewer --json >/dev/null 2>&1 || exit 1
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1 || exit 1
+
+  # 1. UNMARKED, IT COUNTS. Without this the rest could pass on a gate that never fired.
+  bash "$KIT/tooling/kit-preflight.sh" --criticals >/dev/null 2>&1 &&
+    { printf '    ^ the gate passed with an unmarked critical outstanding\n' >&2; exit 1; }
+
+  fid=$(sqlite3 -noheader .project/index.db \
+        "SELECT id FROM finding WHERE severity='critical' LIMIT 1;" | tr -d '\015')
+  [ -n "$fid" ] || { printf '    ^ no finding id; nothing was tested\n' >&2; exit 1; }
+
+  # 2. A BLANK REASON IS REFUSED, and nothing is appended. This is the anti-laundering property:
+  # a disposition that removes a finding from a gate without saying why is the thing being
+  # avoided, so the refusal is asserted on the LOG, not on an exit code.
+  pre=$(cksum .project/events.ndjson)
+  bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --unassessable --reason "  " >/dev/null 2>&1 &&
+    { printf '    ^ a blank reason was accepted\n' >&2; exit 1; }
+  [ "$(cksum .project/events.ndjson)" = "$pre" ] ||
+    { printf '    ^ a refused mark still appended to the log\n' >&2; exit 1; }
+
+  # 3. MARKED, IT LEAVES THE GATE -- and is still reported.
+  bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --unassessable \
+       --reason "predates the summary column; not recoverable" >/dev/null 2>&1 || exit 1
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1 || exit 1
+  bash "$KIT/tooling/kit-preflight.sh" --criticals >/dev/null 2>&1 ||
+    { printf '    ^ the gate still blocks on a critical marked unassessable\n' >&2; exit 1; }
+
+  # Excluded from the GATE, never from the RECORD. A mechanism that merely hid the row would
+  # satisfy the assertion above and be exactly the laundering this exists to prevent.
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1 || exit 1
+  grep -q 'UNASSESSABLE' STATUS.generated.md ||
+    { printf '    ^ the excluded critical vanished from the status file\n' >&2; exit 1; }
+  [ -n "$(sqlite3 -noheader .project/index.db \
+          "SELECT unassessable_reason FROM finding WHERE id='$fid';" | tr -d '\015')" ] ||
+    { printf '    ^ the reason was not stored\n' >&2; exit 1; }
+  exit 0 )
+check $? "marked unassessable clears the gate, blank reasons are refused, the row stays reported"
+rm -rf "$ua"
+fi
+
 if step "a failed build leaves the previous index alone and keeps saying so"; then
 # Two halves of one defect. `fl` was the only value on the task INSERT not passed through
 # q(), so `tier.rule: src/** T3','x` ended the SQL literal early: the statement failed, the

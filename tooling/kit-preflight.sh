@@ -80,9 +80,17 @@ case "${1:-}" in
     # -- and the critical would leave the gate having never been judged. Fail closed: a
     # class-scoped refutation retires a finding only when it is the sole finding of that class
     # on that task.
+    # A finding the operator has explicitly marked unassessable leaves the gate, and ONLY one
+    # marked individually does. The exclusion is deliberately not `summary IS NULL` -- that
+    # would exempt every FUTURE critical whose summary is missing, turning a bounded historical
+    # problem into an unbounded hole. Nine rows predate the summary column and cannot be judged
+    # from what survives; each is named by its own `finding-unassessable` event carrying a
+    # reason, and kit-status.sh reports the total as a standing blind spot rather than folding
+    # it into zero. Excluded from the gate, never from the record.
     n=$(sqlite3 -noheader "$DB" "
       SELECT COUNT(*) FROM finding f
        WHERE f.severity='critical' AND f.fixed_at IS NULL
+         AND f.unassessable_at IS NULL
          AND NOT (COALESCE(f.vindicated,1) = 0 AND 1 = (
                SELECT COUNT(*) FROM finding g
                 WHERE COALESCE(g.task_id,'') = COALESCE(f.task_id,'')
@@ -91,7 +99,13 @@ case "${1:-}" in
       ''|*[!0-9]*)
         kit_warn "the criticals query FAILED -- this is not a report of zero"
         printf '%s\n' "$n" | sed 's/^/  /' >&2
-        kit_warn "  an index built before finding.fixed_at existed fails here; rebuild it"
+        # Name the SHAPE, not one instance of it. This said "an index built before
+        # finding.fixed_at existed", which was the only cause when it was written and stopped
+        # being so the moment `unassessable_at` was added -- so the message would have sent the
+        # reader hunting for the wrong column. Same defect as
+        # T-20260809-the-unverified-tier-floor-message-names-; the fix is to describe the class.
+        kit_warn "  the usual cause is an index older than a column this query reads"
+        kit_warn "  (fixed_at and unassessable_at are both newer than some indexes); rebuild it"
         exit 2 ;;
     esac
     if [ "$n" != 0 ]; then

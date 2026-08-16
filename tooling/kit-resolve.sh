@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # kit-resolve.sh --finding ID --fixed [--commit SHA] [--note TEXT]   mark a finding addressed
 # kit-resolve.sh --finding ID --open  [--note TEXT]                  retract that mark
+# kit-resolve.sh --finding ID --unassessable --reason TEXT           it cannot be judged at all
 # kit-resolve.sh --list [--task ID] [--severity SEV] [--unfixed]     the ids, so the above is usable
 #
 # Answers "was this finding ADDRESSED". That is a DIFFERENT question from the one
@@ -42,11 +43,14 @@ ROOT=$(kit_root) || exit 0
 kit_active "$ROOT" || exit 0
 
 finding=""; verdict=""; commit=""; note=""; list=0; ftask=""; fsev=""; unfixed=0
+unass=0; reason=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --finding)  finding=${2:-}; shift; shift ;;
     --fixed)    verdict=1; shift ;;
     --open)     verdict=0; shift ;;
+    --unassessable) unass=1; shift ;;
+    --reason)   reason=${2:-}; shift; shift ;;
     --commit)   commit=${2:-}; shift; shift ;;
     --note)     note=${2:-}; shift; shift ;;
     --list)     list=1; shift ;;
@@ -109,8 +113,17 @@ if [ "$list" = 1 ]; then
   exit 0
 fi
 
-[ -n "$finding" ] && [ -n "$verdict" ] || {
+# Exactly one disposition per invocation. `--fixed --unassessable` is not a compound state: the
+# first says the defect was dealt with, the second says nobody can tell what it was. Accepting
+# both would write two marks from one command and let last-write-wins pick the meaning.
+if [ "$unass" = 1 ] && [ -n "$verdict" ]; then
+  kit_warn "--unassessable cannot be combined with --fixed or --open"
+  kit_warn "  addressed and unjudgeable are different claims; record one of them"
+  exit 2
+fi
+[ -n "$finding" ] && { [ -n "$verdict" ] || [ "$unass" = 1 ]; } || {
   kit_warn "usage: --finding ID (--fixed|--open) [--commit SHA] [--note TEXT]"
+  kit_warn "       --finding ID --unassessable --reason TEXT"
   kit_warn "       --list [--task ID] [--severity SEV] [--unfixed]"; exit 2; }
 
 # REFUSE AN ID NO FINDING HAS. Appending it would put a mark in the permanent log that the
@@ -182,11 +195,22 @@ mkdir -p "$ROOT/$STATE_DIR"
 # The timestamp is stamped by the writer, not passed in from here. It needs sub-second
 # resolution -- two marks on one finding in the same second are order-ambiguous and the
 # retraction loses -- and `date -u` cannot produce it portably, because BSD date has no %N.
-_out=$(python3 "$(dirname "$0")/kit_findings.py" --resolve \
-         --finding "$finding" --fixed "$verdict" --commit "$commit" --note "$note" \
-         --task "${ftask:-}" --actor "$(git -C "$ROOT" config user.email 2>/dev/null ||
-                                        git -C "$ROOT" config user.name 2>/dev/null || true)") || {
-  kit_warn "refusing to record: the event could not be serialised"; exit 1; }
+_actor=$(git -C "$ROOT" config user.email 2>/dev/null ||
+         git -C "$ROOT" config user.name 2>/dev/null || true)
+if [ "$unass" = 1 ]; then
+  # The blank-reason refusal lives in the writer, not here, so it holds for every caller rather
+  # than for this one path. A mark that removes a finding from the criticals gate without saying
+  # why is the laundering the whole disposition exists to avoid.
+  _out=$(python3 "$(dirname "$0")/kit_findings.py" --unassessable \
+           --finding "$finding" --reason "$reason" \
+           --task "${ftask:-}" --actor "$_actor") || {
+    kit_warn "refusing to record: the event could not be serialised"; exit 1; }
+else
+  _out=$(python3 "$(dirname "$0")/kit_findings.py" --resolve \
+           --finding "$finding" --fixed "$verdict" --commit "$commit" --note "$note" \
+           --task "${ftask:-}" --actor "$_actor") || {
+    kit_warn "refusing to record: the event could not be serialised"; exit 1; }
+fi
 
 # The append is CHECKED, and the value is built before it. Unchecked, a full or unwritable
 # events.ndjson still exits 0 and the operator believes the mark landed -- the same false
@@ -195,4 +219,10 @@ if ! printf '%s\n' "$_out" >> "$ROOT/$STATE_DIR/events.ndjson"; then
   kit_warn "could not append to $STATE_DIR/events.ndjson -- NOTHING was recorded"
   exit 1
 fi
-printf 'kit: %s recorded for %s\n' "$([ "$verdict" = 1 ] && echo fixed || echo reopened)" "$finding" >&2
+if [ "$unass" = 1 ]; then
+  printf 'kit: unassessable recorded for %s\n' "$finding" >&2
+  printf 'kit:   it leaves the criticals gate and STAYS in the record; kit-status.sh reports\n' >&2
+  printf 'kit:   the count as a standing blind spot, never as zero.\n' >&2
+else
+  printf 'kit: %s recorded for %s\n' "$([ "$verdict" = 1 ] && echo fixed || echo reopened)" "$finding" >&2
+fi

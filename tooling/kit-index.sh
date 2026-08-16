@@ -896,6 +896,17 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
         else
           f[nf] = sprintf("UPDATE finding SET fixed_at=\047%s\047, fixed_commit=\047%s\047, fixed_note=\047%s\047 WHERE id=\047%s\047;", q(a), q(jf($0,"commit")), q(jf($0,"note")), q(jf($0,"finding")))
       }
+      # Whether a finding can be JUDGED AT ALL -- the third fact, and deliberately routed through
+      # the SAME deferred array as a fix mark rather than applied inline. That is not tidiness:
+      # it inherits the orphan naming and the collision refusal for free, so a mark naming an id
+      # no finding has is REPORTED instead of running as an UPDATE that matches nothing and
+      # exits 0. A disposition that silently fails to apply would leave the gate reading clean
+      # for a reason nobody recorded, which is the exact failure this column exists to prevent.
+      if (k=="finding-unassessable") {
+        nf++
+        fref[nf] = jf($0,"finding")
+        f[nf] = sprintf("UPDATE finding SET unassessable_at=\047%s\047, unassessable_reason=\047%s\047 WHERE id=\047%s\047;", q(a), q(jf($0,"reason")), q(jf($0,"finding")))
+      }
     }
     END {
       for (i=1; i<=nv; i++) print v[i]

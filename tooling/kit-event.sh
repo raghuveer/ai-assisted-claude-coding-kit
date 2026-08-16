@@ -27,7 +27,7 @@ KIND=${2:-note}
 # derives the kinds from its `k=="..."` branches and fails if the two disagree, so teaching the
 # indexer to act on a fifth kind without adding it here goes red rather than reopening the hole.
 case "$KIND" in
-  finding|finding-fixed|spend|vindication)
+  finding|finding-fixed|finding-unassessable|spend|vindication)
     kit_warn "kit-event.sh will not write '$KIND': the indexer acts on it, so it belongs to"
     kit_warn "  the writer that validates it, not to the generic recorder."
     exit 2 ;;

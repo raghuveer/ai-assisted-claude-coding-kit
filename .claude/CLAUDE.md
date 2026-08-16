@@ -28,6 +28,13 @@
 
 **For the operator, not the agent** — every instruction in this block is yours:
 
+- A finding that **cannot be judged at all** — the record does not say what it was — is marked
+  `kit-resolve.sh --finding ID --unassessable --reason TEXT`. It leaves the criticals gate and
+  stays in the record permanently; `kit-status.sh` reports the count as a standing blind spot and
+  never folds it into zero. `--reason` is required, because a mark that clears a gate without
+  saying why is the laundering the gate exists to prevent. **This is yours, not the agent's**, for
+  the same reason `--fixed` is. It is not a synonym for `--fixed`: addressed and unjudgeable are
+  different claims and the tool refuses to record both at once.
 - You run `kit-resolve.sh --fixed`, after deciding the fix is real. `--commit` must resolve, and
   a mark whose commit later leaves the history is reported on rebuild. A REVERT is not detected.
 - You put `Via:` on the trailer, after deciding it.

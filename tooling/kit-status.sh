@@ -524,15 +524,24 @@ OPENCRIT=$(q "SELECT COALESCE(NULLIF(f.task_id,''),'(unattributed)')||'  '||COUN
                      '  ['||COALESCE(NULLIF(t.state,''),'no task file')||']'
                 FROM finding f LEFT JOIN task t ON t.id = f.task_id
                WHERE f.severity='critical' AND f.fixed_at IS NULL
+                 AND f.unassessable_at IS NULL
                  AND NOT (COALESCE(f.vindicated,1) = 0 AND $UNAMBIG)
                GROUP BY f.task_id ORDER BY COUNT(*) DESC;"); OCRC=$?
 CRITTOT=$(q "SELECT COUNT(*) FROM finding f WHERE f.severity='critical' AND f.fixed_at IS NULL
+              AND f.unassessable_at IS NULL
               AND NOT (COALESCE(f.vindicated,1) = 0 AND $UNAMBIG);")
+# THE BLIND SPOT, COUNTED SEPARATELY AND NEVER FOLDED INTO ZERO. These left the gate because the
+# operator marked each one individually as unjudgeable, with a reason -- not because a query
+# stopped seeing them. Reported here for the same purpose the section exists: so "none
+# outstanding" cannot be read as "nothing was ever wrong".
+CRITUNASS=$(q "SELECT COUNT(*) FROM finding
+                WHERE severity='critical' AND fixed_at IS NULL AND unassessable_at IS NOT NULL;")
 # CLOSING A TASK IS NOT FIXING ITS CRITICALS. The gate filtered `state='progress'`, so a
 # critical on a done task did not count -- "fix it" and "close it" cleared the pre-flight
 # equally. Counted and named here, because it is the direction that hides work.
 CRITDONE=$(q "SELECT COUNT(*) FROM finding f JOIN task t ON t.id=f.task_id
                WHERE f.severity='critical' AND f.fixed_at IS NULL
+                 AND f.unassessable_at IS NULL
                  AND NOT (COALESCE(f.vindicated,1) = 0 AND $UNAMBIG) AND t.state IN ('done','abandoned');")
 CRITALL=$(q "SELECT COUNT(*) FROM finding WHERE severity='critical';")
 printf '\n## Outstanding criticals\n\n'
@@ -558,6 +567,21 @@ else
   # section replaces -- and there is a real difference between no criticals and no marks.
   printf -- '- none outstanding (%s critical finding(s) recorded, all marked addressed)\n' \
     "${CRITALL:-0}"
+fi
+
+# OUTSIDE the branch above on purpose. If every remaining critical is unassessable the list is
+# empty and the "none outstanding" line prints -- which is exactly when this notice matters most
+# and exactly when a notice nested in the other branch would not appear.
+if [ "${CRITUNASS:-0}" != 0 ]; then
+  printf -- '\n> **%s critical(s) are excluded as UNASSESSABLE, and that is not the same as\n' "$CRITUNASS"
+  printf -- '> fixed.** Each was marked individually by the operator with a recorded reason,\n'
+  printf -- '> because what the finding said cannot be recovered from what survives — most of\n'
+  printf -- '> them predate the `summary` column. They are out of the pre-flight gate and still\n'
+  printf -- '> in the record, permanently. `kit-resolve.sh --list --severity critical` shows\n'
+  printf -- '> them with their reasons.\n'
+  printf -- '>\n'
+  printf -- '> Read the count above as "%s actionable, %s unjudgeable" rather than as a total.\n' \
+    "${CRITTOT:-0}" "$CRITUNASS"
 fi
 
 # Marks that did NOT apply. The indexer used to say this on stderr alone, where a run inside

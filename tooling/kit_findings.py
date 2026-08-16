@@ -412,6 +412,58 @@ before or after it. Keep every `summary` under 200 characters -- put the explana
 `narrative`, which has no limit."""
 
 
+def unassessable_event(argv):
+    """Whether a finding can be JUDGED AT ALL. A third fact, orthogonal to the other two:
+    `vindicated` says whether it was real, `fixed_at` whether it was addressed, and this whether
+    there is enough on the record to decide either.
+
+    It exists because nine criticals predate the `summary` field, so the gate could never reach
+    zero and would have been either permanently red or quietly bypassed. The alternatives were
+    both worse: marking them `--fixed` writes a false statement into an append-only committed
+    log, and excluding summary-less findings by query would exempt every FUTURE one, turning a
+    bounded historical problem into an unbounded hole.
+
+    `--reason` is REQUIRED and must be non-empty. A disposition that removes a finding from a
+    gate without saying why is the laundering this whole mechanism exists to avoid, and an
+    optional reason is one nobody fills in."""
+    opts = {"finding": "", "reason": "", "at": "", "task": "", "actor": ""}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a.startswith("--") and a[2:].replace("-", "_") in opts:
+            if i + 1 >= len(argv):
+                raise Rejected("%s needs a value" % a)
+            opts[a[2:].replace("-", "_")] = argv[i + 1]
+            i += 2
+        else:
+            raise Rejected("unknown argument %s" % a)
+    if not opts["finding"]:
+        raise Rejected("--finding is required (the id from kit-resolve.sh --list)")
+    if not sanitise(opts["reason"]):
+        raise Rejected("--reason is required and must not be blank.\n"
+                       "  This mark removes a finding from the criticals gate. Why it cannot be\n"
+                       "  assessed is the only thing that makes that honest rather than a clearance.")
+    # Same sub-second stamp and the same validation as a fix mark, for the same reason: these
+    # are applied last-write-wins over events sorted by `at`, and a whole-second tie breaks on
+    # the text of the line rather than on intent.
+    if not opts["at"]:
+        opts["at"] = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ")
+    elif not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{6})?Z$", opts["at"]):
+        raise Rejected("--at must be YYYY-MM-DDTHH:MM:SS[.ffffff]Z, got %r.\n"
+                       "  It is the ordering key for marks on one finding, not a label."
+                       % opts["at"])
+    event = {"kind": "finding-unassessable", "at": sanitise(opts["at"]),
+             "finding": sanitise(opts["finding"]), "reason": sanitise(opts["reason"])}
+    if opts["task"]:
+        event["task"] = sanitise(opts["task"])
+    if opts["actor"]:
+        event["actor"] = sanitise(opts["actor"])
+    line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+    _assert_flat(line)
+    return line
+
+
 def print_contract():
     sys.stdout.write("finding object fields (JSON, one object per finding under `findings`):\n")
     for name, required, want, low, high, why in CONTRACT:
@@ -462,14 +514,16 @@ def main():
     if mode == "--contract":
         print_contract()
         return 0
-    if mode not in ("--validate", "--emit-events", "--gap-event", "--correction", "--resolve"):
+    if mode not in ("--validate", "--emit-events", "--gap-event", "--correction", "--resolve",
+                    "--unassessable"):
         sys.stderr.write("kit-findings: unknown mode %s\n" % mode)
         return 2
-    # Dispatched before stdin is touched: this mode reads none, and a mode that blocks on a
+    # Dispatched before stdin is touched: these modes read none, and a mode that blocks on a
     # terminal it was never given looks exactly like a hang.
-    if mode == "--resolve":
+    if mode in ("--resolve", "--unassessable"):
+        builder = resolve_event if mode == "--resolve" else unassessable_event
         try:
-            sys.stdout.buffer.write((resolve_event(sys.argv[2:]) + "\n").encode("utf-8"))
+            sys.stdout.buffer.write((builder(sys.argv[2:]) + "\n").encode("utf-8"))
         except Rejected as exc:
             sys.stderr.write("kit-findings: %s\n" % exc)
             return 2
