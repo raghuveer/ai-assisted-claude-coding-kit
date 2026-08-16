@@ -2431,8 +2431,16 @@ en="$WORK.entry"; rm -rf "$en"; mkdir -p "$en/src"
   # ten columns where the design says eleven, and nothing here noticed, because no assertion
   # named it. An unasserted column is an unimplemented column that happens to be documented.
   mkdir -p docs && printf '# Note\n\nWhy the retry count is 7.\n' > docs/note.md
+  : > src/empty.py
+  printf '.eslintrc\n' > .eslintrc
+  # Committed now, deleted below. It lands in the co-change graph and NOT in the census, which is
+  # the only way the coverage fraction's two populations can differ inside a fixture.
+  printf 'package main\n// gone\nfunc gone() {}\n' > src/gone.go
+  { echo 'int main(void) {'; echo '/*'; echo 'no leading star on these lines'
+    echo 'and the block still runs to its close'; echo '*/'; echo 'return 0; }'; } > src/block.c
   git add -A && git commit -q --no-verify -m "chore: seed"
   printf 'package main\n\nconst maxRetries = 7\nvar _ = maxRetries\n' > src/retry.go
+  rm -f src/gone.go
   git add -A && git commit -q --no-verify -m "feat: second commit"
 
   before=$(ls .project/tasks 2>/dev/null | wc -l | tr -d ' ')
@@ -2444,12 +2452,12 @@ en="$WORK.entry"; rm -rf "$en"; mkdir -p "$en/src"
   # PRESENCE. Exact values, not `!= 0`. Three source files are counted and the three files
   # kit-init.sh commits are excluded AND counted -- an exclusion nobody can see is
   # indistinguishable from a file that was missed.
-  grep -qx 'tracked_files 4'   "$R" || exit 1
+  grep -qx 'tracked_files 7'   "$R" || exit 1
   grep -qx 'skipped kit-owned 3' "$R" || exit 1
   grep -qx 'commits 2'         "$R" || exit 1
   grep -qE '^history (ok|degenerate|unavailable)' "$R" || exit 1
   grep -qE '^cochange (ok|empty)' "$R" || exit 1
-  grep -qx 'comment_runs 2 in 2 files' "$R" || exit 1
+  grep -qx 'comment_runs 3 in 3 files' "$R" || exit 1
 
   # Both run lengths pinned exactly, so a scanner off by one is red, and so is one that
   # silently reimposes a minimum length and drops the 9.
@@ -2465,6 +2473,17 @@ en="$WORK.entry"; rm -rf "$en"; mkdir -p "$en/src"
   awk -F'	' '$1=="src/retry.go" && $10==0 {f=1} END{exit !f}' "$F" || exit 1
   # The census reconciles: every subject file is a row or a counted exclusion.
   grep -qx 'reconciled ok' "$R" || exit 1
+  # Four behaviours from the previous review round had NO assertion until now. An unasserted
+  # behaviour is indistinguishable from an unimplemented one -- which is exactly how doc_shaped
+  # came to be specified in ADR 0001 and in the design, absent from the code, and green anyway.
+  grep -qx 'merges 0' "$R" || exit 1
+  grep -qx 'skipped scanfail 0' "$R" || exit 1
+  # An empty file is TEXT with no content, not binary. It gets a row with lines 0.
+  awk -F'\t' '$1=="src/empty.py" && $3==0 {f=1} END{exit !f}' "$F" || exit 1
+  # A /* */ block whose interior lines carry no leading * is ONE run, at its true length.
+  awk -F'\t' '$1=="src/block.c" && $4==4 {f=1} END{exit !f}' "$C" || exit 1
+  # A subject's own root dotfile belongs to the SUBJECT, not to the kit.
+  awk -F'\t' '$1==".eslintrc" {f=1} END{exit !f}' "$F" || exit 1
 
   # ABSENCE. Necessary, not sufficient -- every assertion above already failed for an
   # `exit 0` implementation.
@@ -2472,11 +2491,62 @@ en="$WORK.entry"; rm -rf "$en"; mkdir -p "$en/src"
   [ "$before" = "$after" ] || exit 1
   bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
   [ "$(sqlite3 .project/index.db 'SELECT COUNT(*) FROM task;' | tr -d '\015 ')" = 0 ] || exit 1
+
+
   # No artefact may contain a line that reads as a task file's own grammar.
   grep -qE '^(id|tier|state): ' "$R" "$F" "$C" && exit 1
   exit 0 )
 check $? "entry analysis reports the choice, counts its exclusions, and writes no task"
 rm -rf "$en"
+fi
+
+if step "co-change coverage divides by the population it counted"; then
+# `cochange ok N pairs, M of T files` printed `84 of 81` on this repository: a fraction above one.
+# The numerator counted every file in the co-change graph -- task files, kit-owned files, files
+# deleted years ago -- and the denominator counted only subject files that exist NOW. Two different
+# populations, and the tell was that the answer was impossible rather than merely wrong.
+#
+# This needs its own repository. The entry fixture has two commits, and `cochange.hub_pct` treats a
+# file appearing in more than 20% of commits as a hub -- so at two commits EVERY file is suppressed,
+# the graph is empty, and an assertion placed there passes on `cochange empty` without ever reaching
+# the branch. The first version of this check did exactly that and survived the mutation that
+# reintroduces the defect.
+cc="$WORK.cochange"; rm -rf "$cc"; mkdir -p "$cc/src"
+( cd "$cc" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  # gone.go is committed and then deleted: it lives in the graph and not in the census, which is
+  # the only way a fixture can make the two populations differ.
+  printf 'package main\nfunc gone() {}\n' > src/gone.go
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  # Twelve commits, each touching a disjoint pair, so no file exceeds the 20% hub threshold and
+  # pairs actually form.
+  i=1
+  while [ "$i" -le 12 ]; do
+    j=$((i + 1))
+    printf 'package main\n// f%s\nfunc f%s() {}\n' "$i" "$i" > "src/f$i.go"
+    printf 'package main\n// g%s\nfunc g%s() {}\n' "$j" "$j" > "src/g$j.go"
+    git add -A && git commit -q --no-verify -m "feat: pair $i"
+    i=$((i + 1))
+  done
+  rm -f src/gone.go
+  git add -A && git commit -q --no-verify -m "chore: drop gone"
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-entry.sh" >/dev/null 2>&1 || exit 1
+  R=.project/entry-report.md
+  # The branch must actually be REACHED. On `cochange empty` everything below is vacuous, which is
+  # how the first version of this check passed while measuring nothing.
+  ccline=$(grep '^cochange ok ' "$R") || { echo "  the co-change graph is empty -- this step measured nothing"; exit 1; }
+  m=$(printf '%s' "$ccline" | sed 's/.* \([0-9][0-9]*\) of \([0-9][0-9]*\) files.*/\1/')
+  t=$(printf '%s' "$ccline" | sed 's/.* \([0-9][0-9]*\) of \([0-9][0-9]*\) files.*/\2/')
+  [ "$m" -le "$t" ] || { echo "  coverage $m exceeds census $t"; exit 1; }
+  # Positive half: the populations DO differ here, so the notice naming the difference must appear.
+  # The inequality alone would still pass against a numerator counted over the whole graph.
+  grep -q 'outside the census' "$R" || { echo "  the out-of-census notice is missing"; exit 1; }
+  exit 0 )
+check $? "co-change coverage counts subject files on both sides, and names what the graph holds beyond them"
+rm -rf "$cc"
 fi
 
 if step "a proposal that cannot be pasted safely is refused, and a question is not a checkbox"; then
@@ -2515,7 +2585,26 @@ pr="$WORK.prop"; rm -rf "$pr"; mkdir -p "$pr"
   sed 's/^1\. Why/- [ ] Why/'            good.md > tickbox.md
   grep -v 'Could not determine'          good.md > nogaps.md
   grep -v 'kit-task.sh --title'          good.md > noline.md
+  sed "s/Document the retry budget' --tier/Doc's budget' --tier/"  good.md > quote.md
+  sed "s/Document the retry budget' --tier/Doc | tee b' --tier/"   good.md > pipe.md
+  sed "s/Document the retry budget' --tier/Doc \& b' --tier/"      good.md > amp.md
+  sed "s/Document the retry budget' --tier/Doc < b' --tier/"       good.md > lt.md
+  sed "s/Document the retry budget' --tier/Doc > b' --tier/"       good.md > gt.md
   rc=0
+  # Every character the docs claim is refused, not a sample of three. ADR 0001 asserted that a
+  # conformance step proved EACH refusal while only three were tested -- and the quote, the one
+  # that ends the quoting, was the one silently broken.
+  want quote.md    'a single quote in a title'  || rc=1
+  want pipe.md     'a pipe in a title'          || rc=1
+  want amp.md      'an ampersand in a title'    || rc=1
+  want lt.md       'a < in a title'             || rc=1
+  want gt.md       'a > in a title'             || rc=1
+  # Scoping the counts made these two INVISIBLE rather than wrong, which trades one silent state
+  # for another. They are refused.
+  { cat good.md; echo "      kit-task.sh --title 'Stray line' --tier T1"; } > stray.md
+  sed 's/^- co-change: empty/- [ ] co-change: empty/' good.md > latebox.md
+  want stray.md    'a kit-task.sh line outside the section' || rc=1
+  want latebox.md  'a checkbox after the candidate section' || rc=1
   want backtick.md 'a backtick in a title'      || rc=1
   want dollar.md   'a $(...) in a title'        || rc=1
   want semi.md     'a semicolon in a title'     || rc=1
@@ -2525,7 +2614,7 @@ pr="$WORK.prop"; rm -rf "$pr"; mkdir -p "$pr"
   # A usage error is NOT a refusal: exit 2 means the question could not be asked.
   bash "$KIT/tooling/kit-entry.sh" --check /nonexistent >/dev/null 2>&1; [ "$?" = 2 ] || rc=1
   exit $rc )
-check $? "a conforming proposal passes, six malformed ones are refused, and --check files nothing"
+check $? "a conforming proposal passes, thirteen malformed ones are refused, and --check files nothing"
 rm -rf "$pr"
 fi
 

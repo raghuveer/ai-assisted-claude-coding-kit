@@ -66,6 +66,10 @@ if [ "${1:-}" = "--check" ]; then
   [ -n "$qline" ] || { kit_warn "no '## Open questions' section"; bad=1; }
   [ -n "$cline" ] || { kit_warn "no '## Candidate tasks' section"; bad=1; }
   [ -n "$uline" ] || { kit_warn "no '## Could not determine' section -- an analysis silent about its own gaps reads as complete"; bad=1; }
+  # ... and the heading alone is not the section. An empty one is silence with a title on it.
+  if [ -n "$uline" ] && ! awk -v a="$uline" 'NR>a && NF && $0 !~ /^##/ {found=1} END{exit !found}' < "$P"; then
+    kit_warn "'## Could not determine' is empty -- a heading is not a disclosure"; bad=1
+  fi
   if [ -n "$qline" ] && [ -n "$cline" ]; then
     [ "$qline" -lt "$cline" ] ||
       { kit_warn "questions must come BEFORE candidates: a reader meets the unknowns first"; bad=1; }
@@ -74,28 +78,49 @@ if [ "${1:-}" = "--check" ]; then
     fi
   fi
   ncand=0; nq=0
-  [ -n "$cline" ] && ncand=$(awk -v a="$cline" 'NR>a && /^[[:space:]]*-[[:space:]]*\[[ xX]\]/ {n++} END{print n+0}' < "$P")
+  # BOTH counts are scoped to the candidate section. Unscoped, they could balance ACROSS sections:
+  # `ncand` counted every checkbox after the heading, including any in `## Could not determine`,
+  # and `nlines` grepped the whole file -- so a candidate MISSING its command line and a stray
+  # command line elsewhere cancelled out, and the check passed on a proposal wrong in both places.
+  # Two wrong numbers agreeing is the failure mode, which is why the fixture asserts each
+  # separately rather than testing one file with both defects.
+  cend=$(awk -v a="${cline:-0}" 'NR>a && /^## / {print NR; exit}' < "$P")
+  [ -n "$cend" ] || cend=$(awk 'END{print NR+1}' < "$P")
+  [ -n "$cline" ] && ncand=$(awk -v a="$cline" -v z="$cend" 'NR>a && NR<z && /^[[:space:]]*-[[:space:]]*\[[ xX]\]/ {n++} END{print n+0}' < "$P")
   [ -n "$qline" ] && [ -n "$cline" ] && nq=$(awk -v a="$qline" -v b="$cline" 'NR>a && NR<b && /^[[:space:]]*[0-9]+\./ {n++} END{print n+0}' < "$P")
-  nlines=$(grep -c 'kit-task\.sh --title' -- "$P" || true)
+  nlines=$(awk -v a="${cline:-0}" -v z="$cend" 'NR>a && NR<z && /kit-task\.sh --title/ {n++} END{print n+0}' < "$P")
+  # Scoping alone would make a stray checkbox or command line OUTSIDE the candidate section
+  # invisible rather than wrong, which trades one silent state for another. They are refused: a
+  # checkbox in `## Could not determine` is actionable work filed as a gap, and a command line
+  # loose in the document is a paste sitting outside the list a human is reviewing.
+  if [ -n "$cend" ]; then
+    awk -v z="$cend" 'NR>=z && /^[[:space:]]*-[[:space:]]*\[[ xX]\]/ {found=1} END{exit !found}' < "$P" &&
+      { kit_warn "a checkbox appears after the candidate section -- work does not belong in a gaps list"; bad=1; }
+    awk -v z="$cend" 'NR>=z && /kit-task\.sh --title/ {found=1} END{exit !found}' < "$P" &&
+      { kit_warn "a kit-task.sh line appears outside the candidate section"; bad=1; }
+  fi
   [ "$ncand" = "$nlines" ] ||
     { kit_warn "$ncand candidate(s) but $nlines kit-task.sh line(s) -- every candidate carries the literal line the operator runs"; bad=1; }
-  # The paste boundary. A title is single-quoted, so the only character that can end the quoting
-  # is a single quote; the rest are refused because a reader who trusts this check should not have
-  # to also read every line for shell syntax.
+  # WHITELIST THE WHOLE LINE. Do not extract the title and then inspect it: extraction has to
+  # assume the quoting is well formed, and the one character that makes it malformed is the single
+  # quote -- the very character most worth refusing. Two attempts got this wrong in opposite
+  # directions and both were fail-open:
   #
-  # The capture is `[^']*`, NOT `[^\n]*`. Inside a BSD sed bracket expression `\n` is not a
-  # newline -- it is the two characters backslash and n -- so `[^\n]*` means "not a backslash and
-  # not the letter n", and the capture stops at the first `n` in the title. The substitution then
-  # never matches, no title is extracted, this loop inspects nothing, and every unsafe title is
-  # accepted. It passed on ubuntu (GNU sed) and failed on macos-latest, which is the only reason
-  # it was caught: this laptop has GNU tools and cannot see BSD behaviour at all.
-  while IFS= read -r t; do
-    case "$t" in
-      *\'*|*\`*|*'$'*|*';'*|*'|'*|*'&'*|*'<'*|*'>'*|*'('*|*')'*)
-        kit_warn "candidate title is not safe to paste: $t"; bad=1 ;;
-    esac
+  #   `[^\n]*` -- BSD read the class as "not backslash, not n", the substitution never matched,
+  #               nothing was inspected, and EVERY title passed. Green on ubuntu, red on macos.
+  #   `[^']*`  -- stops at the first quote, so `--title 'Doc's budget'` yields `Doc`, which is
+  #               clean, and the quote arm became unreachable. Green on BOTH platforms while
+  #               accepting the exact input it existed to refuse.
+  #
+  # So the shape is inverted: the line must MATCH a grammar of things known to be safe, and
+  # anything else is refused unread. An unparseable line is refused rather than parsed, which is
+  # the fail-closed direction. Adding a flag to kit-task.sh means adding it here, deliberately.
+  while IFS= read -r ln; do
+    [ -n "$ln" ] || continue
+    printf '%s\n' "$ln" | grep -qE "^[[:space:]]*kit-task\.sh --title '[A-Za-z0-9 ._-]+'([[:space:]]+--tier T[0-3])?([[:space:]]+--lang [A-Za-z0-9+#_-]+)?([[:space:]]+--epic [A-Za-z0-9_-]+)?[[:space:]]*$" ||
+      { kit_warn "candidate line is not safe to paste: $ln"; bad=1; }
   done <<EOF
-$(sed -n "s/.*kit-task\.sh --title '\([^']*\)'.*/\1/p" < "$P")
+$(grep 'kit-task\.sh --title' < "$P")
 EOF
   if [ "$bad" = 0 ]; then
     printf 'kit: proposal conforms -- %s question(s), %s candidate(s), none filed by this check\n' "$nq" "$ncand"
@@ -132,7 +157,13 @@ while IFS= read -r f; do
   [ -n "$f" ] || continue
   case "$f" in
     .claude/*|"$STATE"/*|"$TASKS"/*) KITOWNED=$((KITOWNED+1)); continue ;;
-    .*) case "$f" in */*) ;; *) KITOWNED=$((KITOWNED+1)); continue ;; esac ;;
+    # NAMED, not shaped. This used to exclude every top-level dotfile, which is right for the two
+    # files kit-init.sh writes and wrong for every other one a real subject keeps at its root --
+    # .eslintrc, .golangci.yml, .dockerignore, .editorconfig, .nvmrc. Those are the subject's own
+    # configuration, and excluding them put the subject's files under the KIT's label, where a
+    # reader had no way to tell whose they were. If kit-init.sh starts writing another root file,
+    # add it here deliberately rather than widening the pattern until the count looks right.
+    .gitignore|.gitattributes) KITOWNED=$((KITOWNED+1)); continue ;;
   esac
   SUBJECT="$SUBJECT$f
 "
@@ -173,9 +204,19 @@ DB="$OUTDIR/index.db"
 if [ -f "$DB" ] && command -v sqlite3 >/dev/null 2>&1; then
   ccpairs=$(sqlite3 "$DB" "SELECT COUNT(*) FROM cochange;" 2>/dev/null | tr -d '\015 ' || true)
   if [ -n "${ccpairs:-}" ] && [ "$ccpairs" -gt 0 ] 2>/dev/null; then
-    ccfiles=$(sqlite3 "$DB" "SELECT COUNT(DISTINCT src) FROM cochange;" 2>/dev/null | tr -d '\015 ')
-    CC="ok $ccpairs pairs, $ccfiles of $NFILES files"
+    # INTERSECTED with the census, not counted independently. The co-change graph is built by
+    # kit-index.sh over every file in history -- task files, kit-owned files, files deleted years
+    # ago -- while the census counts only subject files that exist now. Dividing one by the other
+    # printed `84 of 81 files`, a coverage fraction above 1, which is the honest tell that the
+    # numerator and denominator were different populations. Both sides are now the same set.
     CCDEG=$(sqlite3 "$DB" "SELECT REPLACE(src,'f:',''), COUNT(*) FROM cochange GROUP BY src;" 2>/dev/null | tr -d '\015')
+    ccall=$(printf '%s\n' "$CCDEG" | grep -c '|' || true)
+    ccfiles=$(printf '%s\n' "$CCDEG" | awk -F'|' -v subj="$SUBJECT" '
+      BEGIN { n=split(subj,S,"\n"); for (i=1;i<=n;i++) if (S[i] != "") keep[S[i]]=1 }
+      $1 != "" && ($1 in keep) { c++ } END { print c+0 }')
+    CC="ok $ccpairs pairs, $ccfiles of $NFILES files"
+    [ "$ccall" = "$ccfiles" ] ||
+      CC="$CC (the graph also holds $((ccall - ccfiles)) file(s) outside the census: history reaches further back than the tree)"
   fi
 fi
 
@@ -191,6 +232,9 @@ fi
 # nominated as load-bearing rationale.
 : > "$RUNS.tmp"
 : > "$FACTS.tmp"
+# Truncated like its siblings. It was appended to and never cleared, so a run killed part
+# way left stale rows that the NEXT run counted as its own skips.
+: > "$FACTS.miss"
 SKIPBIN=0; SKIPUNREAD=0
 
 printf '%s\n' "$SUBJECT" | while IFS= read -r f; do
@@ -202,7 +246,13 @@ printf '%s\n' "$SUBJECT" | while IFS= read -r f; do
   # is the combination that makes it worth guarding rather than assuming.
   #
   # A NUL byte means binary. Counted, never silently dropped.
-  if LC_ALL=C grep -qI . -- "$f" 2>/dev/null; then :; else
+  # `grep -qI ''`, not `grep -qI .` -- and an explicit empty-file case before it. The old test
+  # needed a line containing at least one CHARACTER, so an empty file and a file of only blank
+  # lines both matched nothing and were filed under `skipped binary`: a tracked `__init__.py` or
+  # `.gitkeep` vanished from the census under a label saying it was unreadable, and the
+  # reconciliation still balanced, which is what made it quiet. `-I` is what detects binary; the
+  # pattern only has to match a line, and an empty pattern matches a blank one.
+  if [ ! -s "$f" ] || LC_ALL=C grep -qI '' -- "$f" 2>/dev/null; then :; else
     printf 'binary\t%s\n' "$f" >> "$FACTS.miss"; continue
   fi
   ext=${f##*/}; case "$ext" in *.*) ext=".${ext##*.}" ;; *) ext="(none)" ;; esac

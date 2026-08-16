@@ -111,9 +111,12 @@ accepted because the curated version was wrong, not merely expensive.
   > tool never sees the titles" — was true of the design as written, where the tool wrote facts
   > and the model wrote the proposal with nothing reading it back. Building the proposal half
   > added a reader: the orchestrator writes the file, then `kit-entry.sh --check` validates it,
-  > and at that point the titles are in front of a deterministic tool. It refuses any candidate
-  > title containing a quote, backtick, `$`, `;`, `|`, `&`, `<`, `>` or parenthesis, and a
-  > conformance step proves each refusal against a mutation that removes the check.
+  > and at that point the titles are in front of a deterministic tool. It matches the whole
+  > candidate line against a WHITELIST grammar and refuses anything else unread — a blacklist over
+  > an extracted title failed open twice, once on BSD only and once on both platforms. A
+  > conformance step exercises each refused character individually (quote, backtick, `$`, `;`,
+  > `|`, `&`, `<`, `>`), which the first version of this note claimed while only three were
+  > tested — and the quote, the one that ends the quoting, was the one silently broken.
   >
   > Recorded rather than edited away, because the reasoning was sound and the conclusion still
   > became false — an artefact's boundaries change when something new reads it, and a

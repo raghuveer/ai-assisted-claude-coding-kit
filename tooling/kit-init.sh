@@ -3,6 +3,9 @@
 set -euo pipefail
 ROOT=$(git rev-parse --show-toplevel) || { echo "not a git repository" >&2; exit 1; }
 HERE=$(cd "$(dirname "$0")" && pwd)
+# Sourced for kit_cfg: the .gitignore lines below must honour paths.state rather than assume
+# .project, and this script had no profile reader until then.
+. "$HERE/kit-lib.sh"
 
 mkdir -p "$ROOT/.claude" "$ROOT/.project/tasks"
 
@@ -87,8 +90,11 @@ grep -qxF '.project/packs/' "$GI" 2>/dev/null || echo '.project/packs/' >> "$GI"
 # these lines, so a subject's next `git add -A` committed the report and the facts table, which
 # then changed the commit count the report itself derives. A derived artefact that alters the
 # measurement it reports is the second-truth problem with a feedback loop attached.
+# paths.state, not a hardcoded .project: kit-entry.sh writes into whatever the profile declares,
+# so a subject that configured a different state directory would have had these committed.
+_ST=$(kit_cfg "$ROOT/.claude/project-profile.md" paths.state ".project")
 for _e in entry-facts.tsv entry-comment-runs.tsv entry-report.md entry-candidates.md; do
-  grep -qxF ".project/$_e" "$GI" 2>/dev/null || echo ".project/$_e" >> "$GI"
+  grep -qxF "$_ST/$_e" "$GI" 2>/dev/null || echo "$_ST/$_e" >> "$GI"
 done
 echo "updated .gitignore"
 

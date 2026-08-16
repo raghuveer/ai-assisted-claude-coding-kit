@@ -59,15 +59,22 @@ the structural prevention and it is exactly as strong as that sentence.
 ## What `--check` does and does not enforce
 
 It enforces: questions section present and before candidates; no checkbox on a question; every
-candidate has a `kit-task.sh` line; a `Could not determine` section exists; and **every candidate
-title is safe to paste** — single-quoted, with no quote, backtick, `$`, `;`, `|`, `&`, `<`, `>` or
-newline in it.
+candidate has a `kit-task.sh` line; a `Could not determine` section that is not merely a heading;
+and **every candidate line is safe to paste**.
 
-That last one closes, mechanically, one of the two conventions ADR 0001 recorded. The ADR says the
-charset restriction is enforced by nobody because "the tool never sees the titles". With this
-check the tool does see them: the orchestrator writes the file, then the tool reads it. The ADR's
-statement was true of the design as written and is now false, which is worth knowing when reading
-it.
+That last one is a **whitelist, not a blacklist**: the whole line must match
+
+    kit-task.sh --title '<A-Za-z0-9 space . _ ->' [--tier T0-3] [--lang ...] [--epic ...]
+
+and anything else is refused unread. Two earlier attempts inspected an *extracted* title against a
+list of forbidden characters, and both failed open — one because a BSD sed class silently matched
+nothing, one because the extraction stopped at the first quote and so could never see a quote. A
+line that cannot be parsed is refused rather than parsed. Adding a flag to `kit-task.sh` means
+widening this grammar, deliberately.
+
+This closes one of the two conventions ADR 0001 recorded, and that ADR carries a superseded note
+saying so. Its premise — "the tool never sees the titles" — was true of the design, where nothing
+read the proposal back; it stopped being true when this check was added.
 
 **It does not enforce the hold.** Nothing stops an operator, or an agent with `Bash`, running
 `kit-task.sh` before answering a single question. That remains convention, as ADR 0001 says, and
