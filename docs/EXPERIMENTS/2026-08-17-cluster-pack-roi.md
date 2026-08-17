@@ -64,6 +64,9 @@ skill's own step 4 (*"No row means no plan covers this task — skip the pack"*)
 this repository could have loaded a pack**, and the files on disk would not have been consulted
 by any agent following the procedure.
 
+**The cause was found on 2026-08-17 and it is not neglect — see §2.1. `kit-index.sh` destroys the
+plan every time it rebuilds, and `task-context` step 1 runs it.**
+
 Re-running `bash tooling/kit-plan.sh` produced 11 clusters and 11 packs. What they contain:
 
 | Observation | Value |
@@ -72,7 +75,7 @@ Re-running `bash tooling/kit-plan.sh` produced 11 clusters and 11 packs. What th
 | Tasks in cluster 1 | **61 (79%)** |
 | Singleton clusters | **7 of 11** |
 | c1 pack size | 115 lines / 9,470 bytes (order 2.4k tokens) |
-| File rows in c1's "Files this cluster touches" | **40 — exactly the `rn <= 40` cap** |
+| File rows in c1's "Files this cluster touches" | 40 — the `rn <= 40` cap, against 42 distinct files, so it drops **2** |
 | Open tasks with any `touches` edge | **19 of 77**, all in cluster 1 |
 | Packs whose file section reads *"none recorded yet"* | **10 of 11**, covering 58 of 77 tasks |
 | Findings in the index | 316 |
@@ -90,15 +93,66 @@ because *"7 of 8 open tasks in a real backlog had no touches edges … A floor t
 touched files therefore passes silently on every task that has not started."* **82 of 104 task
 files declare `paths:`. The pack query does not read it.**
 
-**(b) A 40-file list is the "answers everything" failure the kit refuses elsewhere.** For 61 of 77
-tasks the pack names 40 files — most of the source tree. `kit-index.sh` deliberately *withholds*
-a co-change graph whose average degree exceeds `cochange.max_degree`, on the stated grounds that
-a graph answering "everything" is worse than an honest unknown. The pack has no equivalent
-refusal and hits its cap silently. Its list also includes
-`tooling/__pycache__/kit_findings.cpython-314.pyc` — a build artifact, unfiltered.
+**(b) The clustering fuses six epics into one, and the arithmetic is exact.** Cluster 1 is not a
+cluster; it is `measurement` (16) + `validation` (14) + `portability` (10) + `agent-contracts` (8)
++ `accelerators` (5) + `feedback-loop` (4) + no-epic (4) = **61**. Union-find takes two signals — a
+shared epic and a shared non-hub file — and it is transitive, so **one shared file between two
+tasks merges both of their entire epics**. The 19 file-connected tasks span exactly those seven
+groups (4 + 4 + 3 + 3 + 2 + 2 + 1 = 19), and each acts as a bridge.
+
+`cluster.hub_cap: 5` bounds only the file signal, and here it excludes exactly **one** file —
+`tests/conformance.sh`, touched by 12 open tasks. Three more sit at exactly 5 (`README.md`,
+`tooling/kit-index.sh`, `tooling/kit-status.sh`) and pass the `<=` test, each fusing five tasks.
+Nothing bounds the epic amplification a single bridge produces.
+
+`kit-plan.sh:131-133` records meeting this failure once already, through dependency edges — *"one
+chain of 40 tasks transitively fuse every epic it passed through: 300 tasks, one cluster, no
+grouping left"* — and excluding that signal for exactly this reason. The same fusion has returned
+through the epic-and-file composition that replaced it.
+
+*The 40-row cap is **not** the defect and was overstated in this document's first version: it drops
+2 files of 42. The problem is that 61 tasks are in one cluster, not that its file list is
+truncated.*
 
 **(c) The third section is empty by construction here.** It requires `finding.vindicated = 1` and
 this repository has never marked one. So the pack's prior-evidence section carries no evidence.
+
+**(d) One of c1's 40 file rows names a file that cannot be opened.**
+`tooling/__pycache__/kit_findings.cpython-314.pyc` is untracked and gitignored
+(`.gitignore:18-19`), removed at `8704290` — *"Stop committing Python bytecode: one .pyc turned
+three CI jobs red"*. The `touches` edge survives because the index is rebuilt from **full git
+history** on every run and no path is ever checked against the current tree. So the stale-pack
+condition of AC4 is already occurring with no rename involved, and §9's Arm C has a found instance
+rather than only a synthesised one.
+
+### 2.1 The root cause: `kit-index.sh` deletes the plan, and `task-context` step 1 runs it
+
+Measured 2026-08-17, twice, on a clean tree:
+
+| Action | `plan_item` | `goal` | packs on disk |
+|---|---|---|---|
+| after `kit-plan.sh` | 77 | 1 | 11 |
+| after one plain `kit-index.sh` | **0** | **0** | 11 (orphaned) |
+| `kit-index.sh --if-stale`, nothing changed | 77 | 1 | 11 |
+| `touch` one task file, then `--if-stale` | **0** | **0** | 11 (orphaned) |
+
+`kit-index.sh` rebuilds into a fresh database from `tooling/schema.sql` (`rm -f "$NEW"`, line
+1195-1196). `goal` and `plan_item` are the only two tables written by a *different* tool and they
+are **not derivable from text**, so a rebuild silently drops them. The word "plan" does not appear
+anywhere in `kit-index.sh`; nothing warns, and the pack files it orphans stay on disk looking
+current.
+
+`skills/task-context` **step 1** is `kit-index.sh --if-stale`. **Step 4** reads `plan_item`. Any
+task-file edit, event or commit makes the index stale — that is, ordinary work — so the skill's
+first step deletes what its fourth step is looking for, in the same session.
+
+This contradicts `docs/HANDOFF.md` §4.6 in terms: *"The plan is state, not context … Each task
+session reads one row (~20 tokens) — and survives `/clear`, session end, or a crash."* It survives
+all three. It does not survive the next session's first step.
+
+**It is also the most likely explanation for `docs/MEASUREMENTS.md` §F** — *"13 cluster packs
+generated, read by nothing"*. Not that nobody followed the skill: that by the time anyone did,
+there was no plan row to find.
 
 ### What this does to the experiment
 
@@ -116,19 +170,30 @@ result into a broad one.
 
 ## 3. The decision the operator makes before anything is spent
 
+**§2.1 is a blocker, not a route option. Arm A cannot exist until it is fixed.** Arm A needs a
+`plan_item` row to survive from setup to step 4, and `task-context` step 1 deletes it in the same
+session. Run today, **Arm A silently degrades into Arm B** and the experiment reports a null
+result it was guaranteed to report. Fixing the plan's survival is a precondition of every route
+below except R3.
+
 Three routes. They differ in cost and in what the answer means.
 
 | | Route | Spend | What a result means |
 |---|---|---|---|
-| **R1** | **Fix the pack, then measure.** Land the `paths:` fallback, a degree refusal, and artifact filtering first; re-plan; then run §4. | Fix work (unestimated) + §10 budget | Tests the *idea*. The strongest answer, and the slowest. |
-| **R2** | **Measure as-is, knowingly.** Run §4 on today's packs and report the result as scoped to this implementation. | §10 budget only | Tests *this artifact*. Cheap, honest, and cannot license the general claim. |
-| **R3** | **Stop and delete now.** Treat §2 as sufficient: the mechanism is unreachable (no `plan_item`), its file list is empty where it matters, and its evidence section has never been non-empty. | ~zero | Saves the whole budget. Forfeits the measurement the task asked for. |
+| **R1** | **Fix the pack, then measure.** Land plan survival (§2.1) and the `paths:` fallback; decide the clustering separately; re-plan; then run §4. | Fix work (unestimated) + §10 budget | Tests the *idea*. The strongest answer, and the slowest. |
+| **R2** | **Measure as-is, knowingly.** Fix §2.1 only — the minimum that makes Arm A distinguishable from Arm B — then run §4 on today's packs and scope the claim to this implementation. | §2.1 fix + §10 budget | Tests *this artifact*. Cheap, honest, and cannot license the general claim. |
+| **R3** | **Stop and delete now.** Treat §2 as sufficient: the mechanism has been unreachable in ordinary use since it was built, its file list is empty where it matters, and its evidence section has never been non-empty. | ~zero | Saves the whole budget. Forfeits the measurement the task asked for. |
 
-**Recommendation: R1, restricted to cluster 1.** §2(a) is a one-source-to-two-source change the
-kit has already made once in `kit-index.sh` and can copy; without it, 58 of 77 tasks can never
-receive a pack with any file information, and the experiment has no population. R3 is defensible
-and is *not* recommended only because §2's faults are all in the pack's derivation rather than in
-its premise — deleting on this evidence discards the idea to punish the implementation.
+**Recommendation: R1, restricted to cluster 1.** §2.1 has to be fixed for any measurement to mean
+anything, and §2(a) is a one-source-to-two-source change the kit has already made once in
+`kit-index.sh`; without it, 58 of 77 tasks can never receive a pack carrying any file information
+and the experiment has no population.
+
+**§2.1 also strengthens the case for R3, and that should be said plainly.** A mechanism that has
+disabled itself on every ordinary session since it was written has no usage evidence behind it at
+all, and the honest reading is that nothing has ever depended on it. R3 remains not-recommended
+only because the faults found are all in the pack's *derivation* — deleting on this evidence
+punishes the implementation for a premise that has still never been tested.
 
 **If R2 is chosen, the report title is fixed in advance:** *"the cluster pack as generated on
 2026-08-17 does/does not pay"* — never *"cluster packs do/do not pay"*.
@@ -348,6 +413,7 @@ Beyond `TRIAL-PROTOCOL.md` §3, which applies unchanged:
 | The pack changed between the arms of a pair | `sha256` the pack before and after Arm A |
 | Two tasks in flight in one copy | spend attribution binds a transcript to the following transition and can bind to the wrong task. One task at a time, per `TRIAL-PROTOCOL.md` §5 |
 | The plan was regenerated mid-pair | `plan_item` row count and cluster id recorded per arm; must match |
+| **Arm A lost its plan mid-session and silently became Arm B** (§2.1) | `SELECT COUNT(*) FROM plan_item` in the copy **after** the run, not only before. Zero voids the pair — and §7 check 1 must independently show the pack was read |
 
 ---
 
