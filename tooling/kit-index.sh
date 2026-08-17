@@ -1343,6 +1343,33 @@ if [ -d "$PLANS_DIR" ]; then
     _pd=$(awk -F'\t' '$1=="#tasks_digest"{print $2; exit}' "$_pf" | tr -d '\r')
     [ -n "$_pg" ] || continue
     _pgq=$(printf '%s' "$_pg" | sed "s/'/''/g")
+
+    # IS THIS PLAN ACTUALLY GOING TO SURVIVE A CLONE? ADR 0004's whole claim is that it will,
+    # and that rests on the file being in git — which nothing checked. A `.gitignore` line
+    # covering `.project/` returns the plan to exactly the machine-local state this task exists
+    # to abolish, through configuration rather than code, and silently.
+    #
+    # ADR 0003 built a tracked-file check for ingest adapters and this deliberately does NOT
+    # copy its shape, because the reasoning does not transfer. An untracked adapter is refused
+    # outright: it is executable code that no review has seen, and refusing costs nothing. A
+    # plan file is untracked for a perfectly ordinary reason — it was just written and not yet
+    # committed — so refusing it would break the tool on its first use. Porting the refusal
+    # would be the half-ported control the review chain flagged elsewhere in this change.
+    #
+    # So the two states are separated and reported differently:
+    #   IGNORED  — cannot ever be committed without a config change. The plan is machine-local
+    #              and the guarantee is false. Loud.
+    #   UNTRACKED but not ignored — normal immediately after a replan. A reminder, not an alarm.
+    if git -C "$ROOT" check-ignore -q -- "$_pf" 2>/dev/null; then
+      sqlite3 "$DB" "INSERT OR REPLACE INTO meta VALUES('plan_ignored:$_pgq','1');" ||
+        kit_warn "could not record that the plan for '$_pg' is gitignored"
+      kit_warn "the plan for '$_pg' is covered by .gitignore, so it will NOT survive a clone"
+      kit_warn "  That is the machine-local state ADR 0004 exists to prevent. Un-ignore it."
+    else
+      sqlite3 "$DB" "DELETE FROM meta WHERE key='plan_ignored:$_pgq';" 2>/dev/null
+      git -C "$ROOT" ls-files --error-unmatch -- "$_pf" >/dev/null 2>&1 ||
+        kit_warn "the plan for '$_pg' is not committed yet; \`git add\` it or it stays local to this machine"
+    fi
     # No digest at all is an OLDER plan file, not a fresh one. Treated as stale and said so:
     # assuming it matches is the laundering this check exists to prevent.
     # BOTH WRITES ARE CHECKED, and this is not belt-and-braces. kit-plan.sh:316-320 already

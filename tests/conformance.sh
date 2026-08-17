@@ -3297,6 +3297,34 @@ git clone -q --no-hardlinks "$cl.src" "$cl" 2>/dev/null
   grep -q 'no cluster pack on disk' STATUS.generated.md && exit 1  # notice clears
   exit 0 )
 check $? "--packs restores packs from a cloned plan and leaves the plan byte-identical"
+
+# A gitignored plan is the quietest way to undo ADR 0004 entirely: everything works on the
+# machine that planned, and the published guarantee is false everywhere else. Nothing checked it
+# until a T3 review asked. Deliberately NOT the refusal ADR 0003 gives an untracked ingest
+# adapter — that is executable code no review has seen and refusing costs nothing, whereas a plan
+# file is untracked for an ordinary reason (just written, not yet committed) and refusing would
+# break the tool on first use. So the two states report differently, and BOTH are asserted here:
+# porting the adapter's refusal would have been the half-ported control this review chain
+# flagged twice elsewhere in this change.
+( cd "$cl.src" || exit 1
+  Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+  printf '.project/plans/\n' >> .gitignore
+  git rm -q --cached .project/plans/default.tsv >/dev/null 2>&1
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  [ "$(Q "SELECT value FROM meta WHERE key='plan_ignored:default';")" = 1 ] || exit 1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  # The goal must be NAMED, not rendered as `:default` — an off-by-one in the substr that peels
+  # the meta key prefix did exactly that, and a notice whose text is wrong is one people stop
+  # reading, which is the failure the notice exists to prevent.
+  grep -qF 'The plan for `default` is covered' STATUS.generated.md || exit 1
+  # ...and it must CLEAR, or it is a warning that can never turn off.
+  sed -i.bak '/^\.project\/plans\/$/d' .gitignore && rm -f .gitignore.bak
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  [ "$(Q "SELECT COUNT(*) FROM meta WHERE key LIKE 'plan_ignored:%';")" = 0 ] || exit 1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -q 'covered by' STATUS.generated.md && exit 1
+  exit 0 )
+check $? "a gitignored plan is reported by name and the notice clears when it is un-ignored"
 rm -rf "$cl" "$cl.src" "$WORK.plan.before" "$(dirname "$cl")/plan.before"
 fi
 

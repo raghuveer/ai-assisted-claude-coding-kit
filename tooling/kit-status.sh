@@ -712,6 +712,17 @@ esac
 # zero rows loaded looks identical to no plan written — which is the wrong cause and the wrong
 # remedy, and after a merge it is the EXPECTED state, because .gitattributes deliberately
 # declines merge=union so two plans conflict rather than interleave.
+# A gitignored plan is the quietest way to undo this whole mechanism: everything works on the
+# machine that planned, and the guarantee ADR 0004 publishes is false everywhere else.
+q "SELECT substr(key,14) FROM meta WHERE key LIKE 'plan_ignored:%';" | tr -d '\r' |
+while IFS= read -r _g; do
+  [ -n "$_g" ] || continue
+  printf '\n> **The plan for `%s` is covered by `.gitignore`.** It will not survive a clone, a\n' "$_g"
+  printf '> new machine, or a deleted index — which is the machine-local state ADR 0004 exists to\n'
+  printf '> abolish, arriving through configuration rather than code. Everything looks correct\n'
+  printf '> here and is absent for everyone else. Un-ignore `.project/plans/`.\n'
+done
+
 PLANREF=$(q "SELECT value FROM meta WHERE key='plan_refused';")
 case "${PLANREF:-0}" in ''|0) ;; *)
   printf '\n> **%s plan file(s) were parsed and REFUSED, so their ordering is not loaded:**\n' "$PLANREF"

@@ -36,6 +36,7 @@ wish list is worse than none.
 | Agent output (findings, verdicts, summaries) | **no** | Model text that reaches a log, a database, or a report |
 | Git trailer text | **no** | Arbitrary text from history, written before any gate existed |
 | Task files | **no** | Text files anyone with commit access may author |
+| The plan (`.project/plans/*.tsv`) | **no** | Same class as task files, and read at the start of every session: `kit-index.sh` §3c parses it and emits SQL from its contents (ADR 0004). Two of its columns are not merely data — `goal_id` becomes a **directory name** that `skills/task-context` step 4 tells an agent to read "early and verbatim", and the numerics reach `sqlite3`. Validated at ingest per the row below, because `kit-guard.sh` permits `Write` anywhere inside the root, so an agent can author one. |
 | Ingest adapter **process and output** | **no** | An executable named in the profile. The kit **executes** it — as a process, and again by feeding its stdout to the `sqlite3` CLI. It does not merely read what it prints. Constrained per ADR 0003: the path must be repo-relative and the file must be tracked by git, so an adapter an agent invented does not run. |
 | Externally supplied accelerator content | **no** | Enters as a hypothesis (`[seeded]`), never as authority |
 | The project profile | **partly** | Authored by the operator, but its values are interpolated into globs and queries |
@@ -54,6 +55,23 @@ handled with the posture given to a form field on a public web page, never more.
 > so in its own entry, because a claim's evidence and a claim's confidence should not be
 > separable. Two claims did not survive the sweep: reviewer read-only moved to §3, and the
 > JSON-writer claim is narrowed below with its remainder recorded in §4.
+
+**A plan file is validated before any of it becomes a row, and it is refused whole.**
+`kit-index.sh` §3c requires a `#goal` header that is a safe path segment (`[A-Za-z0-9._-]` only),
+requires **every row's first column to equal that header**, and requires `layer`, `rank`, `score`
+and `cluster` to be plain numbers before they are coerced. Any failure refuses the entire file —
+no partial plan — and records the reason in `plan_refused` / `plan_refused_text`, which
+`kit-status.sh` renders. `kit-plan.sh` refuses the same charset on `--goal` rather than rewriting
+it, so the value stored and the directory written are one value and not two.
+*Demonstrated by running the attacks, not by reading the code:* a committed plan whose header said
+`default` and whose row carried `goal_id = ../../docs` made step 4's own documented query resolve
+to `<root>/docs/c1.md` — outside the packs directory, into a file an agent is told to load "early
+and verbatim". A `score` of `1e999` emitted `+inf`, which `sqlite3` rejects, taking the whole
+index build down and leaving a `.failed` mark every later run re-trips. A non-numeric `layer`
+silently became `0` and collapsed the topology. All three are refused now; a valid plan still
+loads. **What this does not cover:** the file is trusted to be *well-formed*, never to be
+*correct* — a syntactically perfect plan that orders the wrong work is indistinguishable from a
+right one, and no check here can say otherwise.
 
 **The generic writer cannot mint a kind the indexer acts on.** `kit-index.sh` either **mutates a
 row** for an event kind or merely **records** it. The four it mutates for — `finding`,
