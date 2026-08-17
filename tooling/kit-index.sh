@@ -168,6 +168,10 @@ if [ "${1:-}" = "--if-stale" ] && [ -f "$DB" ] && [ ! -e "$FAILED_MARK" ]; then
   WATCH="$PROFILE"
   [ "$SRC_TASKS"  = files ]  && WATCH="$WATCH $ROOT/$TASKS_DIR"
   [ "$SRC_EVENTS" = ndjson ] && WATCH="$WATCH $ROOT/$STATE_DIR/events.ndjson"
+  # The plan is a source now (ADR 0004), so a replan must make the index stale like any other
+  # edit. Guarded on existence: `find` over a missing path is an error on every platform, and
+  # this list is evaluated on a repository that may never have planned anything.
+  [ -d "$ROOT/$STATE_DIR/plans" ] && WATCH="$WATCH $ROOT/$STATE_DIR/plans"
   if [ "$SRC_COMMITS" = git ]; then
     HEADF=$(cd "$ROOT" && git rev-parse --git-path HEAD 2>/dev/null)
     case "$HEADF" in /*|?:*) ;; *) HEADF="$ROOT/$HEADF" ;; esac
@@ -990,6 +994,57 @@ for _spec in $(kit_cfg_all "$PROFILE" ingest.extra); do
   run_adapter "$_spec" emit || { ADAPTER_FAILED=1; break; }
 done
 
+# ---- 3c. the plan: text is the source, this is the derivation ----------------
+# ADR 0004. `goal` and `plan_item` are written by kit-plan.sh and nothing here could rebuild
+# them, so this script used to DROP them on every run -- the build starts from a fresh schema.
+# skills/task-context step 1 is `kit-index.sh --if-stale` and its step 4 reads `plan_item`, so
+# the skill's first step deleted what its fourth step was looking for, on any session where a
+# task file had changed. Measured: 77 plan rows and 1 goal to zero, with the packs left on disk
+# looking current. docs/HANDOFF.md 4.6 promised the plan survives a crash; it did not survive
+# the next session.
+#
+# Read here, with the other text sources and before derivation, because that is what the plan
+# now is: an input. A malformed file is REFUSED and named rather than half-loaded -- a plan
+# missing rows would reorder work silently, which is worse than no plan.
+PLANS_DIR="$ROOT/$STATE_DIR/plans"
+if [ -d "$PLANS_DIR" ]; then
+  for _pf in "$PLANS_DIR"/*.tsv; do
+    [ -f "$_pf" ] || continue
+    awk -F'\t' -v file="${_pf#$ROOT/}" '
+      function q(s){ gsub(/\047/,"\047\047",s); return s }
+      $1=="#goal"        { goal=$2;     next }
+      $1=="#created"     { created=$2;  next }
+      $1=="#withheld"    { withheld=$2; next }
+      /^#/               { next }
+      /^[ \t]*$/         { next }
+      {
+        # Six fields exactly. A short row is a truncated write or a bad merge, and guessing
+        # which column is missing is how a plan quietly loses its layering.
+        if (NF != 6) { bad++; next }
+        rows++
+        g[rows]=$1; t[rows]=$2; l[rows]=$3+0; r[rows]=$4+0; s[rows]=$5+0; c[rows]=$6+0
+      }
+      END {
+        if (goal == "") {
+          printf "kit: %s has no #goal header and was NOT loaded\n", file > "/dev/stderr"
+          exit 0
+        }
+        if (bad) {
+          printf "kit: %s has %d malformed row(s); the whole plan was NOT loaded\n", file, bad > "/dev/stderr"
+          exit 0
+        }
+        printf "INSERT OR REPLACE INTO goal(id,title,created_at) VALUES(\047%s\047,\047%s\047,\047%s\047);\n", \
+               q(goal), q(goal), q(created)
+        printf "DELETE FROM plan_item WHERE goal_id=\047%s\047;\n", q(goal)
+        for (i=1; i<=rows; i++)
+          printf "INSERT OR REPLACE INTO plan_item VALUES(\047%s\047,\047%s\047,%d,%d,%s,%d);\n", \
+                 q(g[i]), q(t[i]), l[i], r[i], s[i], c[i]
+        if (withheld != "")
+          printf "INSERT OR REPLACE INTO meta VALUES(\047plan_withheld:%s\047,\047%s\047);\n", q(goal), q(withheld)
+      }' "$_pf"
+  done
+fi
+
 # ---- 4. derive current state; text sources always win over stale columns -----
 cat <<'DERIVE'
 -- A `Task-Id` in a trailer is a REFERENCE, not a task, and the difference is a file. Inventing
@@ -1217,6 +1272,39 @@ mv -f "$NEW" "$DB" ||
 # before `--commit` was validated is arbitrary text. That is the interpolation shape LESSONS §4
 # says to sweep for rather than fix one instance of, and it was introduced here while fixing
 # something else.
+# A plan survives a rebuild now (ADR 0004), so for the first time it can outlive the backlog
+# it was computed from: tasks close, split, or change tier underneath it. That possibility is
+# the COST of persisting it, and a carried-forward plan that could not say it was stale would
+# be a worse defect than the one this fixed -- a plan that visibly vanished, replaced by one
+# that is confidently wrong.
+#
+# Compared here rather than in the SQL stream because the digest is computed from the finished
+# index, and by the one function kit-plan.sh also calls. Two copies of that query would report
+# every plan permanently stale or permanently fresh, and both fail silently.
+STALE_PLANS=0
+if [ -d "$PLANS_DIR" ]; then
+  PLAN_DIGEST_NOW=$(kit_plan_digest "$DB")
+  for _pf in "$PLANS_DIR"/*.tsv; do
+    [ -f "$_pf" ] || continue
+    _pg=$(awk -F'\t' '$1=="#goal"{print $2; exit}' "$_pf" | tr -d '\r')
+    _pd=$(awk -F'\t' '$1=="#tasks_digest"{print $2; exit}' "$_pf" | tr -d '\r')
+    [ -n "$_pg" ] || continue
+    _pgq=$(printf '%s' "$_pg" | sed "s/'/''/g")
+    # No digest at all is an OLDER plan file, not a fresh one. Treated as stale and said so:
+    # assuming it matches is the laundering this check exists to prevent.
+    if [ -z "$_pd" ] || [ "$_pd" != "$PLAN_DIGEST_NOW" ]; then
+      STALE_PLANS=$((STALE_PLANS + 1))
+      sqlite3 "$DB" "INSERT OR REPLACE INTO meta VALUES('plan_stale:$_pgq','1');" 2>/dev/null
+    else
+      sqlite3 "$DB" "DELETE FROM meta WHERE key='plan_stale:$_pgq';" 2>/dev/null
+    fi
+  done
+fi
+if [ "$STALE_PLANS" -gt 0 ]; then
+  kit_warn "$STALE_PLANS plan(s) were computed from a different backlog — re-run kit-plan.sh"
+  kit_warn "  The ordering still loads; it may name tasks that have closed or changed tier."
+fi
+
 MISSING=0
 while IFS= read -r _c; do
   [ -n "$_c" ] || continue

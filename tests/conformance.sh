@@ -3156,6 +3156,122 @@ fi
 check $? "fixture is reproducible (HEAD == $EXPECT_HEAD)"
 fi
 
+if step "the plan survives a reindex, identically, and says so when it goes stale"; then
+# ADR 0004. `goal` and `plan_item` are written by kit-plan.sh and no source in kit-index.sh
+# could rebuild them, so the rebuild -- which starts from a fresh schema -- dropped them.
+# skills/task-context step 1 is `kit-index.sh --if-stale` and its step 4 reads `plan_item`, so
+# the skill's first step deleted what its fourth step needed. Measured on this repository:
+# 77 plan rows and 1 goal to zero, with 11 pack files left on disk looking current.
+#
+# IDENTITY, not presence. "Some rows came back" would pass with a plan whose layering had been
+# lost, and the failure this guards is precisely two implementations drifting: kit-plan.sh
+# writes the file and kit-index.sh reads it, and nothing else compares them.
+pl="$WORK.plan"; rm -rf "$pl"; mkdir -p "$pl/src"
+( cd "$pl" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  printf -- '---\nid: T-P1\ntitle: one\ntier: T2\n---\nb\n'                  > .project/tasks/T-P1.md
+  printf -- '---\nid: T-P2\ntitle: two\ntier: T1\nblocked_by: T-P1\n---\nb\n' > .project/tasks/T-P2.md
+  printf -- '---\nid: T-P3\ntitle: three\ntier: T3\n---\nb\n'                > .project/tasks/T-P3.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+  ROWS="SELECT goal_id,task_id,layer,rank,printf('%.3f',score),cluster FROM plan_item ORDER BY goal_id,task_id;"
+
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-plan.sh"  >/dev/null 2>&1
+  Q "$ROWS" > before.rows; Q "SELECT id,title,created_at FROM goal;" > before.goal
+  [ -s before.rows ] || exit 1                     # a plan of nothing proves nothing
+  [ -f .project/plans/default.tsv ] || exit 1      # the plan is a FILE, not only a table
+
+  # The exact reproduction: a task file changes, which is what makes the index stale, and the
+  # skill's step 1 then rebuilds. Before ADR 0004 this is where the plan died.
+  printf -- '---\nid: T-P3\ntitle: three\ntier: T3\n---\nedited\n' > .project/tasks/T-P3.md
+  bash "$KIT/tooling/kit-index.sh" --if-stale >/dev/null 2>&1
+  Q "$ROWS" > after.rows; Q "SELECT id,title,created_at FROM goal;" > after.goal
+  cmp -s before.rows after.rows || exit 1
+  # created_at included deliberately: it was strftime('now') in the emitted SQL, so a rebuild
+  # re-stamped the goal and no round-trip check could ever have passed.
+  cmp -s before.goal after.goal || exit 1
+
+  # A plan that survives its inputs can now outlive them, which the old behaviour could not do.
+  # That is the cost of persisting it, and it has to be visible or this trade is a bad one.
+  [ "$(Q "SELECT COUNT(*) FROM meta WHERE key='plan_stale:default';")" = 0 ] || exit 1
+  printf -- '---\nid: T-P4\ntitle: four\ntier: T0\n---\nb\n' > .project/tasks/T-P4.md
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  [ "$(Q "SELECT value FROM meta WHERE key='plan_stale:default';")" = 1 ] || exit 1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -q 'computed from a different backlog' STATUS.generated.md || exit 1
+  # and it clears, or it is a warning that can never turn off
+  bash "$KIT/tooling/kit-plan.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  [ "$(Q "SELECT COUNT(*) FROM meta WHERE key='plan_stale:default';")" = 0 ] || exit 1
+
+  # A pack with no plan behind it is the state every rebuild used to leave: files on disk,
+  # looking current, that task-context step 4 will never load.
+  rm -f .project/plans/default.tsv
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  [ "$(Q "SELECT COUNT(*) FROM plan_item;")" = 0 ] || exit 1
+  grep -q 'with no plan behind them' STATUS.generated.md || exit 1 )
+check $? "plan round-trips identically, reports staleness, and orphaned packs are named"
+rm -rf "$pl"
+fi
+
+if step "every table the schema declares is populated from text, or the index cannot hold it"; then
+# AC5 of T-20260817-kit-index-deletes-the-plan-so-task-conte, and the reason it is worded that
+# way: `goal` and `plan_item` were lost for two years' worth of rebuilds because nothing
+# enumerated what the indexer does and does not fill. A test naming those two tables would have
+# been written the day they were fixed and would not cover the SEVENTH table somebody adds next.
+#
+# So the expectation is DERIVED from the authority -- CREATE TABLE in schema.sql on one side,
+# the INSERT targets in kit-index.sh on the other -- and a new table is covered without an edit.
+#
+# WHAT THIS STEP DOES NOT COVER, measured rather than assumed. It reads SOURCE TEXT, so it sees
+# that an INSERT exists and not whether it runs. Proved by mutation: disabling the plan ingest
+# with a condition that can never be true left this step fully GREEN while the round-trip step
+# above went red. The two are not redundant and neither substitutes for the other -- this one
+# catches a table nobody ever wrote a source for, that one catches a source that stopped
+# working. Do not let a later cleanup merge them.
+S="$KIT/tooling/schema.sql"; I="$KIT/tooling/kit-index.sh"
+DECLARED=$(sed -n 's/^CREATE TABLE \([a-z_]*\).*/\1/p' "$S" | sort -u)
+[ -n "$DECLARED" ]
+check $? "schema.sql declares tables this step can enumerate"
+FILLED=$(grep -oE 'INSERT (OR (REPLACE|IGNORE) )?INTO [a-z_]+' "$I" |
+         awk '{print $NF}' | sort -u)
+MISSING=""; LEAKED=""
+for _t in $DECLARED; do
+  printf '%s\n' "$FILLED" | grep -qx "$_t" && continue
+  case "$_t" in
+    # Reserved schema for a feature that does not exist yet: nothing anywhere writes these and
+    # both hold zero rows, so "not populated by kit-index.sh" is correct rather than a defect.
+    #
+    # THE EXEMPTION IS CONDITIONAL AND THE CONDITION IS CHECKED BELOW. The moment any tool
+    # inserts into them directly they become state with no text behind it — which is precisely
+    # what `plan_item` was, and it survived unnoticed because no test enumerated the tables. A
+    # skip list that cannot expire would reproduce that failure on purpose.
+    accelerator|accel_candidate)
+      _w=$(grep -rlE "INSERT( OR (REPLACE|IGNORE))? INTO $_t([^a-z_]|\$)" "$KIT/tooling" 2>/dev/null |
+           grep -v 'kit-index\.sh' || true)
+      [ -z "$_w" ] || LEAKED="$LEAKED $_t(written by $(basename "$_w"))"
+      continue ;;
+  esac
+  MISSING="$MISSING $_t"
+done
+[ -z "$MISSING" ]
+check $? "kit-index.sh populates every table it does not delegate (unfilled:${MISSING:-none})"
+# The exemption's own premise, asserted rather than assumed. If this fires, the answer is not
+# to widen the list above: it is that a second table now needs a text source, exactly as the
+# plan did.
+[ -z "$LEAKED" ]
+check $? "the exempt tables are still written by nothing (${LEAKED:-still unwritten})"
+# The specific pair this was written for, asserted by name as well. The derived check above is
+# the general property; this is the regression, and a general check that quietly stopped
+# covering the original case is how the first version of this defect survived.
+printf '%s\n' "$FILLED" | grep -qx plan_item && printf '%s\n' "$FILLED" | grep -qx goal
+check $? "and specifically goal and plan_item, which the rebuild used to drop"
+fi
+
 if [ -n "$ONLY" ]; then
   # Deliberately not the same sentence as a full run. `35 passed, 0 failed` over a
   # filtered run would be a worse defect than the slowness the filter cures, so the

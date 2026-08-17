@@ -702,6 +702,35 @@ case "${REFUSED:-0}" in ''|0) ;; *)
   printf '> task with nothing to go on. Fix the glob in `.claude/project-profile.md`.\n' ;;
 esac
 
+# ---- the plan (ADR 0004) -----------------------------------------------------------------
+# Two conditions, and they are different failures said differently. A STALE plan loaded fine
+# and describes a backlog that has moved. An ORPHANED pack directory has no plan at all behind
+# it and is the shape the whole ADR is about: before the plan was persisted, every kit-index.sh
+# run left exactly this -- pack files on disk, looking current, that skills/task-context would
+# never load because its step 4 finds no row.
+for _g in $(q "SELECT substr(key,12) FROM meta WHERE key LIKE 'plan_stale:%';"); do
+  printf '\n> **The plan for `%s` was computed from a different backlog.** Tasks have been\n' "$_g"
+  printf '> added, closed, re-tiered or re-blocked since it was written, so its ordering may name\n'
+  printf '> work that no longer exists and omit work that does. It is still loaded and still\n'
+  printf '> readable — this is a notice, not a withdrawal. Re-run `kit-plan.sh` to refresh it.\n'
+done
+
+if [ -d "$ROOT/$STATE_DIR/packs" ]; then
+  ORPHANED=""
+  for _pd in "$ROOT/$STATE_DIR/packs"/*; do
+    [ -d "$_pd" ] || continue
+    _pg=${_pd##*/}
+    _n=$(q "SELECT COUNT(*) FROM plan_item WHERE goal_id='$(printf '%s' "$_pg" | sed "s/'/''/g")';")
+    case "${_n:-0}" in 0) ORPHANED="$ORPHANED $_pg" ;; esac
+  done
+  if [ -n "$ORPHANED" ]; then
+    printf '\n> **Cluster pack(s) on disk with no plan behind them:**%s\n' "$ORPHANED"
+    printf '> A pack is a cache of a plan. With no `plan_item` row, `skills/task-context` step 4\n'
+    printf '> finds nothing and never reads them — so these are resident cost returning nothing,\n'
+    printf '> not context anybody is being served. Re-run `kit-plan.sh`, or delete them.\n'
+  fi
+fi
+
 if [ "$REQUIRED" -gt 0 ] && [ $(( UNTAG * 100 / REQUIRED )) -gt 20 ]; then
   printf '\n> **Trailer discipline degraded.** %s of %s non-trivial commits carry no `Task-Id`' "$UNTAG" "$REQUIRED"
   [ "$EXEMPTN" -gt 0 ] && printf ' (%s trivial commit(s) excluded per `git.trivial_pattern`)' "$EXEMPTN"

@@ -169,9 +169,19 @@ Consequences:
 - `/clear` is cheap because the stable layer is byte-identical across sessions.
 - Session cost no longer grows with project age (O(open work), not O(history)).
 - **The plan is state, not context.** `/goal` computes an ordering once, writes it to
-  `plan_item`, ends. Each task session reads one row (~20 tokens). An n-task goal becomes
-  n constant-window sessions instead of one quadratic session — and survives `/clear`,
-  session end, or a crash.
+  `.project/plans/<goal>.tsv`, ends. `kit-index.sh` derives `plan_item` from that file; each
+  task session reads one row (~20 tokens). An n-task goal becomes n constant-window sessions
+  instead of one quadratic session — and survives `/clear`, session end, a crash, a deleted
+  index and a fresh clone.
+
+  > **This paragraph was false from the day it was written until 2026-08-17**, and it is worth
+  > keeping the correction visible. The plan lived only in `plan_item`, which no text source
+  > could rebuild, so every `kit-index.sh` run dropped it — and `skills/task-context` step 1 IS
+  > a `kit-index.sh` run while its step 4 reads `plan_item`. Measured: 77 plan rows to zero on
+  > one rebuild, with the cluster packs left on disk looking current. It survived `/clear` and a
+  > crash exactly as claimed; it did not survive the next session's first step, which is the
+  > case nobody thought to state. See ADR 0004 and
+  > `T-20260817-kit-index-deletes-the-plan-so-task-conte`.
 
 ### 4.7 Extension-layer budget
 

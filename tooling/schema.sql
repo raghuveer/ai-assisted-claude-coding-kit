@@ -209,13 +209,21 @@ CREATE TABLE goal (
   created_at TEXT
 );
 
+-- goal and plan_item are DERIVED, like every other table here -- from .project/plans/<goal>.tsv,
+-- which kit-plan.sh writes and kit-index.sh section 3c reads. They are the only two that come
+-- from a file no other section reads, and until 2026-08-17 they came from nowhere at all: the
+-- rebuild starts from this schema, so every kit-index.sh run dropped them. See ADR 0004.
 CREATE TABLE plan_item (
   goal_id  TEXT NOT NULL,
   task_id  TEXT NOT NULL,
   layer    INTEGER NOT NULL,     -- topological layer: 0 has no unmet dependency
   rank     INTEGER NOT NULL,     -- position within the layer, by score
   score    REAL,
-  cluster  INTEGER,              -- connected component over the dependency graph
+  -- Connected component over SUBJECT MATTER: a shared epic or a shared non-hub file. Dependency
+  -- was removed as a union signal (kit-plan.sh:131-142) because it says "after", not "about",
+  -- and unioning it fused every epic one chain passed through. This comment said "dependency
+  -- graph" for as long afterwards.
+  cluster  INTEGER,
   PRIMARY KEY (goal_id, task_id)
 );
 

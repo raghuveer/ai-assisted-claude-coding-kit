@@ -83,6 +83,12 @@ grep -qxF '.project/index.db*' "$GI" 2>/dev/null || printf '\n# derived, rebuild
 grep -qxF 'STATUS.generated.md' "$GI" 2>/dev/null || echo 'STATUS.generated.md' >> "$GI"
 # Cluster packs are a snapshot of the index for one plan. Committing them would put a
 # stale copy of derived state in the repo — the second-truth problem this design avoids.
+#
+# `.project/plans/` is deliberately NOT added here, and the distinction is the whole of ADR
+# 0004: a pack is a rebuildable CACHE of the plan, and the plan is the decision it caches.
+# Ignoring the plan is what made it machine-local, and machine-local state that no text
+# rebuilds is exactly what kit-index.sh dropped on every run. If you are adding an ignore line
+# for it, read that ADR first — the packs beside it are the ones that belong here.
 grep -qxF '.project/packs/' "$GI" 2>/dev/null || echo '.project/packs/' >> "$GI"
 # kit-entry.sh's four artefacts, for the same reason and one more: they are a snapshot of ONE
 # machine's working copy at one moment, and nothing detects them going stale against the tree.

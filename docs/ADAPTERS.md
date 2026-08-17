@@ -85,9 +85,11 @@ Write SQL to stdout. Nothing else — stderr is discarded, and any non-zero exit
 build.
 
 Insert into the tables you are the source for. `INSERT OR REPLACE` for rows you own,
-`INSERT OR IGNORE` for edges. Do not write to `plan_item` or `goal` — those belong to
-`kit-plan.sh` — and do not update anything section 4 derives (`task.state`, `task.owner`,
-`task.closed_at`, `finding.tier`), because it will be overwritten in the same transaction.
+`INSERT OR IGNORE` for edges. Do not write to `plan_item` or `goal` — those are derived from
+`.project/plans/<goal>.tsv`, which `kit-plan.sh` writes and section 3c reads, and anything you
+put there is replaced in the same transaction (ADR 0004). Do not update anything section 4
+derives either (`task.state`, `task.owner`, `task.closed_at`, `finding.tier`), for the same
+reason.
 
 A task-source adapter emits, per task:
 

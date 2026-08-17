@@ -187,6 +187,12 @@ is disposable by construction. And a decision recorded only in a model's context
 database, is not recorded at all — which is why decisions land as ADRs and trailers rather than
 as chat.
 
+**The plan is on the other side of that line, and it took a defect to notice.** An ordering is a
+decision, so `.project/plans/<goal>.tsv` is text and is committed; `plan_item` is the cache of it,
+and the packs are a cache of that. While the plan lived only in the database it was the one thing
+here that was neither derivable nor recorded — and every `kit-index.sh` run deleted it, silently,
+including the one `skills/task-context` runs at step 1. See ADR 0004.
+
 A third accelerator kind, not a new subsystem:
 
 ```

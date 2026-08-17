@@ -68,6 +68,28 @@ kit_version() {
 
 kit_warn() { printf 'kit: %s\n' "$*" >&2; }
 
+# kit_plan_digest <index.db> -> an opaque string for "the backlog this plan was computed from".
+#
+# ADR 0004 makes the plan survive a rebuild, which means it can now outlive its inputs — a
+# possibility the old behaviour did not have, because the plan never outlived anything.
+# `kit-plan.sh` stamps this into the plan file and `kit-index.sh` recomputes it on every
+# rebuild, so THE TWO MUST AGREE ON WHAT IT COVERS. One home, called from both: two copies
+# would report a plan permanently stale or permanently fresh, and both failures are silent.
+#
+# Deliberately NOT over `touches` edges, though clustering uses them. Those move on every
+# commit, so including them would mark the plan stale the moment anyone commits anything —
+# a warning that is always on is one people learn to skip, and this repository has already
+# paid for that once (`git.trivial_pattern`, docs/MEASUREMENTS.md §B.6).
+#
+# `cksum` rather than a hash: POSIX, present on all three platforms the kit runs on, and this
+# detects change rather than resisting forgery. `state` is a filter and not a field — a task
+# moving open -> progress does not reorder the plan, and stamping it would say otherwise.
+kit_plan_digest() {
+  sqlite3 "$1" "SELECT id||'|'||COALESCE(tier,'')||'|'||COALESCE(epic,'')||'|'||COALESCE(blocked_by,'')
+                  FROM task WHERE state NOT IN ('done','abandoned') ORDER BY id;" 2>/dev/null |
+    tr -d '\r' | cksum | awk '{print $1 "-" $2}'
+}
+
 # kit_via_vocab -> how a unit of work was executed. THE definition; every consumer reads it
 # from here, and tests/conformance.sh asserts that no second copy exists. The finding
 # vocabulary was restated in four places once and the agents emitted values the recorder threw

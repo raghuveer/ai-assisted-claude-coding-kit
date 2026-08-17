@@ -18,3 +18,10 @@ commit-msg  text eol=lf
 # reason as *.md above -- it is READ as data, and the indexer stores whole lines of it as
 # event.payload, so a CRLF checkout would carry the CR into the row.
 .project/events.ndjson merge=union text eol=lf
+
+# The plan (ADR 0004). Tab-separated and read as data by kit-index.sh, so a CR would ride into
+# the goal id and the digest. Deliberately NOT merge=union, unlike the log above: two people
+# planning the same goal have produced two orderings, and taking both sides would silently
+# interleave them into a third that neither computed. A conflict here is the correct outcome --
+# it is a disagreement about what to do next, and it belongs in front of a person.
+.project/plans/*.tsv text eol=lf
