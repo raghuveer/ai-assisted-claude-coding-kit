@@ -3251,6 +3251,55 @@ check $? "plan round-trips identically, reports staleness, and orphaned packs ar
 rm -rf "$pl"
 fi
 
+if step "a clone recovers its packs from the committed plan, without replanning"; then
+# ADR 0004 as amended, and the only CRITICAL the T3 review chain returned. The ADR justified
+# committing the plan and ignoring the packs on "a pack is a rebuildable cache of the plan",
+# and nothing rebuilt a pack from a plan file: the sole regeneration path recomputed the
+# ordering and rewrote the plan with a new digest, so recovering the cache destroyed the thing
+# cached. A fresh clone therefore had plan rows and no packs, and skills/task-context step 4
+# builds a path from the row and reads nothing — it has no miss branch.
+#
+# The property under test is NOT "packs appear". It is that they appear WITHOUT the plan
+# changing. A --packs that quietly replanned would pass a file-exists check and reintroduce the
+# defect, so the plan file is compared byte for byte across the call.
+cl="$WORK.clone"; rm -rf "$cl" "$cl.src"; mkdir -p "$cl.src"
+( cd "$cl.src" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  printf -- '---\nid: T-C1\ntitle: one\ntier: T2\nepic: e1\n---\nb\n' > .project/tasks/T-C1.md
+  printf -- '---\nid: T-C2\ntitle: two\ntier: T1\nepic: e1\n---\nb\n' > .project/tasks/T-C2.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-plan.sh"  >/dev/null 2>&1
+  [ -f .project/plans/default.tsv ] || exit 1
+  git add -A && git commit -q --no-verify -m "chore: plan" ) || exit 1
+git clone -q --no-hardlinks "$cl.src" "$cl" 2>/dev/null
+( cd "$cl" || exit 1
+  Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+  # The clone's starting state IS the defect: a committed plan, no packs.
+  [ -f .project/plans/default.tsv ] || exit 1
+  [ -d .project/packs ] && exit 1
+  cp .project/plans/default.tsv ../plan.before
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  [ "$(Q 'SELECT COUNT(*) FROM plan_item;')" -gt 0 ] || exit 1   # rows, from the committed file
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -q 'no cluster pack on disk' STATUS.generated.md || exit 1 # and the state is ANNOUNCED
+
+  bash "$KIT/tooling/kit-plan.sh" --packs >/dev/null 2>&1 || exit 1
+  # The pack step 4 would resolve to now exists...
+  g=$(Q "SELECT goal_id FROM plan_item ORDER BY layer,rank LIMIT 1;")
+  c=$(Q "SELECT cluster  FROM plan_item ORDER BY layer,rank LIMIT 1;")
+  [ -f ".project/packs/$g/c$c.md" ] || exit 1
+  # ...and the committed plan was NOT recomputed to get it. This is the whole assertion.
+  cmp -s ../plan.before .project/plans/default.tsv || exit 1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -q 'no cluster pack on disk' STATUS.generated.md && exit 1  # notice clears
+  exit 0 )
+check $? "--packs restores packs from a cloned plan and leaves the plan byte-identical"
+rm -rf "$cl" "$cl.src" "$WORK.plan.before" "$(dirname "$cl")/plan.before"
+fi
+
 if step "every table the schema declares is populated from text, or the index cannot hold it"; then
 # AC5 of T-20260817-kit-index-deletes-the-plan-so-task-conte, and the reason it is worded that
 # way: `goal` and `plan_item` were lost for two years' worth of rebuilds because nothing

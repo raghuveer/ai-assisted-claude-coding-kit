@@ -734,6 +734,25 @@ while IFS= read -r _g; do
   printf '> readable — this is a notice, not a withdrawal. Re-run `kit-plan.sh` to refresh it.\n'
 done
 
+# The INVERSE of the orphan check below, and the one a fresh clone actually hits: the plan is
+# committed and the packs are gitignored, so a clone arrives with rows and no pack — and
+# skills/task-context step 4 builds a path from the row and reads nothing. Silent before; the
+# skill has no miss branch, so the agent simply got less context than it was told it had.
+MISSINGPACKS=""
+q "SELECT DISTINCT goal_id FROM plan_item;" | tr -d '\r' |
+while IFS= read -r _g; do
+  [ -n "$_g" ] || continue
+  [ -d "$ROOT/$STATE_DIR/packs/$_g" ] || printf '%s\n' "$_g"
+done > "$OUT.missingpacks" 2>/dev/null
+if [ -s "$OUT.missingpacks" ]; then
+  printf '\n> **Plan row(s) with no cluster pack on disk:** %s\n' "$(tr '\n' ' ' < "$OUT.missingpacks")"
+  printf '> A fresh clone looks exactly like this — the plan is committed and the packs are not.\n'
+  printf '> `skills/task-context` step 4 will build a pack path from the plan row and find\n'
+  printf '> nothing there. Rebuild them from the plan you already have, which does NOT recompute\n'
+  printf '> the ordering:  `bash tooling/kit-plan.sh --packs`\n'
+fi
+rm -f "$OUT.missingpacks"
+
 if [ -d "$ROOT/$STATE_DIR/packs" ]; then
   ORPHANED=""
   for _pd in "$ROOT/$STATE_DIR/packs"/*; do

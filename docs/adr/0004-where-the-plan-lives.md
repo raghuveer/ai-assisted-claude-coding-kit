@@ -1,6 +1,13 @@
 # ADR 0004: Where the plan lives
 
-- **Date:** 2026-08-17   **Status:** **Accepted — Option C**   **Supersedes:** —   **Related:** [[0003-whether-an-ingest-adapter-is-trusted]]
+- **Date:** 2026-08-17   **Status:** **Accepted — Option D**   **Amended:** 2026-08-17   **Supersedes:** —   **Related:** [[0003-whether-an-ingest-adapter-is-trusted]]
+
+> **Amended the same day, after a T3 review chain returned REVISE / REVISE / REJECT on the
+> implementation of option C.** The amendments are in place rather than in a successor ADR,
+> matching the convention ADR 0001 set. Three things changed and each is marked below:
+> **option D is added and chosen** over the C that shipped; the **rejection of option A loses its
+> second argument**, which did not discriminate; and the **decision now states what the digest
+> does not cover**. The Context section was verified true by that review and is unchanged.
 
 Serves AC2 of `T-20260817-kit-index-deletes-the-plan-so-task-conte`, which requires this to be a
 recorded decision rather than a reflex, because three answers are live and they differ in what a
@@ -45,10 +52,16 @@ contemplated.
 
 Smallest diff, roughly fifteen lines, and no new file format. But it makes `index.db` the sole
 home of state that exists nowhere else, and `index.db` is **gitignored and machine-local**: a
-fresh clone, a new laptop or a `rm index.db` still loses the plan with nothing announcing it. It
-also breaks the invariant `kit-task.sh` states in its own header — *"Tasks are FILES; the index is
-derived from them. Nothing is ever written to the database directly."* A table that survives a
-rebuild because it was copied forward is precisely a second source of truth.
+fresh clone, a new laptop or a `rm index.db` still loses the plan with nothing announcing it.
+That is decisive on its own.
+
+> **Amended — the second argument is withdrawn.** This rejection also said A breaks the invariant
+> `kit-task.sh` states in its own header, *"nothing is ever written to the database directly"*.
+> **Option C as first implemented broke that invariant identically**: `kit-plan.sh` executed
+> generated SQL straight into the live index and then dumped the text file back out of the
+> database it had just written. An option cannot be rejected on a rule the chosen option also
+> breaks. A reviewer reading the code rather than the ADR caught it, and option D below is the
+> shape that makes the invariant literally true.
 
 **B — re-derive the plan during indexing.** Have `kit-index.sh` run the planner.
 
@@ -69,9 +82,54 @@ different machine, for the same reason task files do. It also puts the plan unde
 rest of the design already follows, so there is one answer to "where does truth live" instead of
 two.
 
+**D — one writer. `kit-plan.sh` writes only the text file, then calls `kit-index.sh` to derive
+the tables from it, then builds the packs from the derived rows.** *(Added by amendment.)*
+
+Not considered when this ADR was first written, and named by the review that read the shipped
+code. C's second Consequence below exists **because C creates the possibility of `kit-plan.sh`'s
+writer and `kit-index.sh`'s reader drifting apart**, and answers it with a conformance step that
+detects the drift. D deletes the possibility instead of testing for it — which is the standard
+this repository applies everywhere else, and the same reasoning ADR 0003 used when it chose the
+structurally checkable option. It also makes the `kit-task.sh` invariant literally true, which is
+the ground option A was rejected on.
+
+It costs one extra index run per plan. That is real and is the reason it is not obviously right;
+it is not enough to prefer a design whose correctness rests on a test.
+
 ## Decision
 
-**Option C.** The plan is text; the index is derived from it.
+**Option D, amending the option C originally recorded here.** The plan is text, the index is
+derived from it, and **only one thing writes each**.
+
+`kit-plan.sh` emits tab-separated rows, assembles `.project/plans/<goal>.tsv`, and then runs
+`kit-index.sh`. It no longer writes `goal`, `plan_item` or the `plan_withheld:` meta key at all —
+the withheld count travels as a header line and is derived with everything else. Packs are built
+last, from the derived rows, so they cache the FILE rather than an ordering that existed only
+inside one process.
+
+**`kit-plan.sh --packs` rebuilds the packs from the plan already on disk, without recomputing the
+ordering.** This is the half the original option C was missing, and the review's only critical:
+the packs are gitignored and the plan is committed, so a fresh clone arrives with plan rows and
+no packs — and the only way to get a pack back was to re-run the planner, which recomputes the
+ordering and discards the plan that was just cloned. *Recovering the cache destroyed the thing
+cached*, which made this ADR's own claim — a pack is a rebuildable cache of the plan — false as
+written. Verified after the change: a clone with 83 plan rows and zero packs gets ten packs from
+`--packs`, with the plan file byte-identical and its digest unmoved. `kit-status.sh` now reports
+plan rows with no packs on disk, so the state is discoverable rather than requiring the flag to be
+known in advance.
+
+**What the digest does NOT cover** *(added by amendment; two reviewers raised it independently)*.
+`kit_plan_digest` answers *"is this the same backlog the plan was computed from"*, **not** *"is
+this still the ordering that backlog produces"*. It covers `id|tier|epic|blocked_by` over open
+tasks. It excludes `touches` edges deliberately — they move on every commit, and a warning that
+is always on is one people learn to skip. It also excludes `escaped` events and the profile's
+`priority.w_*` and `cluster.hub_cap`, all of which feed the score or the clustering and can
+reorder a plan that still reports fresh. That is a real residual risk and it is stated here rather
+than left to be discovered: retuning `cluster.hub_cap` in response to
+`T-20260817-one-shared-file-merges-two-whole-epics-s` would silently renumber every cluster in a
+plan that reports itself current, and the cluster number is what step 4 resolves to a file.
+
+The rest of the mechanism is as originally decided:
 
 Concretely:
 
@@ -86,6 +144,11 @@ Concretely:
 - `.project/plans/` is **tracked in git**, not gitignored. Packs are a rebuildable cache of the
   plan and stay ignored; the plan is the decision they are cached from. `.project/events.ndjson`
   is tracked for the same reason.
+
+  > **Amended.** That sentence was the load-bearing justification for committing one artefact and
+  > ignoring the other, and **it was false when written** — nothing rebuilt a pack from a plan
+  > file. It is true now, and only because `--packs` exists. If that flag is ever removed, this
+  > bullet stops being an argument and the ignore decision has to be re-made.
 
 **The plan can now go stale, and that is the cost of this option.** Under the old behaviour a plan
 never outlived its inputs because it never outlived anything. Carried forward, it can describe

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# kit-plan.sh [--goal ID] [--next N] [--show]
+# kit-plan.sh [--goal ID] [--next N] [--show] [--packs]
 #
 # Groups tasks by dependency, orders them by completion priority, and persists the
 # result. Two rules make this correct rather than merely plausible:
@@ -22,10 +22,17 @@ STATE_DIR=$(kit_cfg "$PROFILE" paths.state ".project")
 DB="$ROOT/$STATE_DIR/index.db"
 [ -f "$DB" ] || { kit_warn "no index; run kit-index.sh first"; exit 1; }
 
-GOAL="default"; NEXT=5; SHOW=0
+GOAL="default"; NEXT=5; SHOW=0; PACKS_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --goal) GOAL=${2:-default}; shift; shift ;;
+    # Rebuild the packs from the plan file ALREADY on disk, without recomputing the ordering.
+    # This is the half option D was missing and a T3 review found: the packs are gitignored and
+    # the plan is committed, so a fresh clone arrives with plan rows and no packs — and the only
+    # way to get a pack back was to re-run the planner, which recomputes the ordering and throws
+    # away the very plan that was cloned. Recovering the cache destroyed the thing cached, which
+    # made "a pack is a rebuildable cache of the plan" false as written.
+    --packs) PACKS_ONLY=1; shift ;;
     --next) NEXT=${2:-5}; shift; shift ;;
     --show) SHOW=1; shift ;;
     -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
@@ -100,8 +107,9 @@ PLAN_CREATED=$(awk -F'\t' '$1=="#created"{print $2; exit}' "$PLAN_FILE" 2>/dev/n
 
 # Temp files via mktemp, honouring TMPDIR, cleaned by trap. A fixed /tmp/name.$$ is
 # predictable on a shared machine and leaks both files on any early exit.
-SQL=$(mktemp); ERR=$(mktemp); trap 'rm -f "$SQL" "$ERR"' EXIT
+ROWS=$(mktemp); ERR=$(mktemp); trap 'rm -f "$ROWS" "$ERR"' EXIT
 
+if [ "$PACKS_ONLY" = 0 ]; then
 # ---- inputs: open tasks, dependency edges, and the two risk signals -------------
 # ORDER BY on the task select is not cosmetic: cluster numbers are assigned in the order
 # tasks arrive, so without it the same backlog yields different cluster ids per run and
@@ -270,12 +278,22 @@ END {
 
   # ---- score, then rank strictly within layer ---------------------------------
   tierw["T3"]=3; tierw["T2"]=2; tierw["T1"]=1; tierw["T0"]=0
-  print "BEGIN;"
-  # created_at comes from the plan FILE, not from strftime: the index is derived from that
-  # file now (ADR 0004), so a timestamp minted here would differ on every rebuild of the
-  # same plan and no round-trip check could ever pass.
-  printf "INSERT OR IGNORE INTO goal(id,title,created_at) VALUES(\047%s\047,\047%s\047,\047%s\047);\n", q(goal), q(goal), q(created)
-  printf "DELETE FROM plan_item WHERE goal_id=\047%s\047;\n", q(goal)
+  # ---- OPTION D: this emits the PLAN, not SQL ---------------------------------
+  # ADR 0004 amended. The planner no longer writes `goal` or `plan_item` at all: it produces
+  # the text, and `kit-index.sh` derives the tables from that text like every other input.
+  # One writer, one reader, one direction.
+  #
+  # The first shape of option C had this awk emit INSERTs into the live database AND then dump
+  # the text file back out of the database it had just written. Two consequences, both found by
+  # a T3 review. The ADR rejected option A partly for breaking "nothing is ever written to the
+  # database directly" while doing exactly that itself — an argument that did not discriminate.
+  # And it created a writer here and a reader in kit-index.sh for one format, which the ADR then
+  # answered with a conformance step to detect them drifting apart. Deleting the second writer
+  # deletes the drift instead of testing for it, which is the standard this repository applies
+  # everywhere else.
+  #
+  # `created` still comes from the plan FILE rather than strftime, so re-running the planner on
+  # an unchanged backlog does not re-stamp the goal.
   for (i=1; i<=n; i++) {
     id=ids[i]; if (!placed[id]) continue
     s = wu*unblocks[id] + we*esc[id] + wt*(tier[id] in tierw ? tierw[tier[id]] : 0)
@@ -301,13 +319,14 @@ END {
       srt[p+1]=k }
     for (j=1;j<=c;j++) {
       id=srt[j]
-      printf "INSERT INTO plan_item VALUES(\047%s\047,\047%s\047,%d,%d,%.3f,%d);\n", \
-             q(goal), q(id), L, j, score[id], cluster[id]
+      # Tab-separated, in the column order kit-index.sh section 3c reads positionally. Every
+      # field is validated there before it becomes a row, so nothing here is trusted downstream
+      # merely because this script wrote it.
+      printf "%s\t%s\t%d\t%d\t%.3f\t%d\n", goal, id, L, j, score[id], cluster[id]
     }
     delete srt
   }
-  print "COMMIT;"
-}' > "$SQL" 2>"$ERR"
+}' > "$ROWS" 2>"$ERR"
 
 if grep -q '^CYCLE' "$ERR" 2>/dev/null; then
   kit_warn "dependency cycle — these tasks are withheld from the plan, not reordered:"
@@ -330,61 +349,66 @@ if grep -q '^UNRESOLVED' "$ERR" 2>/dev/null; then
   kit_warn "file the blocking task, or correct blocked_by; an unknown blocker is not a satisfied one."
 fi
 
-sqlite3 "$DB" < "$SQL" || { kit_warn "plan write failed"; exit 1; }
-
-# Persisted beside the plan, not only shouted at a terminal that may not exist. DELETE first and
-# write only when the condition holds: a stale count must not outlive its cause -- a warning that
-# survives what caused it is worse than no warning -- but a `0 0` row on every clean run is index
-# churn for nothing. Measured: writing it unconditionally moved the fixture index fingerprint,
-# which is the signal this repository uses to detect drift. A control that costs a false drift
-# signal on every run teaches people to ignore the signal.
-#
-# Both writes are CHECKED. Discarding their status would let the paragraph above be false in the
-# one case it is about: if the DELETE fails on a locked database after the plan write succeeded,
-# the previous run's count survives and is read back as though it described this plan -- a stale
-# warning presented as current, which is the failure this is meant to prevent, arriving through
-# the code meant to prevent it. Every other write in this script is checked; these were not.
+# The withheld count travels in the FILE, not in a direct `meta` write. It lived only in `meta`
+# once, so it vanished on the next rebuild along with the plan it described -- and a plan that
+# came back a fifth of its size then arrived with no explanation attached to it. Under option D
+# it is a header line, derived by the indexer with everything else, so there is no second writer
+# whose failure could leave a stale count presented as current.
 HELDN=$(grep '^WITHHELDCOUNT' "$ERR" 2>/dev/null | head -1 | awk '{print $2" "$3}')
-if ! sqlite3 "$DB" "DELETE FROM meta WHERE key='plan_withheld:$GOAL_SQL';"; then
-  kit_warn "could not clear the previous withheld count; the line below may describe an older plan"
-elif [ -n "$HELDN" ]; then
-  sqlite3 "$DB" "INSERT INTO meta VALUES('plan_withheld:$GOAL_SQL','$HELDN');" ||
-    kit_warn "could not record the withheld count; it is on stderr above and nowhere else"
-fi
 
-# ---- the plan, as text (ADR 0004) ----------------------------------------------------
-# Read back FROM the database rather than assembled from the awk's variables. The file then
-# records exactly what was inserted, so kit-index.sh's reader cannot disagree with what this
-# run planned -- and if the two ever do drift, the round-trip conformance step sees it as
-# unequal rows rather than as a plausible plan nobody can check.
+# ---- the plan, as text (ADR 0004, option D) ------------------------------------------
+# Assembled from the planner's own output, and NOT read back out of the database, because
+# nothing has been written to the database. This script's only output is this file; the tables
+# come from `kit-index.sh` below.
 #
-# The withheld count travels in the file for the same reason as the rows. It lived only in
-# `meta`, so it vanished on the next rebuild too, and a plan that came back a fifth of its
-# size then arrived with no explanation attached to it -- exactly the failure the comment
-# above says persisting it was meant to prevent.
-#
-# The file is COMMITTED, unlike the packs beside it. A pack is a rebuildable cache of the
-# plan; the plan is the decision it caches. `.gitattributes` pins it to LF because the
+# The file is COMMITTED, unlike the packs beside it. `.gitattributes` pins it to LF because the
 # indexer reads it as data.
 if ! mkdir -p "$PLANS"; then
-  kit_warn "could not create ${PLANS#$ROOT/} — the plan will NOT survive the next kit-index.sh"
+  kit_warn "could not create ${PLANS#$ROOT/} — the plan cannot be written"
   exit 1
 fi
+PLAN_DIGEST=$(kit_plan_digest "$DB") || {
+  kit_warn "could not compute the backlog digest; the plan would report stale against itself"
+  exit 1
+}
 {
   printf '# GENERATED by kit-plan.sh. The plan is TEXT; .project/index.db is derived from it.\n'
   printf '# Do not edit by hand -- re-run kit-plan.sh. Committed on purpose: docs/adr/0004-where-the-plan-lives.md\n'
   printf '#goal\t%s\n' "$GOAL"
   printf '#created\t%s\n' "$PLAN_CREATED"
-  printf '#tasks_digest\t%s\n' "$(kit_plan_digest "$DB")"
+  printf '#tasks_digest\t%s\n' "$PLAN_DIGEST"
   [ -n "$HELDN" ] && printf '#withheld\t%s\n' "$HELDN"
   printf '#columns\tgoal_id\ttask_id\tlayer\trank\tscore\tcluster\n'
-  sqlite3 -separator "$(printf '\t')" "$DB" \
-    "SELECT goal_id,task_id,layer,rank,printf('%.3f',score),cluster
-       FROM plan_item WHERE goal_id='$GOAL_SQL' ORDER BY layer,rank,task_id;" | tr -d '\r'
+  sort -t"$(printf '\t')" -k3,3n -k4,4n -k2,2 "$ROWS"
 } > "$PLAN_FILE" || {
-  kit_warn "could not write ${PLAN_FILE#$ROOT/} — the plan will NOT survive the next kit-index.sh"
+  kit_warn "could not write ${PLAN_FILE#$ROOT/}"
   exit 1
 }
+else
+  # --packs: the plan on disk IS the plan. Nothing is recomputed and the file is not rewritten,
+  # which is the whole point — re-running the planner would produce a different ordering and a
+  # different digest, discarding the plan this is meant to recover the packs for.
+  [ -f "$PLAN_FILE" ] || {
+    kit_warn "no plan at ${PLAN_FILE#$ROOT/} — nothing to rebuild packs from."
+    kit_warn "  Run kit-plan.sh without --packs to compute one."
+    exit 1
+  }
+  kit_warn "rebuilding packs from ${PLAN_FILE#$ROOT/} without replanning"
+fi
+
+# ---- derive the tables from the file just written (option D) -------------------------
+# THE ONLY PATH from a plan to `goal`/`plan_item`. The packs below read `plan_item`, so this
+# is also what makes them a cache of the FILE rather than of an in-memory ordering that only
+# ever existed inside this process.
+#
+# A full rebuild, not `--if-stale`: the answer must not depend on an mtime comparison that
+# could decide the index is fresh and leave `plan_item` unpopulated for the pack query below.
+# This is the "one extra index run per plan" the ADR names as option D's cost.
+if ! bash "$(dirname "$0")/kit-index.sh" >/dev/null; then
+  kit_warn "the plan was written to ${PLAN_FILE#$ROOT/} but the index could not be rebuilt from it."
+  kit_warn "  Nothing is lost — the plan is the file. Fix the cause above and run kit-index.sh."
+  exit 1
+fi
 
 # ---- frozen context packs, one per cluster ------------------------------------------
 # What every session in a cluster needs and none of them should re-derive: which tasks are
