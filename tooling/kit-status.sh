@@ -708,7 +708,26 @@ esac
 # it and is the shape the whole ADR is about: before the plan was persisted, every kit-index.sh
 # run left exactly this -- pack files on disk, looking current, that skills/task-context would
 # never load because its step 4 finds no row.
-for _g in $(q "SELECT substr(key,12) FROM meta WHERE key LIKE 'plan_stale:%';"); do
+# A REFUSED plan is reported first and by name. It used to be reported as an orphaned pack —
+# zero rows loaded looks identical to no plan written — which is the wrong cause and the wrong
+# remedy, and after a merge it is the EXPECTED state, because .gitattributes deliberately
+# declines merge=union so two plans conflict rather than interleave.
+PLANREF=$(q "SELECT value FROM meta WHERE key='plan_refused';")
+case "${PLANREF:-0}" in ''|0) ;; *)
+  printf '\n> **%s plan file(s) were parsed and REFUSED, so their ordering is not loaded:**\n' "$PLANREF"
+  printf '> `%s`\n' "$(q "SELECT value FROM meta WHERE key='plan_refused_text';")"
+  printf '> A refused plan is not an absent one. Conflict markers from a merge are the usual\n'
+  printf '> cause — the plan is deliberately not `merge=union`, so two orderings conflict\n'
+  printf '> rather than silently interleaving. Resolve the file, or re-run `kit-plan.sh`.\n' ;;
+esac
+
+# `while IFS= read -r`, not `for _g in $(...)`. A goal id reaches this loop from a committed
+# plan file, and an unquoted command substitution word-splits and globs it: a goal named `*`
+# expanded local filenames into this report. kit-index.sh names that exact shape as the one
+# LESSONS §4 says to sweep for, and SECURITY.md §5 forbids it.
+q "SELECT substr(key,12) FROM meta WHERE key LIKE 'plan_stale:%';" | tr -d '\r' |
+while IFS= read -r _g; do
+  [ -n "$_g" ] || continue
   printf '\n> **The plan for `%s` was computed from a different backlog.** Tasks have been\n' "$_g"
   printf '> added, closed, re-tiered or re-blocked since it was written, so its ordering may name\n'
   printf '> work that no longer exists and omit work that does. It is still loaded and still\n'
@@ -723,7 +742,10 @@ if [ -d "$ROOT/$STATE_DIR/packs" ]; then
     _n=$(q "SELECT COUNT(*) FROM plan_item WHERE goal_id='$(printf '%s' "$_pg" | sed "s/'/''/g")';")
     case "${_n:-0}" in 0) ORPHANED="$ORPHANED $_pg" ;; esac
   done
-  if [ -n "$ORPHANED" ]; then
+  # Suppressed when a plan was refused: those packs have a plan, it just did not load, and the
+  # notice above already names the real cause. Reporting "re-run kit-plan.sh, or delete them"
+  # over a conflicted file sends the reader to the wrong remedy.
+  if [ -n "$ORPHANED" ] && [ "${PLANREF:-0}" = 0 ]; then
     printf '\n> **Cluster pack(s) on disk with no plan behind them:**%s\n' "$ORPHANED"
     printf '> A pack is a cache of a plan. With no `plan_item` row, `skills/task-context` step 4\n'
     printf '> finds nothing and never reads them — so these are resident cost returning nothing,\n'

@@ -62,7 +62,33 @@ GOAL_SQL=$(printf '%s' "$GOAL" | sed "s/'/''/g")
 # `strftime('now')` inside that SQL, which re-stamped the goal on every rebuild and would have
 # made "delete the index, rebuild, compare" false for a reason having nothing to do with the
 # plan.
-GOAL_SLUG=$(printf '%s' "$GOAL" | tr -c 'A-Za-z0-9._-' '-')
+# A GOAL ID IS A PATH SEGMENT AND AN AGENT LOADS WHAT IT POINTS AT, so it is constrained here
+# rather than sanitised later. `skills/task-context` step 4 builds
+# `.project/packs/<goal_id>/c<cluster>.md` from the value stored in `plan_item` and places the
+# result "early and verbatim" in the model's context. A T3 security review demonstrated the
+# consequence with a committed plan file carrying `goal_id = ../../docs`: the path resolved to
+# `<root>/docs/c1.md` and an agent would have inlined whatever that file said, wearing the
+# authority of frozen kit-generated context.
+#
+# The previous shape SLUGGED the value for the filename and stored it RAW in the table, which
+# made those two things different keys for one goal. That alone produced three defects, all
+# found independently: the orphaned-pack check compared a slug against a raw id and could never
+# match; `"Q3 launch"` and `"Q3-launch"` shared one plan file and silently overwrote each other;
+# and the skill's own path was built from the raw id and pointed at a directory that does not
+# exist. Refusing the input makes slug and id THE SAME VALUE, so none of those states is
+# reachable rather than each being patched.
+#
+# Refused, not rewritten. A silently rewritten goal id is a second name for the operator's goal,
+# and this file already carries what that costs.
+case "$GOAL" in
+  ''|*[!A-Za-z0-9._-]*)
+    kit_warn "--goal must contain only letters, digits, dot, underscore or hyphen: '$GOAL'"
+    kit_warn "  It becomes a directory name and a path an agent is told to read, so it is"
+    kit_warn "  refused rather than rewritten into a second name for the same goal."
+    exit 2 ;;
+esac
+# Equal to $GOAL by construction now, and kept as a name so the two uses stay legible.
+GOAL_SLUG=$GOAL
 PLANS="$ROOT/$STATE_DIR/plans"
 PLAN_FILE="$PLANS/$GOAL_SLUG.tsv"
 

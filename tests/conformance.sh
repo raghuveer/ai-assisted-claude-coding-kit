@@ -3116,12 +3116,22 @@ check $? "README excluded as a hub"
 fi
 
 if step "delete and rebuild is lossless" fixture; then
-sqlite3 .project/index.db ".dump" | grep -v "INSERT INTO goal" | tr -d '\r' | LC_ALL=C sort > b.dump
+# THIS STEP COULD NOT HAVE CAUGHT THE DEFECT IT LOOKS LIKE IT COVERS, and that is worth saying
+# where the next reader will see it. It rebuilds and then RE-PLANS, so plan_item was always
+# repopulated by kit-plan.sh on line 3 regardless of whether kit-index.sh could restore it --
+# a rebuild that dropped the plan looked exactly like one that kept it. "Lossless" was true of
+# this sequence and false of the one task-context actually runs, which is index WITHOUT a
+# replan. That case is covered by its own step at the end of this file, deliberately separate.
+sqlite3 .project/index.db ".dump" | tr -d '\r' | LC_ALL=C sort > b.dump
 rm -f .project/index.db
 bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
 bash "$KIT/tooling/kit-plan.sh" --next 5 >/dev/null 2>&1
-sqlite3 .project/index.db ".dump" | grep -v "INSERT INTO goal" | tr -d '\r' | LC_ALL=C sort > a.dump
-cmp -s b.dump a.dump; check $? "rebuild is byte-identical"
+# `INSERT INTO goal` used to be excluded from both dumps: created_at was strftime('now') in the
+# emitted SQL, so it moved on every rebuild and could never match. It comes from the plan file
+# now (ADR 0004), which is what makes the goal row comparable at all -- so the exclusion is
+# gone and this step covers one more table than it used to.
+sqlite3 .project/index.db ".dump" | tr -d '\r' | LC_ALL=C sort > a.dump
+cmp -s b.dump a.dump; check $? "rebuild is byte-identical, goal row included"
 fi
 
 if step "CI gate" fixture; then

@@ -82,12 +82,28 @@ kit_warn() { printf 'kit: %s\n' "$*" >&2; }
 # paid for that once (`git.trivial_pattern`, docs/MEASUREMENTS.md §B.6).
 #
 # `cksum` rather than a hash: POSIX, present on all three platforms the kit runs on, and this
-# detects change rather than resisting forgery. `state` is a filter and not a field — a task
-# moving open -> progress does not reorder the plan, and stamping it would say otherwise.
+# detects change rather than resisting forgery — the digest is recomputed from the index and
+# only COPIED into the plan file, so no hash would resist an editor who writes the current
+# value. `state` is a filter and not a field: a task moving open -> progress does not reorder
+# the plan, and stamping it would say otherwise.
+#
+# WHAT IT DOES NOT COVER, said here rather than discovered later. This answers "is this the
+# same BACKLOG the plan was computed from", NOT "is this still the ordering that backlog
+# produces". The score is `w_unblocks*unblocks + w_escapes*escapes + w_tier*tier` and clustering
+# unions on shared non-hub files, so a new `escaped` event, a new `touches` edge, or an edit to
+# `priority.w_*` / `cluster.hub_cap` in the profile all reorder the plan while this value is
+# unchanged. Two T3 reviewers raised the gap independently. `touches` is excluded deliberately —
+# it moves on every commit, and a warning that is always on is one people learn to skip — but
+# that argument does not extend to the profile weights, and callers must not read "fresh" as
+# "the ordering is still current".
+#
+# Returns EMPTY when the query fails, and callers treat empty as stale. It used to swallow the
+# failure and pipe an empty stream into `cksum`, which yields the same value an empty backlog
+# does — so two uncomputable digests compared equal and cleared the staleness warning.
 kit_plan_digest() {
-  sqlite3 "$1" "SELECT id||'|'||COALESCE(tier,'')||'|'||COALESCE(epic,'')||'|'||COALESCE(blocked_by,'')
-                  FROM task WHERE state NOT IN ('done','abandoned') ORDER BY id;" 2>/dev/null |
-    tr -d '\r' | cksum | awk '{print $1 "-" $2}'
+  _kpd=$(sqlite3 "$1" "SELECT id||'|'||COALESCE(tier,'')||'|'||COALESCE(epic,'')||'|'||COALESCE(blocked_by,'')
+                         FROM task WHERE state NOT IN ('done','abandoned') ORDER BY id;") || return 1
+  printf '%s\n' "$_kpd" | tr -d '\r' | cksum | awk '{print $1 "-" $2}'
 }
 
 # kit_via_vocab -> how a unit of work was executed. THE definition; every consumer reads it

@@ -193,7 +193,8 @@ if [ "${1:-}" = "--if-stale" ] && [ -f "$DB" ] && [ ! -e "$FAILED_MARK" ]; then
   fi
 fi
 SQL=$(mktemp); KIT_REFUSED=$(mktemp); export KIT_REFUSED
-trap 'rm -f "$SQL" "$KIT_REFUSED" "$KIT_SEEN"' EXIT
+KIT_PLAN_REFUSED=$(mktemp); export KIT_PLAN_REFUSED
+trap 'rm -f "$SQL" "$KIT_REFUSED" "$KIT_PLAN_REFUSED" "$KIT_SEEN"' EXIT
 mkdir -p "$ROOT/$STATE_DIR"
 ADAPTER_FAILED=0
 INGEST_FAILED=0; TASKS_EXPECTED=0; TASKS_EMPTY=""; KIT_SEEN=""; NEW=""
@@ -1012,25 +1013,61 @@ if [ -d "$PLANS_DIR" ]; then
     [ -f "$_pf" ] || continue
     awk -F'\t' -v file="${_pf#$ROOT/}" '
       function q(s){ gsub(/\047/,"\047\047",s); return s }
+      function refuse(why) { reason = why; bad = 1 }
+      # A plan file is UNTRUSTED INPUT — SECURITY.md §1 classes anything anyone with commit
+      # access may author that way, and this one is parsed into SQL at the start of every
+      # session by task-context step 1. Arity alone was the whole of the old validation, and a
+      # T3 security review showed what the other five columns then permit. Each check below
+      # exists for a demonstrated failure, not for tidiness:
+      #
+      #   goal charset — `goal_id` becomes `.project/packs/<goal_id>/…`, which the skill tells
+      #     an agent to load verbatim. Measured: a row carrying `../../docs` resolves outside
+      #     the packs directory entirely.
+      #   goal matches header — the DELETE is keyed on the header and the INSERT was keyed on
+      #     column 1, so a file could plant rows for a goal no DELETE covers and no staleness
+      #     check keys on: an ordering no planner ever computed, fresh forever.
+      #   numerics — `+0` coerces rather than validates. Measured both directions: `abc` in
+      #     `layer` silently became 0 and collapsed the topology that is kit-plan.sh rule 1,
+      #     and a score of `1e999` emitted `+inf`, which sqlite3 refuses — taking the entire
+      #     index build down and leaving a .failed mark that every later run re-trips.
+      function badnum(v) { return (v !~ /^-?[0-9]+(\.[0-9]+)?$/) }
+      # Same per-line strip, and for the same reason, as the task-file reader above. This
+      # repository pins the plan to LF in .gitattributes, but kit-init.sh writes an ADOPTED
+      # repo its own .gitattributes and the pin has to travel there too -- and a checkout that
+      # predates it would carry a CR into the goal id and the digest, silently marking every
+      # plan stale against itself. Cheaper to be robust here than to rely on every checkout.
+      { sub(/\r$/, "") }
       $1=="#goal"        { goal=$2;     next }
       $1=="#created"     { created=$2;  next }
       $1=="#withheld"    { withheld=$2; next }
       /^#/               { next }
       /^[ \t]*$/         { next }
       {
+        if (bad) next
         # Six fields exactly. A short row is a truncated write or a bad merge, and guessing
         # which column is missing is how a plan quietly loses its layering.
-        if (NF != 6) { bad++; next }
+        if (NF != 6)                  { refuse("a row does not have exactly 6 fields"); next }
+        if ($1 != goal)               { refuse("a row names goal \047" $1 "\047, not the \043goal header"); next }
+        if (badnum($3) || badnum($4)) { refuse("layer/rank are not plain numbers"); next }
+        if (badnum($5))               { refuse("score is not a plain number"); next }
+        if (badnum($6))               { refuse("cluster is not a plain number"); next }
         rows++
-        g[rows]=$1; t[rows]=$2; l[rows]=$3+0; r[rows]=$4+0; s[rows]=$5+0; c[rows]=$6+0
+        g[rows]=$1; t[rows]=$2; l[rows]=$3+0; r[rows]=$4+0; s[rows]=$5; c[rows]=$6+0
       }
       END {
-        if (goal == "") {
-          printf "kit: %s has no #goal header and was NOT loaded\n", file > "/dev/stderr"
-          exit 0
-        }
+        # Refusals are RECORDED, not only printed. The identical argument is made at line 229
+        # about tier.rule and was not carried here: kit-status.sh runs the indexer with stderr
+        # discarded, so a refusal that exists only on a terminal nobody was watching is not a
+        # refusal anyone hears — and the artifact then reported the refused plan as an ORPHANED
+        # PACK, which is the wrong cause and the wrong remedy. Conflicted plan files are a
+        # DESIGNED outcome here, because .gitattributes deliberately declines merge=union, so
+        # this is the expected steady state after a merge rather than an edge case.
+        if (goal == "")            refuse("no \043goal header")
+        else if (goal ~ /[^A-Za-z0-9._-]/)
+          refuse("\043goal is not a safe path segment: \047" goal "\047")
         if (bad) {
-          printf "kit: %s has %d malformed row(s); the whole plan was NOT loaded\n", file, bad > "/dev/stderr"
+          printf "%s\t%s\n", file, reason > ENVIRON["KIT_PLAN_REFUSED"]
+          printf "kit: %s was NOT loaded — %s\n", file, reason > "/dev/stderr"
           exit 0
         }
         printf "INSERT OR REPLACE INTO goal(id,title,created_at) VALUES(\047%s\047,\047%s\047,\047%s\047);\n", \
@@ -1041,8 +1078,24 @@ if [ -d "$PLANS_DIR" ]; then
                  q(g[i]), q(t[i]), l[i], r[i], s[i], c[i]
         if (withheld != "")
           printf "INSERT OR REPLACE INTO meta VALUES(\047plan_withheld:%s\047,\047%s\047);\n", q(goal), q(withheld)
-      }' "$_pf"
+      }' "$_pf" || {
+        # awk's status was discarded here, and the task pass twenty lines up carries an entire
+        # KIT_SEEN counter precisely because that knowledge is expensive: an unreadable file
+        # (permissions, a Windows lock during `git checkout`) would have produced an empty plan
+        # and a SUCCESSFUL build — the measured 77-rows-to-zero symptom this change exists to
+        # abolish, restored through a different door and reported by nothing.
+        printf '%s\tthe plan reader did not complete\n' "${_pf#$ROOT/}" >> "$KIT_PLAN_REFUSED"
+        kit_warn "could not read ${_pf#$ROOT/}; the plan was NOT loaded"
+        INGEST_FAILED=1
+      }
   done
+fi
+# Same treatment, and the same reason, as tier_rules_refused above.
+PLAN_REFUSED_N=0; [ -s "$KIT_PLAN_REFUSED" ] && PLAN_REFUSED_N=$(grep -c . "$KIT_PLAN_REFUSED")
+if [ "$PLAN_REFUSED_N" -gt 0 ]; then
+  PLAN_REFUSED_T=$(tr '\n' ';' < "$KIT_PLAN_REFUSED" | sed "s/;$//; s/'/''/g")
+  printf "INSERT OR REPLACE INTO meta VALUES('plan_refused','%s');\n" "$PLAN_REFUSED_N"
+  printf "INSERT OR REPLACE INTO meta VALUES('plan_refused_text','%s');\n" "$PLAN_REFUSED_T"
 fi
 
 # ---- 4. derive current state; text sources always win over stale columns -----
@@ -1292,11 +1345,25 @@ if [ -d "$PLANS_DIR" ]; then
     _pgq=$(printf '%s' "$_pg" | sed "s/'/''/g")
     # No digest at all is an OLDER plan file, not a fresh one. Treated as stale and said so:
     # assuming it matches is the laundering this check exists to prevent.
-    if [ -z "$_pd" ] || [ "$_pd" != "$PLAN_DIGEST_NOW" ]; then
+    # BOTH WRITES ARE CHECKED, and this is not belt-and-braces. kit-plan.sh:316-320 already
+    # argues the identical case for the withheld count — discarding the status "would let the
+    # paragraph above be false in the one case it is about" — and that reasoning was ported here
+    # as a shape without its substance. ADR 0004 rests on a carried-forward plan being able to
+    # say it is stale; if this INSERT fails on a locked database (a live possibility: it runs
+    # AFTER the atomic swap, against a database kit-status.sh or a second indexer may hold), the
+    # plan loads with no marker and is served as current. That is the branch where it cannot say.
+    #
+    # An uncomputable digest is treated as STALE, never as fresh. `kit_plan_digest` returns
+    # empty when its query fails; before, a failed query cksummed an empty stream to the same
+    # value an empty backlog produces, so two uncomputable digests compared EQUAL and took the
+    # branch that DELETES the warning.
+    if [ -z "$PLAN_DIGEST_NOW" ] || [ -z "$_pd" ] || [ "$_pd" != "$PLAN_DIGEST_NOW" ]; then
       STALE_PLANS=$((STALE_PLANS + 1))
-      sqlite3 "$DB" "INSERT OR REPLACE INTO meta VALUES('plan_stale:$_pgq','1');" 2>/dev/null
+      sqlite3 "$DB" "INSERT OR REPLACE INTO meta VALUES('plan_stale:$_pgq','1');" ||
+        kit_warn "could not record that the plan for '$_pg' is stale; it will be served as current"
     else
-      sqlite3 "$DB" "DELETE FROM meta WHERE key='plan_stale:$_pgq';" 2>/dev/null
+      sqlite3 "$DB" "DELETE FROM meta WHERE key='plan_stale:$_pgq';" ||
+        kit_warn "could not clear the stale mark for '$_pg'; it may be reported stale when it is not"
     fi
   done
 fi

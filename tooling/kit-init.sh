@@ -112,6 +112,24 @@ grep -q 'events.ndjson' "$GA" 2>/dev/null || \
   printf '\n# append-only shared log: take both sides rather than conflicting\n.project/events.ndjson merge=union\n' >> "$GA"
 echo "updated .gitattributes (events.ndjson merge=union)"
 
+# The plan (ADR 0004) is committed and READ AS DATA by kit-index.sh, so a CRLF checkout would
+# carry a CR into the goal id and the task digest -- which would mark every plan stale against
+# itself, quietly. Deliberately NOT merge=union like the log above: two people planning the
+# same goal produced two orderings, and taking both sides interleaves them into a third that
+# neither computed. A conflict here is a disagreement about what to do next and belongs in
+# front of a person.
+# Exact line, not a substring. `grep -q 'plans/'` matched any unrelated attribute an adopted
+# repo already had (`plans/*.pdf binary` is enough) and silently suppressed the pin — while the
+# success line below printed anyway, telling the operator a protection was in place when it was
+# not. The failure then surfaces as every plan reading stale against itself.
+if grep -qxF '.project/plans/*.tsv text eol=lf' "$GA" 2>/dev/null; then
+  echo ".gitattributes already pins the plan to LF"
+else
+  printf '\n# the plan: read as data, so pin the line endings. NOT merge=union -- see ADR 0004\n.project/plans/*.tsv text eol=lf\n' >> "$GA" &&
+    echo "updated .gitattributes (plans pinned to LF)" ||
+    kit_warn "could not pin .project/plans/*.tsv to LF in .gitattributes"
+fi
+
 echo
 if [ "$ADOPTED" = 1 ]; then
   # Joining an existing project. Git does not share hooks, so this step is what a new
