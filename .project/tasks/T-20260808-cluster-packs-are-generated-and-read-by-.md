@@ -5,6 +5,7 @@ epic: measurement
 tier: T2
 lang: bash
 paths: tooling/kit-plan.sh, skills/task-context/SKILL.md
+blocked_by: T-20260817-kit-index-deletes-the-plan-so-task-conte
 state: open
 ---
 
@@ -77,3 +78,29 @@ behaviours — skills load on demand, agents isolate context, rules are always l
 selectively, hooks run outside model context. Anything always-loaded that does not earn its
 place should move. That audit belongs here because it is the same question: what is context
 costing, and what is it buying.
+
+---
+
+## 2026-08-17: design pre-registered, and the experiment is blocked
+
+`docs/EXPERIMENTS/2026-08-17-cluster-pack-roi.md` holds the arms, the unit, the decision rule and
+the deletion list, all written before any data exists. **Nothing has been spent.** It awaits
+operator sign-off on §3 (route), the AC2 amendment, the thresholds and a budget cap.
+
+Pre-flight found five defects, now filed:
+`T-20260817-kit-index-deletes-the-plan-so-task-conte` ·
+`T-20260817-a-cluster-pack-file-list-ignores-declare` ·
+`T-20260817-one-shared-file-merges-two-whole-epics-s` ·
+`T-20260817-a-touches-edge-is-never-checked-against-` ·
+`T-20260817-task-context-reads-the-task-spec-at-step`.
+
+**`blocked_by` added for the first of them, and this is the one that matters:** `kit-index.sh`
+deletes `plan_item`, and `skills/task-context` step 1 runs `kit-index.sh --if-stale` while step 4
+reads `plan_item`. So Arm A loses its plan mid-session and silently becomes Arm B — the experiment
+would report a null result it was guaranteed to report. It also means the mechanism has been
+disabling itself on every ordinary session since it was built, which is the likely cause of
+`docs/MEASUREMENTS.md` §F's "13 cluster packs generated, read by nothing".
+
+**AC2 as written is amended in the design and needs sign-off**: two tasks in one cluster confounds
+the arm with the task, so the same task runs in both arms from the same commit in separate
+isolated copies, with n = pairs.
