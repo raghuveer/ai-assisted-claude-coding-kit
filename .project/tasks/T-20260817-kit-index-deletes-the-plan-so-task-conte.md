@@ -79,3 +79,83 @@ queries `plan_item` *after* each run for exactly this reason.
 `plan_item.cluster` is also commented in `tooling/schema.sql` as *"connected component over the
 dependency graph"*, which `kit-plan.sh:131-142` deliberately no longer does — a small correction
 to make while in this file.
+
+---
+
+## CLOSE-RECOMMENDATION — 2026-08-17, `006d81f`. The state stays `progress`.
+
+**I am recommending, not deciding.** The task is not marked done and no finding is marked fixed;
+both are the operator's, for the reason `.claude/CLAUDE.md` gives — a session certifying its own
+output is the one signature that carries no information. What follows is the evidence to decide
+on, including what is *not* done.
+
+**Evidence base:** full conformance **81 passed, 0 failed over 53 steps** on a run with the tree
+untouched throughout; CI green on all four jobs at `006d81f` (`trailers`, `structure`,
+`conformance (ubuntu-latest)`, `conformance (macos-latest)`).
+
+### The six acceptance criteria
+
+| AC | State | Evidence |
+|---|---|---|
+| 1 — a plan survives a rebuild, asserted by a step not by hand | **met** | `plan round-trips identically…` asserts the rows are IDENTICAL, not merely present, and is mutation-proved: disabling the ingest turns it red while the table-enumeration step stays green |
+| 2 — the fix is a decision, recorded | **met** | ADR 0004, now *Accepted — Option D*. A, B and D each rejected or chosen on stated grounds; the review forced D in and withdrew half the A rejection |
+| 3 — a carried-forward plan can go stale and say so | **met, with a stated bound** | `#tasks_digest` → `plan_stale:<goal>` → a `kit-status.sh` notice; clears on replan. **The bound is real and is in the ADR:** the digest covers the task SET, not the ordering inputs — `escaped` events and `priority.w_*` / `cluster.hub_cap` reorder a plan that still reports fresh |
+| 4 — orphaned packs cannot outlive their plan silently | **met, both directions** | packs-without-plan-rows *and* plan-rows-without-packs are both reported, the latter naming `kit-plan.sh --packs`. Verified firing in a clone and silent here |
+| 5 — the step derives its expectation from the authority | **met** | table enumeration reads `CREATE TABLE` from `schema.sql` against the INSERT targets in `kit-index.sh`; it found `accelerator`/`accel_candidate` immediately, and their exemption asserts its own premise so it expires if anything ever writes them |
+| 6 — `HANDOFF.md` §4.6 becomes true or is corrected | **met** | §4.6 rewritten, and it keeps the correction visible rather than quietly restating the guarantee |
+
+### The T3 review chain — 35 findings, and where each stands
+
+Implementation REVISE · approach REVISE (the only critical) · **security REJECT**. All three ran
+concurrently against an empty finding table, so rung 5's blindness was structural.
+
+| Disposition | n | Notes |
+|---|---|---|
+| **Fixed and verified** | **22** | incl. the critical and 16 of 21 majors |
+| **Claim narrowed instead of widened** | 2 | the digest-coverage pair. Reviewers offered *"either widen the digest or narrow the claim"*; the claim was narrowed in `kit_plan_digest`'s docstring and the ADR. **Coverage is unchanged** |
+| **Partially addressed** | 2 | see below — both are stated honestly rather than counted as done |
+| **Not addressed** | 9 | 2 majors, 4 minors, 3 nits — listed below |
+
+**The two partials, stated precisely rather than rounded up.**
+`kit-index.sh:1296` — the staleness block still does **not** re-validate rows; it reads only
+`#goal` and `#tasks_digest`. What *is* fixed is the consequence the reviewer named: a refused plan
+is now recorded in `plan_refused` and rendered by `kit-status.sh`, so "the operator cannot learn
+the plan is empty" no longer holds. The re-parse asymmetry itself remains.
+`kit-init.sh:112` — the loose guard and the unconditional success message are fixed; the
+**upgrade path is not**. An already-adopted repository never re-runs `kit-init.sh`, so the LF pin
+never arrives there.
+
+**The nine not addressed**, none of which I judge blocking, and the judgement is the operator's:
+
+- **major** `SECURITY.md:41` — no trust-table row for `.project/plans/*.tsv`. ADR 0003's own
+  convention requires one for a new untrusted input class. *This is the one I would fix first.*
+- **major** `kit-plan.sh:343` — nothing checks the plan file is git-tracked. A `.gitignore`
+  covering `.project/` silently returns the plan to machine-local state, which is the defect this
+  task exists to fix, arriving through configuration instead of code. ADR 0003 already built this
+  check for adapters.
+- **minor** `schema.sql:207` `goal.state` has no text source and is reset every rebuild ·
+  `kit-index.sh:1024` no format version and `#columns` never validated ·
+  `kit-index.sh:1011` two files claiming one `#goal` still let glob order decide ·
+  ADR team-cost note (a replan now dirties a tracked file needing a trailered commit)
+- **nit** the spliced comment block · the no-op `DELETE` in section 3c · `SKILL.md:36` still
+  describing clusters as grouped by declared dependency
+
+### What I do NOT claim
+
+- **Not that the ordering is any good.** `T-20260817-one-shared-file-merges-two-whole-epics-s`
+  records 61 of 77 open tasks in one cluster. This task fixed where the plan lives, not what it says.
+- **Not that the packs pay for themselves.** That is Gate B, still unrun and unsigned.
+- **Not that reviewer read-only was enforced.** It is convention; `SECURITY.md` §3 says so.
+- **Not that the recording path was clean.** The three replies reached `kit-finding.sh` through the
+  orchestrator's context rather than `kit-review-record.sh --cmd`, so the unchanged-pipe guarantee
+  did not hold. Findings were reproduced field for field; the narratives are condensations and each
+  says so in its own first paragraph.
+
+### Recommendation
+
+**Close it**, with the nine open findings left on the record rather than folded in — they are
+smaller than the task and two of them (`SECURITY.md`, the tracked-file check) deserve their own
+task rather than a footnote here. If any of them should block instead, that is a defensible call
+and the honest place to make it is before the mark, not after.
+
+Unblocks `T-20260808-cluster-packs-are-generated-and-read-by-`, which `blocked_by` names.
