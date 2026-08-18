@@ -3325,7 +3325,63 @@ check $? "--packs restores packs from a cloned plan and leaves the plan byte-ide
   grep -q 'covered by' STATUS.generated.md && exit 1
   exit 0 )
 check $? "a gitignored plan is reported by name and the notice clears when it is un-ignored"
-rm -rf "$cl" "$cl.src" "$WORK.plan.before" "$(dirname "$cl")/plan.before"
+rm -rf "$cl" "$cl.src" "$(dirname "$cl")/plan.before"
+fi
+
+if step "the pre-flight surfaces the blind spot its own criticals box excludes"; then
+# AC5 of T-20260813. `--criticals` excludes unassessable findings on purpose — leaving them in
+# would make the gate permanently unsatisfiable, since they cannot be judged from what survives.
+# The cost is a repository whose every remaining critical is unassessable reporting ZERO and
+# passing §0's box with the blind spot intact: a pre-flight box a third state silently satisfies,
+# which is the exact defect the criticals chain exists to remove.
+blind="$WORK.blind"; rm -rf "$blind"; mkdir -p "$blind"
+( cd "$blind" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  printf -- '---\nid: T-U1\ntitle: one\ntier: T2\n---\nb\n' > .project/tasks/T-U1.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  # A finding with NO summary — the historical shape the nine have, and the only shape the
+  # unassessable route accepts. kit-finding.sh cannot produce one (summary is required), which
+  # is the guard, so the event is written directly to reproduce the pre-summary state.
+  printf '{"task":"T-U1","kind":"finding","at":"2026-07-01T00:00:00Z","agent":"security-reviewer","class":"fail-open","severity":"critical","lang":"bash","pattern":"","domain":"","model":"opus"}\n' >> .project/events.ndjson
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+
+  # Before the mark: --criticals stops, and there is no blind spot to report.
+  bash "$KIT/tooling/kit-preflight.sh" --criticals >/dev/null 2>&1 && exit 1
+  bash "$KIT/tooling/kit-preflight.sh" --unassessable | grep -q 'no unassessable critical' || exit 1
+
+  fid=$(Q "SELECT id FROM finding WHERE severity='critical' AND (summary IS NULL OR summary='') LIMIT 1;")
+  [ -n "$fid" ] || exit 1
+  bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --unassessable --reason "predates the summary column" >/dev/null 2>&1 || exit 1
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+
+  # THE THIRD STATE. --criticals now passes; the blind spot is still true and must be named.
+  bash "$KIT/tooling/kit-preflight.sh" --criticals >/dev/null 2>&1 || exit 1
+  out=$(bash "$KIT/tooling/kit-preflight.sh" --unassessable) || exit 1
+  printf '%s' "$out" | grep -q '1 unassessable critical' || exit 1
+  # The task and the reason are what §0's stop conditions 1 and 3 are judged against, so an
+  # output that reported only a count would disarm both while looking correct.
+  printf '%s' "$out" | grep -q 'T-U1' || exit 1
+  printf '%s' "$out" | grep -q 'predates the summary column' || exit 1
+  # A standing blind spot is NOT a stop: exit 0, or the unsatisfiable gate is back.
+  bash "$KIT/tooling/kit-preflight.sh" --unassessable >/dev/null 2>&1 || exit 1
+  exit 0 )
+check $? "--unassessable names the finding, its task and its reason, and does not itself stop"
+rm -rf "$blind"
+
+# The document must CALL the command, not restate the rule — the same discipline the criticals
+# box already follows, and the reason this step reads the script's flag list rather than a
+# hardcoded name: a flag renamed without the protocol following goes red.
+P="$KIT/docs/TRIAL-PROTOCOL.md"
+grep -q 'kit-preflight.sh --unassessable' "$P"
+check $? "TRIAL-PROTOCOL section 0 calls the command rather than describing it"
+grep -qE 'kit-preflight\.sh --unassessable' "$KIT/tooling/kit-preflight.sh"
+check $? "and the flag it calls is one kit-preflight.sh documents"
+# The report has to carry the number, or §0's "count went up" stop is unevaluable next trial.
+grep -q 'Unassessable crits:' "$P"
+check $? "the report template carries the count, so the next trial can compare"
 fi
 
 if step "every table the schema declares is populated from text, or the index cannot hold it"; then

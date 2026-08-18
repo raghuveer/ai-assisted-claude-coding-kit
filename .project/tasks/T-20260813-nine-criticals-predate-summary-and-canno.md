@@ -84,9 +84,28 @@ be reachable for any finding recorded after the contract, where a summary is req
 - [ ] The two indistinguishable `correctness` findings on
       `T-20260808-a-task-id-matching-no-task-file-is-count` are NOT linked to specific defects.
       If the design lets them be, the design lets a guess through.
-- [ ] TRIAL-PROTOCOL §0 states what an unassessable critical means for the gate — stop, or
+- [x] TRIAL-PROTOCOL §0 states what an unassessable critical means for the gate — stop, or
       proceed with it recorded. A pre-flight box that a third state silently satisfies is the
       defect this whole chain exists to remove.
+
+      **Done 2026-08-17.** §0 gains a box that calls `kit-preflight.sh --unassessable`, a new
+      flag. The answer is **proceed, with the count recorded** — treating it as a stop would
+      restore the permanently unsatisfiable gate the unassessable route exists to remove, since
+      these nine can never be judged. Three conditions that ARE stops are named as judgement:
+      the blind spot sitting on a task the trial will exercise, the count having gone UP since
+      the last trial (a tenth means something is producing unjudgeable findings *now*, which is
+      worse than the nine), and any mark carrying no reason. The §7 template and §6 now carry the
+      count **and the previous trial's**, because stop 2 is unevaluable from one number.
+
+      Verified rather than asserted: on a fixture, marking the only summary-less critical
+      unassessable flips `--criticals` from exit 1 to exit 0 — the box passes — while
+      `--unassessable` reports the id, its task and its reason. That flip is the defect, now
+      visible. A conformance step asserts both halves and that `--unassessable` itself exits 0,
+      since a non-zero would rebuild the gate this removes.
+
+      **Still not done on this task:** the nine marks (operator), and the judgement about the two
+      indistinguishable `correctness` findings (operator). This criterion was the only one of the
+      five that was mine.
 
 ## Notes
 

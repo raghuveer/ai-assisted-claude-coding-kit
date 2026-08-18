@@ -45,6 +45,45 @@ Stop unless every box is ticked. Record the answers; they are part of the result
       Zero, or stop. `kit-status.sh` prints the same thing per task under **Outstanding
       criticals**, and `kit-resolve.sh --list --severity critical --unfixed` names them.
       An unmarked finding counts as OUTSTANDING: silence is not a fix.
+- [ ] **The third state: unassessable criticals. Run it, and record the number.**
+
+          bash tooling/kit-preflight.sh --unassessable
+
+      **A zero from the box above does not mean there is nothing wrong.** `--criticals`
+      deliberately excludes any finding the operator marked `--unassessable`, because those
+      cannot be judged from what survives and leaving them in would make the gate permanently
+      unsatisfiable — no trial could ever run. The cost is that a repository whose every
+      remaining critical is unassessable reports **zero and passes**, with the blind spot
+      intact. That is the state this box exists to make visible, and it is the exact shape the
+      whole criticals chain was built to remove: **a pre-flight box that a third state silently
+      satisfies.**
+
+      **This is NOT a stop by itself.** An unassessable critical is a standing blind spot, not
+      an unaddressed defect, and treating it as a stop would restore the unsatisfiable gate.
+      Proceed — with the count recorded in §7's report, next to the kit SHA, where a reader
+      comparing two trials can see it. A trial run over a known blind spot is a valid trial that
+      says so; a trial run over one it never mentioned is not.
+
+      **Three things that ARE stops**, and they are judgement rather than exit codes:
+
+      1. **An unassessable critical on a task this trial will exercise.** The blind spot is then
+         inside the path being measured, and any finding the trial produces there cannot be told
+         from the one nobody could judge. Check the `task_id` column the command prints against
+         the trial's scope.
+      2. **The count went UP since the last trial.** These are meant to be a bounded historical
+         set — findings that predate the summary column. A new one means something is producing
+         unjudgeable findings *now*, which is a recording-discipline failure and a worse problem
+         than the nine. Compare against the previous report; §6 requires both to carry it.
+      3. **Any of them carries no reason.** `--reason` is required by `kit-resolve.sh` precisely
+         because a mark that clears a gate without saying why is the laundering the gate exists
+         to prevent. If the command prints `(no reason recorded)`, the record was written around
+         the tool and the mark cannot be trusted.
+
+      > Why a whole box for a number that is usually small: the criticals box above was written
+      > with no way to evaluate it, and its first execution hit that on the very first line. This
+      > one is the same failure caught one layer up — the box became evaluable, and the answer it
+      > returns stopped covering the whole question the moment `--unassessable` existed. Serves
+      > AC5 of `T-20260813-nine-criticals-predate-summary-and-canno`.
 
       > Revision 2 wrote this box with no way to evaluate it. The `finding` table had no column
       > for whether a finding was addressed — `vindicated` says whether it was *real*, a
@@ -313,6 +352,11 @@ give the n; if it came from nowhere, delete it.
 **Report what was NOT exercised.** The first trial's most useful section lists what it never
 touched. An untested component named as untested is information; one omitted reads as fine.
 
+**Carry the unassessable count, and the previous trial's, in the header.** Both, side by side —
+the number alone says how large the blind spot is, and only the pair says whether it is growing.
+§0's third stop condition is unevaluable without the previous figure, so a report that omits it
+disarms a control in the *next* trial rather than its own.
+
 **Separate three kinds of finding**, because they have different lifetimes:
 
 1. defects **in the kit** → tasks here
@@ -344,6 +388,7 @@ kit ran and produced no output.
 
 Question:              <the one written at pre-flight>
 Kit SHA:               <sha>        Time-box: <hours>    Actual: <hours>
+Unassessable crits:    <n from kit-preflight.sh --unassessable>   (previous trial: <n>)
 Subject:               <languages, size, commits, age>   Greenfield/brownfield: <which>
 Outcome:               COMPLETE | ABORTED (<cause>) | VOID (<condition>)
 Baseline before kit:   build <pass/fail>, tests <pass/fail>, <duration>

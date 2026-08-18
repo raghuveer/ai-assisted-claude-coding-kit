@@ -2,6 +2,7 @@
 # kit-preflight.sh --isolated <copy>     the subject copy has no path back to the subject
 # kit-preflight.sh --spend               spend capture is live in THIS repository
 # kit-preflight.sh --criticals           no unfixed critical is outstanding in THIS repository
+# kit-preflight.sh --unassessable        the standing blind spot --criticals deliberately excludes
 #
 # The checks docs/TRIAL-PROTOCOL.md §0 gates on, as commands rather than as prose. A pre-flight
 # box that a human evaluates by reading is a box that gets ticked while tired; two of this
@@ -12,7 +13,7 @@
 # caller must check the status rather than the output.
 set -uo pipefail
 
-usage() { printf 'usage: kit-preflight.sh --isolated <copy> | --spend\n' >&2; exit 2; }
+usage() { printf 'usage: kit-preflight.sh --isolated <copy> | --spend | --criticals | --unassessable\n' >&2; exit 2; }
 
 case "${1:-}" in
   --isolated)
@@ -61,6 +62,48 @@ case "${1:-}" in
     fi
     [ "$fail" = 0 ] || exit 1
     printf 'kit: %s is isolated -- no remote, no shared object store\n' "$COPY"
+    exit 0 ;;
+
+  --unassessable)
+    # THE THIRD STATE. `--criticals` excludes `unassessable_at IS NOT NULL` on purpose — those
+    # findings cannot be judged from what survives, so leaving them in would make the gate
+    # permanently unsatisfiable and no trial could ever run. The cost of that exclusion is that
+    # a repository whose every remaining critical is unassessable reports **zero** and the §0
+    # box passes, silently, with the blind spot intact. That is the shape TRIAL-PROTOCOL §0 now
+    # names, and this is the command it calls.
+    #
+    # Exit 0 either way, deliberately: a standing blind spot is not a stop, it is something the
+    # report must carry. Returning non-zero would make it a gate, and a gate nobody can ever
+    # satisfy is the failure the unassessable route was built to remove. The stop conditions are
+    # judgement and live in the protocol, not here — this command supplies the NUMBER they are
+    # judged against, which is the part a human should not be counting by hand.
+    . "$(dirname "$0")/kit-lib.sh"
+    ROOT=$(kit_root) || { kit_warn "not a git repository"; exit 2; }
+    kit_active "$ROOT" || { kit_warn "the kit is not adopted here"; exit 2; }
+    STATE_DIR=$(kit_cfg "$(kit_profile "$ROOT")" paths.state ".project")
+    DB="$ROOT/$STATE_DIR/index.db"
+    [ -f "$DB" ] || { kit_warn "no index at ${DB#$ROOT/}; run kit-index.sh"; exit 2; }
+    n=$(sqlite3 -noheader "$DB" "SELECT COUNT(*) FROM finding
+                                  WHERE severity='critical' AND fixed_at IS NULL
+                                    AND unassessable_at IS NOT NULL;" 2>&1)
+    case "$n" in
+      ''|*[!0-9]*)
+        kit_warn "the unassessable query FAILED -- this is not a report of zero"
+        printf '%s\n' "$n" | sed 's/^/  /' >&2
+        kit_warn "  the usual cause is an index older than a column this query reads; rebuild it"
+        exit 2 ;;
+    esac
+    if [ "$n" = 0 ]; then
+      printf 'no unassessable critical: --criticals is the whole picture\n'
+      exit 0
+    fi
+    printf '%s unassessable critical(s) — EXCLUDED from --criticals, and still true:\n' "$n"
+    sqlite3 -noheader -separator '  ' "$DB" \
+      "SELECT id, COALESCE(task_id,'(no task)'), COALESCE(unassessable_reason,'(no reason recorded)')
+         FROM finding WHERE severity='critical' AND fixed_at IS NULL
+          AND unassessable_at IS NOT NULL ORDER BY task_id, id;" 2>/dev/null |
+      tr -d '\r' | sed 's/^/  /'
+    printf 'Record this number in the trial report. TRIAL-PROTOCOL section 0 says when it stops you.\n'
     exit 0 ;;
 
   --criticals)
