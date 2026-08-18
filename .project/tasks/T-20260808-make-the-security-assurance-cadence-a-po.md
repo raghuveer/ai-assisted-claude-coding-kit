@@ -47,6 +47,46 @@ has actually bought.
 - [ ] No new mechanism if an existing one fits. Recording a layer run is an event; the event
       table already takes arbitrary kinds.
 
+### Added 2026-08-18 — the declaration needs a DERIVATION, not just a slot
+
+A cadence declared with no reasoning behind it is a guess wearing the shape of a policy, and it
+will be copied between projects unchanged — which is the failure mode the profile template has
+already produced once for tier floors.
+
+- [ ] The declaration records **what it was derived from**, and the inputs are the operator's:
+      **target tech stack · maturity of that ecosystem · third-party dependencies and solutions
+      being considered**. A project whose scope cannot be traced to those has not scoped, it has
+      copied.
+- [ ] **The three project types scope differently, and the difference is not cosmetic:**
+      *greenfield* chooses its stack, so the security surface is an **input to that choice** and a
+      mature ecosystem is a way to buy a smaller one; *brownfield* inherits the surface, so scoping
+      is **discovery** rather than choice; *modernization* is the decision itself, per component.
+      A single scoping procedure that ignores which of the three it is will be wrong for two.
+- [ ] **In modernization, the security scope is a function of the component disposition** — see
+      `T-20260731-component-model-for-polyglot-and-moderni`. *Reuse* inherits that component's
+      dependency surface and its CVE history; *re-architect* chooses a new one; *improve* is
+      partial. These are the same decision viewed twice, and recording them twice without linking
+      them is how they drift apart.
+- [ ] **A third-party solution moves the boundary, it does not remove it.** Adopting a managed
+      identity provider takes authn off the diff and adds a trust boundary plus a dependency on
+      somebody else's assurance. The scope must record what moved **out** and what came **in**;
+      `SECURITY.md` §1 is where the incoming half belongs.
+- [ ] **Ecosystem maturity is recorded as a two-sided input, not a score.** A mature ecosystem has
+      more *known* CVEs and better-hardened defaults; a young one has fewer known CVEs, more
+      unknown ones, and fewer safe defaults. **A low SCA finding count in a young ecosystem is
+      silence, not safety**, and a scope that treats maturity as a single number will read that
+      silence as a pass.
+- [ ] The scope decision is **ADR-shaped and goes through the chain** — it has options and
+      consequences, so `researcher` produces it and `approach-reviewer` reads it, per
+      `docs/design-input/2026-08-18-authoring-chain-and-review-economics.md`. It is not a profile
+      value somebody types once.
+- [ ] **The scope selects which checklist `researcher` loads.** ASVS is levelled and the LLM Top 10
+      applies only where there is an LLM surface, so "include OWASP" without a scope is a firehose
+      that teaches an agent to skim. This is what makes the baseline-in-researcher proposal
+      actionable rather than aspirational.
+- [ ] Scope stays: the kit **declares and checks** the scope. It does not perform SCA, SAST, DAST
+      or VAPT, and must not grow toward doing so — the Notes below already draw that line.
+
 ## Notes
 
 Confirmed with the operator 2026-08-08, whose stated position matches the agent file almost

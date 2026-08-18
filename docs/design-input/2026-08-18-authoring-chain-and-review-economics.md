@@ -147,7 +147,47 @@ should be visible in what the kit asks for and what it produces.
 > input than an invented one, and it is still not earned from a project the kit has run. Treat it
 > as the seed it is.
 
-## 7. What this proposal does not claim
+## 7. Security SCOPE is a planning decision, and it is missing
+
+§3 answers *when* to invoke the reviewer. §4 answers *what baseline* it argues from. Neither
+answers **how much security assurance this project needs at all**, and that is a distinct question
+with distinct inputs — the operator's, 2026-08-18:
+
+- **target tech stack**
+- **maturity of that ecosystem**
+- **third-party dependencies and solutions being considered**
+
+`T-20260808-make-the-security-assurance-cadence-a-po` already proposes declaring the cadence per
+project. What it does not address is how anyone **arrives at** that declaration, and a cadence
+declared with no derivation is a guess in the shape of a policy — which will then be copied between
+projects unchanged, exactly as the profile template's tier floors were.
+
+**The three project types scope differently.** Greenfield *chooses* its stack, so the security
+surface is an input to that choice and a mature ecosystem is a way to buy a smaller one. Brownfield
+*inherits* it, so scoping is discovery rather than choice. Modernization *is* the decision, per
+component — and there the security scope and the component disposition of §6 are **the same
+decision viewed twice**: reuse inherits that component's dependency surface and CVE history,
+re-architect chooses a new one, improve is partial. Recording them separately without linking them
+is how they drift.
+
+**Two traps worth naming now**, because both read as good news:
+
+- **A third-party solution moves the boundary; it does not remove it.** A managed identity provider
+  takes authn off the diff and adds a trust boundary plus a dependency on somebody else's
+  assurance. The scope has to record what moved out *and* what came in.
+- **Low CVE counts in a young ecosystem are silence, not safety.** Maturity is two-sided — more
+  known CVEs and better defaults, versus fewer known CVEs and more unknown ones — so a scope that
+  reduces maturity to a single score will read that silence as a pass.
+
+**This also makes §4 actionable.** ASVS is levelled and the LLM Top 10 applies only where there is
+an LLM surface. "Include OWASP" without a scope is a firehose that teaches an agent to skim; the
+scope is what selects the chapters `researcher` should load.
+
+The decision is ADR-shaped — options and consequences — so it belongs in the §1 chain rather than
+being a profile value somebody types once. And the line the cadence task already draws holds: the
+kit **declares and checks** the scope; it does not perform SCA, SAST, DAST or VAPT.
+
+## 8. What this proposal does not claim
 
 - **Not that the sequencer sub-agent should be built.** The companion document's cheap order stands:
   measure thrash → dependency lint → premise re-derivation → agent for the residue. A sub-agent is
