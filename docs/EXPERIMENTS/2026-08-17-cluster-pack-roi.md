@@ -180,9 +180,43 @@ Three routes. They differ in cost and in what the answer means.
 
 | | Route | Spend | What a result means |
 |---|---|---|---|
-| **R1** | **Fix the pack, then measure.** Land plan survival (§2.1) and the `paths:` fallback; decide the clustering separately; re-plan; then run §4. | Fix work (unestimated) + §10 budget | Tests the *idea*. The strongest answer, and the slowest. |
+| **R1** | **Fix the pack, then measure.** Land plan survival (§2.1) ✅, then **clustering**, then the `paths:` fallback; re-plan; then run §4. **Order corrected 2026-08-18 — see below.** | Fix work (unestimated) + §10 budget | Tests the *idea*. The strongest answer, and the slowest. |
 | **R2** | **Measure as-is, knowingly.** Fix §2.1 only — the minimum that makes Arm A distinguishable from Arm B — then run §4 on today's packs and scope the claim to this implementation. | §2.1 fix + §10 budget | Tests *this artifact*. Cheap, honest, and cannot license the general claim. |
 | **R3** | **Stop and delete now.** Treat §2 as sufficient: the mechanism has been unreachable in ordinary use since it was built, its file list is empty where it matters, and its evidence section has never been non-empty. | ~zero | Saves the whole budget. Forfeits the measurement the task asked for. |
+
+### R1's internal order was wrong, and so was the reason given for it (corrected 2026-08-18)
+
+Two errors, both mine, both found by re-deriving a claim this document had been repeating.
+
+**1. The `paths:` fallback was called a blocker on the grounds that the experiment would have no
+population. That is false.** §5 draws pairs from cluster 1, `open`, T1–T2, no `blocked_by` — a
+population of **35 tasks today**, against Stage 1's 6 pairs and Stage 2's 3. There was never a
+shortage. The claim came from re-reading §2(a)'s "58 of 77 tasks can never receive a pack with
+file information" and carrying it into a context where it does not apply: the experiment reads the
+**cluster's** pack, and cluster 1's pack carries 40 file rows. §5's restriction to cluster 1 was
+chosen for exactly that reason and already sidesteps the gap.
+
+**2. Doing `paths:` before the clustering fix would make the artifact worse.** Measured
+2026-08-18, against the same figures §2 recorded on 2026-08-17:
+
+| | at §2 | now |
+|---|---|---|
+| tasks in cluster 1 | 61 of 77 | **70 of 83** |
+| distinct files cluster 1 touches | 42 | **47** |
+| rows the pack prints | 40 (cap) | 40 (cap) |
+
+The cap now truncates **7** files rather than 2, and the degeneracy grew simply because tasks were
+filed. `paths:` adds *more* files to that list. Landing it first enlarges the file section of an
+already-degenerate 70-task cluster and pushes further past a cap that is silently binding — so the
+`paths:` fix would be measured against a baseline worse than today's.
+
+**Corrected order inside R1:** plan survival ✅ → **clustering**
+(`T-20260817-one-shared-file-merges-two-whole-epics-s`) → `paths:`
+(`T-20260817-a-cluster-pack-file-list-ignores-declare`) → re-plan → §4.
+
+The clustering task is now a declared `blocked_by` on this experiment's task, so the ordering
+lives in the backlog rather than only in this paragraph — which is what let the wrong order
+survive three retellings.
 
 **Recommendation: R1, restricted to cluster 1.** §2.1 has to be fixed for any measurement to mean
 anything, and §2(a) is a one-source-to-two-source change the kit has already made once in

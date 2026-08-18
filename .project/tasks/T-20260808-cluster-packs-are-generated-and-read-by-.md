@@ -5,7 +5,7 @@ epic: measurement
 tier: T2
 lang: bash
 paths: tooling/kit-plan.sh, skills/task-context/SKILL.md
-blocked_by: T-20260817-kit-index-deletes-the-plan-so-task-conte
+blocked_by: T-20260817-kit-index-deletes-the-plan-so-task-conte, T-20260817-one-shared-file-merges-two-whole-epics-s
 state: open
 ---
 
