@@ -712,6 +712,23 @@ esac
 # zero rows loaded looks identical to no plan written — which is the wrong cause and the wrong
 # remedy, and after a merge it is the EXPECTED state, because .gitattributes deliberately
 # declines merge=union so two plans conflict rather than interleave.
+# The cluster-size distribution. It was absent, so a 70-of-85 cluster could only be found by
+# querying plan_item by hand — which is how it went unnoticed while the packs built from it were
+# being proposed as the subject of an ROI experiment.
+q "SELECT substr(key,21)||' '||value FROM meta WHERE key LIKE 'cluster_largest_pct:%';" | tr -d '\r' |
+while IFS=' ' read -r _g _pct; do
+  [ -n "$_g" ] || continue
+  printf '\n> **Largest cluster in `%s` holds %s%% of its planned tasks.**' "$_g" "$_pct"
+  if [ "${_pct:-0}" -gt 60 ]; then
+    printf ' Packs are **withheld** —\n'
+    printf '> a pack built from a cluster that size names most of the repository, which is worse\n'
+    printf '> than no pack. The ordering is unaffected: layers come from topology and ranks from\n'
+    printf '> score. Raise `cluster.max_share` to accept it, or fix the grouping.\n'
+  else
+    printf '\n'
+  fi
+done
+
 # A gitignored plan is the quietest way to undo this whole mechanism: everything works on the
 # machine that planned, and the guarantee ADR 0004 publishes is false everywhere else.
 q "SELECT substr(key,14) FROM meta WHERE key LIKE 'plan_ignored:%';" | tr -d '\r' |
@@ -753,6 +770,11 @@ MISSINGPACKS=""
 q "SELECT DISTINCT goal_id FROM plan_item;" | tr -d '\r' |
 while IFS= read -r _g; do
   [ -n "$_g" ] || continue
+  # A goal whose packs were WITHHELD is not a goal whose packs are missing. The notice above
+  # already names the cause; repeating it here as "run kit-plan.sh --packs" would send the
+  # reader to a remedy that refuses for the same reason — wrong cause, wrong remedy, which is
+  # the defect a T3 security review flagged when a refused plan was reported as an orphan.
+  [ "$(q "SELECT COUNT(*) FROM meta WHERE key='cluster_packs_withheld:$(printf '%s' "$_g" | sed "s/'/''/g")';")" = 0 ] || continue
   [ -d "$ROOT/$STATE_DIR/packs/$_g" ] || printf '%s\n' "$_g"
 done > "$OUT.missingpacks" 2>/dev/null
 if [ -s "$OUT.missingpacks" ]; then

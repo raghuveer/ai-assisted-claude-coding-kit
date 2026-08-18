@@ -439,6 +439,60 @@ fi
 
 # GOAL_SLUG is defined near the top, with the plan file it also names.
 PACKS="$ROOT/$STATE_DIR/packs/$GOAL_SLUG"
+# ---- the clustering self-check (cluster.max_share) ------------------------------------
+# A cluster holding most of the backlog is not a grouping, and a pack built from one is the
+# "answers everything" artefact this kit refuses elsewhere: kit-index.sh WITHHOLDS a co-change
+# graph whose average degree exceeds cochange.max_degree, on the stated grounds that answering
+# everything is worse than an honest unknown. Clustering had no equivalent and emitted a
+# 70-of-85-task cluster with full confidence.
+#
+# THE ORDERING IS NOT WITHHELD, only the packs. Layers come from topology and ranks from score;
+# both are still correct when clustering degenerates. It is the PACK that becomes a 2.4k-token
+# list of most of the repository, and it is the only thing here that gets worse rather than
+# merely less useful.
+#
+# Measured on this repository 2026-08-18, and the reason this check is not simply "tune
+# cluster.hub_cap": the knob is inert across its useful range. hub_cap 5 -> largest 75 of 85;
+# hub_cap 3 -> 74 of 85; hub_cap 1 -> 16 of 85. Only switching the file signal OFF entirely
+# changes the answer, because the files doing the fusing have LOW degree -- README.md and
+# SECURITY.md at 5, INSTALL.md at 3 -- while tests/conformance.sh at 13 and tooling/kit-index.sh
+# at 6 are excluded as hubs. The heuristic assumes cross-cutting files are high-degree; here the
+# cross-cutting surface is documentation and it is low-degree, so degree is an inverted proxy.
+# A refusal is honest while that is unresolved; a tuned knob would only look resolved.
+# A SHARE NEEDS A DENOMINATOR BIG ENOUGH TO MEAN SOMETHING. Two tasks in one cluster is 100%
+# and is not degeneracy — it is a small project. The first version of this check had no floor,
+# and the conformance suite caught it immediately: the clone-recovery fixture has two tasks, so
+# its packs were withheld and `--packs` had nothing to restore. Shipped, that would have withheld
+# packs on every new or small backlog permanently, which is the opposite of the intent.
+CL_SHARE=$(kit_cfg "$PROFILE" cluster.max_share 60)
+CL_MIN=$(kit_cfg "$PROFILE" cluster.min_tasks 10)
+case "$CL_SHARE" in ''|*[!0-9]*) kit_warn "cluster.max_share must be a whole number"; exit 2 ;; esac
+case "$CL_MIN"   in ''|*[!0-9]*) kit_warn "cluster.min_tasks must be a whole number"; exit 2 ;; esac
+CL_BIG=$(sq "$DB" "SELECT COALESCE(MAX(c),0) FROM (SELECT COUNT(*) c FROM plan_item
+                    WHERE goal_id='$GOAL_SQL' GROUP BY cluster);")
+CL_TOT=$(sq "$DB" "SELECT COUNT(*) FROM plan_item WHERE goal_id='$GOAL_SQL';")
+CL_PCT=0
+[ "${CL_TOT:-0}" -gt 0 ] && CL_PCT=$(( CL_BIG * 100 / CL_TOT ))
+sqlite3 "$DB" "INSERT OR REPLACE INTO meta VALUES('cluster_largest_pct:$GOAL_SQL','$CL_PCT');" ||
+  kit_warn "could not record the cluster distribution; kit-status.sh will not report it"
+if [ "$CL_PCT" -gt "$CL_SHARE" ] && [ "${CL_TOT:-0}" -ge "$CL_MIN" ]; then
+  kit_warn "clustering degenerated: one cluster holds $CL_BIG of $CL_TOT tasks (${CL_PCT}%, cap ${CL_SHARE}%)"
+  kit_warn "  Packs are WITHHELD rather than written. The ordering is unaffected — layers come"
+  kit_warn "  from topology and ranks from score, and both are still correct."
+  kit_warn "  A pack built from a cluster this size names most of the repository, which is worse"
+  kit_warn "  than no pack. Raise cluster.max_share to accept it, or fix the grouping."
+  # REMOVE them, do not merely decline to write. The rm -rf that refreshes the pack directory
+  # lives inside the write block, so skipping the write left the PREVIOUS run's packs on disk
+  # looking current — a withheld artefact that is still being served is not withheld, and it is
+  # the exact orphaned-pack state ADR 0004 spent a critical closing.
+  rm -rf "$ROOT/$STATE_DIR/packs/$GOAL_SLUG"
+  sqlite3 "$DB" "INSERT OR REPLACE INTO meta VALUES('cluster_packs_withheld:$GOAL_SQL','1');" ||
+    kit_warn "could not record that packs were withheld; status will report them as merely missing"
+  PACKS_OK=0
+else
+  sqlite3 "$DB" "DELETE FROM meta WHERE key='cluster_packs_withheld:$GOAL_SQL';" 2>/dev/null
+fi
+
 if [ "$PACKS_OK" = 1 ]; then
 rm -rf "$PACKS"; mkdir -p "$PACKS"
 # One query and one awk for every pack, rather than three queries per cluster. At 300

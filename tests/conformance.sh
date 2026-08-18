@@ -3328,6 +3328,85 @@ check $? "a gitignored plan is reported by name and the notice clears when it is
 rm -rf "$cl" "$cl.src" "$(dirname "$cl")/plan.before"
 fi
 
+if step "a degenerate cluster withholds its packs and says so, and a raised cap still writes them"; then
+# kit-index.sh withholds a co-change graph whose average degree exceeds cochange.max_degree,
+# because answering "everything" is worse than an honest unknown. Clustering had no equivalent
+# and emitted a 75-of-85-task cluster with full confidence — and the packs built from it were
+# about to be the subject of an ROI experiment.
+#
+# The fixture reproduces the real mechanism rather than a synthetic blob: two epics, bridged by
+# ONE low-degree shared file, which is exactly how this repository's seven epics fused. Measured
+# there: README.md and SECURITY.md at degree 5 are kept as evidence while tests/conformance.sh at
+# 13 is excluded as a hub, so the heuristic keeps the documentation and drops the code.
+#
+# BOTH directions are asserted. A check that only proves the refusal would pass against a
+# mechanism that refused unconditionally, which would be a worse defect than the one being fixed.
+#
+# THE SMALL-BACKLOG FLOOR IS REGRESSION-TESTED ELSEWHERE, deliberately not duplicated here: the
+# `--packs restores packs from a cloned plan` step above builds a TWO-task fixture, and two tasks
+# in one cluster is 100% share. The first version of this check had no `cluster.min_tasks` floor
+# and that step went red immediately — which is the only reason the defect was found before it
+# shipped, since it would have withheld packs on every new or small backlog permanently. If this
+# step is ever moved above that one, the floor loses its cover.
+cl2="$WORK.clustdeg"; rm -rf "$cl2"; mkdir -p "$cl2"
+( cd "$cl2" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  # Lower the floor for this fixture rather than filing ten tasks to clear it. This also
+  # exercises `cluster.min_tasks` as a declared knob instead of leaning on its default — and the
+  # default is what made this step fail the first time the floor existed, which is the floor
+  # doing its job on its own author.
+  # INSERTED INTO THE FRONTMATTER, not appended to the file. `kit_cfg` exits at the second
+  # `---` (kit-lib.sh), so a key appended after it sits in the prose section and is never read —
+  # the step would then fail looking like a broken mechanism rather than a bad fixture.
+  sed -i.bak 's|^cluster.hub_cap:.*|&\ncluster.min_tasks: 2|' .claude/project-profile.md && rm -f .claude/project-profile.md.bak
+  printf -- '---\nid: T-A1\ntitle: a1\ntier: T2\nepic: alpha\n---\nb\n' > .project/tasks/T-A1.md
+  printf -- '---\nid: T-A2\ntitle: a2\ntier: T2\nepic: alpha\n---\nb\n' > .project/tasks/T-A2.md
+  printf -- '---\nid: T-B1\ntitle: b1\ntier: T2\nepic: beta\n---\nb\n'  > .project/tasks/T-B1.md
+  printf -- '---\nid: T-B2\ntitle: b2\ntier: T2\nepic: beta\n---\nb\n'  > .project/tasks/T-B2.md
+  printf 'x\n' > shared.md
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  # One file, touched by one task from each epic. Degree 2, so hub_cap keeps it as "evidence"
+  # of shared subject matter — and the two epics fuse into one cluster.
+  printf 'y\n' > shared.md; git add -A
+  git commit -q --no-verify -m "feat: a
+
+Task-Id: T-A1
+Tier: T2"
+  printf 'z\n' > shared.md; git add -A
+  git commit -q --no-verify -m "feat: b
+
+Task-Id: T-B1
+Tier: T2"
+  Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-plan.sh"  >/dev/null 2>&1
+  # The fixture must actually degenerate, or the rest of this step proves nothing.
+  [ "$(Q "SELECT COUNT(DISTINCT cluster) FROM plan_item;")" = 1 ] || exit 1
+  [ "$(Q "SELECT value FROM meta WHERE key='cluster_largest_pct:default';")" = 100 ] || exit 1
+  # Withheld: recorded, removed from disk, and NOT merely unwritten.
+  [ "$(Q "SELECT value FROM meta WHERE key='cluster_packs_withheld:default';")" = 1 ] || exit 1
+  [ -d .project/packs/default ] && exit 1
+  # The ORDERING survives — layers come from topology and ranks from score, and withholding a
+  # pack must not cost the plan.
+  [ "$(Q "SELECT COUNT(*) FROM plan_item;")" = 4 ] || exit 1
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
+  grep -q 'Packs are \*\*withheld\*\*' STATUS.generated.md || exit 1
+  # And the contradictory advice is suppressed: a withheld pack must not also be reported as a
+  # missing one telling the reader to run --packs, which refuses for the same reason.
+  grep -q 'no cluster pack on disk' STATUS.generated.md && exit 1
+
+  # THE INVERSE. Raise the cap above the observed share and the packs are written again.
+  sed -i.bak 's|^cluster.hub_cap:.*|&\ncluster.max_share: 100|' .claude/project-profile.md && rm -f .claude/project-profile.md.bak
+  bash "$KIT/tooling/kit-plan.sh" >/dev/null 2>&1
+  [ -d .project/packs/default ] || exit 1
+  [ "$(Q "SELECT COUNT(*) FROM meta WHERE key='cluster_packs_withheld:default';")" = 0 ] || exit 1
+  exit 0 )
+check $? "degenerate clustering withholds packs, keeps the ordering, and a raised cap restores them"
+rm -rf "$cl2"
+fi
+
 if step "the pre-flight surfaces the blind spot its own criticals box excludes"; then
 # AC5 of T-20260813. `--criticals` excludes unassessable findings on purpose — leaving them in
 # would make the gate permanently unsatisfiable, since they cannot be judged from what survives.
