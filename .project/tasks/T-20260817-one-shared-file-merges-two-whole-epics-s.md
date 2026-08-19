@@ -48,10 +48,10 @@ sessions share a pack — which does nothing when four fifths of the backlog is 
 
 ## Acceptance criteria
 
-- [ ] A cluster-size distribution is **observable**. Today nothing prints it — the degeneration
+- [x] A cluster-size distribution is **observable**. Today nothing prints it — the degeneration
       was found by querying `plan_item` by hand. `kit-plan.sh` or `kit-status.sh` reports the
       sizes, so this cannot silently return.
-- [ ] A stated bound on cluster size, and a refusal when it is exceeded. The kit already has the
+- [x] A stated bound on cluster size, and a refusal when it is exceeded. The kit already has the
       shape to copy: `kit-index.sh` **withholds** a co-change graph whose average degree exceeds
       `cochange.max_degree`, on the grounds that a graph answering "everything" is worse than an
       honest unknown. A cluster containing four fifths of the backlog is the same failure and is
@@ -60,9 +60,9 @@ sessions share a pack — which does nothing when four fifths of the backlog is 
       epics genuinely do touch `tooling/kit-index.sh`; that may be true of this backlog rather
       than wrong of the clusterer. This criterion exists so the answer is recorded rather than
       assumed, and a fix that only reshuffles a mislabelled backlog is not a fix.
-- [ ] Whatever changes, a conformance step covers it with a fixture that would fuse under the
+- [x] Whatever changes, a conformance step covers it with a fixture that would fuse under the
       current rule, so the property is proven rather than true-once.
-- [ ] `tooling/schema.sql` no longer describes `plan_item.cluster` as *"connected component over
+- [x] `tooling/schema.sql` no longer describes `plan_item.cluster` as *"connected component over
       the dependency graph"*. Dependency was removed as a union signal at lines 131-142 and the
       comment was not updated.
 

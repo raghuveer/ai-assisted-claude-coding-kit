@@ -1,6 +1,12 @@
 # ADR 0002: A pre-registered kill condition must have its targets read before it is registered
 
-- **Date:** 2026-08-15   **Status:** Proposed   **Supersedes:** —   **Related:** [[0001-anchor-entry-facts-to-files]]
+- **Date:** 2026-08-15   **Status:** **Accepted**   **Accepted:** 2026-08-19   **Supersedes:** —   **Related:** [[0001-anchor-entry-facts-to-files]]
+
+> **Status corrected 2026-08-19, not decided then.** Same defect as ADR 0001 and found in the same
+> sweep: this read `Proposed` while the decision it records had shipped alongside
+> `tooling/kit-entry.sh`. The correction is the status line only — nothing about the decision
+> changed, and if any part of it is now doubted that belongs in a superseding ADR rather than in a
+> quiet edit here.
 
 ## Context
 

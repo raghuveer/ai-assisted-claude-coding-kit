@@ -52,6 +52,37 @@ W_TIER=$(kit_cfg     "$PROFILE" priority.w_tier     1)
 HUB_CAP=$(kit_cfg "$PROFILE" cluster.hub_cap 5)
 case "$HUB_CAP" in ''|*[!0-9]*) kit_warn "cluster.hub_cap must be a whole number"; exit 2 ;; esac
 
+# How many files two tasks must share before that counts as evidence they are about the same
+# thing. Default 2, not 3: 2 is the smallest step from the old behaviour that removes the
+# measured noise, and it keeps the file signal alive -- at 3 with docs excluded this backlog's
+# file signal contributed ZERO links and clustering became epic-only.
+CL_MIN_SHARED=$(kit_cfg "$PROFILE" cluster.min_shared 2)
+case "$CL_MIN_SHARED" in ''|0|*[!0-9]*) kit_warn "cluster.min_shared must be a positive whole number"; exit 2 ;; esac
+
+# Files that are never subject-matter evidence, at any degree. Repeatable; declaring ANY value
+# replaces this default list entirely, so a documentation project can opt out by declaring a
+# pattern that matches nothing it cares about.
+#
+# The default is deliberately narrow -- prose and licence text, not configuration or schema.
+# tooling/schema.sql stays evidence: two tasks changing the schema together really are about the
+# same thing. This list is SEEDED from one backlog and is exactly the kind of value this
+# repository's own doctrine says must be earned from a real project before it is trusted.
+CL_IGNORE=$(kit_cfg_all "$PROFILE" cluster.ignore_glob)
+[ -n "$CL_IGNORE" ] || CL_IGNORE='*.md
+docs/*
+LICENSE*
+NOTICE*'
+CL_IGNORE_SQL=""
+while IFS= read -r _g; do
+  [ -n "$_g" ] || continue
+  # Single quotes doubled; the profile is only PARTLY trusted (SECURITY.md §1) and these values
+  # are interpolated into SQL that the sqlite3 CLI executes.
+  _gq=$(printf '%s' "$_g" | sed "s/'/''/g")
+  CL_IGNORE_SQL="$CL_IGNORE_SQL AND f NOT GLOB 'f:$_gq'"
+done <<EOF
+$CL_IGNORE
+EOF
+
 # --next reaches a LIMIT clause and --goal a WHERE, so both are checked here rather than
 # trusted where they are interpolated. The awk-generated SQL already escapes goal via q();
 # these two are for the display queries at the bottom, which do not.
@@ -140,14 +171,29 @@ sqlite3 -separator $'\t' "$DB" "
   -- Semantic adjacency: two open tasks that touch a file in common are about the same
   -- part of the codebase, whether or not anyone declared a dependency. Hub files are
   -- excluded, or one shared main() would fuse the whole backlog into a single cluster.
+  --
+  -- TWO FILTERS BEYOND hub_cap, both added 2026-08-19 because degree alone was measured
+  -- insufficient. hub_cap assumes a cross-cutting file is HIGH degree; where the cross-cutting
+  -- surface is documentation it is LOW degree, so the rule kept README.md (5) and INSTALL.md (3)
+  -- as evidence while excluding tests/conformance.sh (13) as a hub.
+  --
+  --   ignore_glob   files that are not subject-matter evidence at any degree. Measured: 28 of
+  --                 46 leaf files here were documentation -- 61% of the evidence base.
+  --   min_shared    how many files two tasks must share. Measured: 34 of 43 links came from a
+  --                 SINGLE shared file, so one co-edit is near-vacuous evidence.
+  --
+  -- Neither is sufficient alone (docs-only 67%, min_shared-only 58%, both 34%), which is why
+  -- both are here rather than the cheaper one.
   WITH open AS (SELECT id FROM task WHERE state NOT IN ('done','abandoned')),
        tf   AS (SELECT e.src AS t, e.dst AS f FROM edge e JOIN open o ON o.id = e.src
                  WHERE e.rel='touches'),
-       leaf AS (SELECT f FROM tf GROUP BY f HAVING COUNT(DISTINCT t) <= $HUB_CAP)
+       leaf AS (SELECT f FROM tf GROUP BY f
+                 HAVING COUNT(DISTINCT t) <= $HUB_CAP $CL_IGNORE_SQL)
   SELECT 'S', a.t, b.t
     FROM tf a JOIN tf b ON a.f = b.f AND a.t < b.t
     JOIN leaf l ON l.f = a.f
-   GROUP BY a.t, b.t ORDER BY a.t, b.t;
+   GROUP BY a.t, b.t HAVING COUNT(DISTINCT a.f) >= $CL_MIN_SHARED
+   ORDER BY a.t, b.t;
 " 2>/dev/null | awk -F'\t' -v goal="$GOAL" -v created="$PLAN_CREATED" \
     -v wu="$W_UNBLOCKS" -v we="$W_ESCAPES" -v wt="$W_TIER" '
 function q(s){ gsub(/\047/,"\047\047",s); return s }

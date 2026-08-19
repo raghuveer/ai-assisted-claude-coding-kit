@@ -1,6 +1,12 @@
 # ADR 0001: Anchor entry-mechanism facts to files, not to an aggregation unit
 
-- **Date:** 2026-08-15   **Status:** Proposed   **Supersedes:** —   **Related:** [[0002-verify-kill-condition-targets-by-reading-them]]
+- **Date:** 2026-08-15   **Status:** **Accepted**   **Accepted:** 2026-08-19   **Supersedes:** —   **Related:** [[0002-verify-kill-condition-targets-by-reading-them]]
+
+> **Status corrected 2026-08-19, not decided then.** This read `Proposed` while its decision had
+> shipped: `tooling/kit-entry.sh` exists, `tests/conformance.sh` references it in ten places, and
+> `paths.adr` / `paths.design_input` are live in `.claude/project-profile.md`. An ADR that shipped
+> but says `Proposed` tells the next reader the decision is still open and invites it to be
+> re-litigated or contradicted. Found by a sweep of every ADR against the code on 2026-08-19.
 
 ## Context
 

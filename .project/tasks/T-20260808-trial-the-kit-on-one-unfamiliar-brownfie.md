@@ -61,6 +61,31 @@ those projects. That is not a footnote; it decides the method.
 - [ ] The kit's own backlog gains the defects this finds, filed as tasks, before any of them is
       fixed. Filing before fixing is what makes the escape record real.
 
+### Added 2026-08-19 — the plugin path itself is untested since ADR 0004
+
+**Everything below has only ever been exercised by `tests/conformance.sh`, which invokes the
+scripts directly and never runs `skills/task-context` as a session would.**
+`T-20260731-run-one-real-task-with-the-model-in-the-` is **done** and dates from 2026-07-31, so it
+predates all of it. Folded in here rather than filed separately, because this task already owns
+"exercise it for real" and two tasks racing at one target is the duplication an audit exists to
+prevent.
+
+- [ ] Run through `claude --plugin-dir <kit>` and confirm skills and agents resolve as
+      `coding-kit:*`. Nothing else proves the manifest is right.
+- [ ] **`task-context` end to end, which is where ADR 0004's whole argument lands:** step 1's
+      `kit-index.sh --if-stale` must leave `plan_item` intact, and step 4 must find the pack it
+      resolves. Before 2026-08-17 step 1 deleted what step 4 read; the fix is proven by conformance
+      and unproven in a session.
+- [ ] `kit-plan.sh --packs` recovers a clone's packs, and the withhold notice surfaces where a
+      human reads it — `STATUS.generated.md`, not stderr.
+- [ ] Per-agent spend rows land with `scope=subagent`. Hooks fire only under the plugin, so this is
+      the precondition for every cost figure the trial reports, and `kit-preflight.sh --spend` is
+      the check.
+- [ ] The new clustering rules behave on the subject's real backlog: record the cluster
+      distribution and whether packs were withheld. `cluster.min_shared` and `cluster.ignore_glob`
+      were tuned against **one** backlog on 2026-08-19 and are seeded values by the kit's own
+      doctrine — this is the first chance to earn or refute them.
+
 ## Notes
 
 Blocked by three things, and the order matters. Without

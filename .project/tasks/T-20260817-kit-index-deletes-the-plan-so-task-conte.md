@@ -44,24 +44,24 @@ it was built.
 
 ## Acceptance criteria
 
-- [ ] A plan survives a rebuild. `kit-plan.sh`, then `kit-index.sh`, then a `plan_item` count
+- [x] A plan survives a rebuild. `kit-plan.sh`, then `kit-index.sh`, then a `plan_item` count
       equal to the one before — asserted by a conformance step, not by hand.
-- [ ] The fix is a **decision, recorded**, not a reflex. At least these are live and they differ
+- [x] The fix is a **decision, recorded**, not a reflex. At least these are live and they differ
       in what a stale plan means: carry `goal`/`plan_item` across the rebuild; re-derive the plan
       as part of indexing; or persist the plan to a text file that the indexer reads like every
       other source of truth. The third is the only one consistent with *"tasks are FILES; the
       index is derived from them"* (`kit-task.sh` header) — a table that cannot be rebuilt from
       text is already the second source of truth this design exists to avoid.
-- [ ] **A carried-forward plan must be able to go stale and say so.** If the plan survives the
+- [x] **A carried-forward plan must be able to go stale and say so.** If the plan survives the
       rebuild it can now describe tasks that have closed, split or changed tier. Whatever is
       chosen must make a stale plan detectable rather than confidently wrong — the same
       requirement `T-20260808-cluster-packs-are-generated-and-read-by-` AC4 places on packs.
-- [ ] Orphaned packs cannot outlive their plan silently. Either they are removed with it, or
+- [x] Orphaned packs cannot outlive their plan silently. Either they are removed with it, or
       `kit-status.sh` reports pack files with no corresponding `plan_item` rows.
-- [ ] The conformance step **derives** its expectation from the authority rather than restating
+- [x] The conformance step **derives** its expectation from the authority rather than restating
       it — the set of tables the indexer does not populate should come from `schema.sql` and the
       indexer's own INSERT sites, so a seventh table added later is covered without an edit.
-- [ ] `docs/HANDOFF.md` §4.6 either becomes true or is corrected. A guarantee that the plan
+- [x] `docs/HANDOFF.md` §4.6 either becomes true or is corrected. A guarantee that the plan
       survives a crash, published while it does not survive the next session, is worse than no
       guarantee.
 
@@ -111,10 +111,10 @@ concurrently against an empty finding table, so rung 5's blindness was structura
 
 | Disposition | n | Notes |
 |---|---|---|
-| **Fixed and verified** | **22** | incl. the critical and 16 of 21 majors |
+| **Fixed and verified** | **24** | incl. the critical and **18 of 21 majors** — updated 2026-08-18 when the last two majors closed at `a1f987f`: the `SECURITY.md` trust-table row, and the check that the plan file is git-tracked |
 | **Claim narrowed instead of widened** | 2 | the digest-coverage pair. Reviewers offered *"either widen the digest or narrow the claim"*; the claim was narrowed in `kit_plan_digest`'s docstring and the ADR. **Coverage is unchanged** |
 | **Partially addressed** | 2 | see below — both are stated honestly rather than counted as done |
-| **Not addressed** | 9 | 2 majors, 4 minors, 3 nits — listed below |
+| **Not addressed** | **7** | was 9; the 2 majors closed at `a1f987f`. Remaining: **4 minors, 3 nits**, listed below and none judged blocking |
 
 **The two partials, stated precisely rather than rounded up.**
 `kit-index.sh:1296` — the staleness block still does **not** re-validate rows; it reads only

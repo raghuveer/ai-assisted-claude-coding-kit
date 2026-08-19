@@ -3328,6 +3328,59 @@ check $? "a gitignored plan is reported by name and the notice clears when it is
 rm -rf "$cl" "$cl.src" "$(dirname "$cl")/plan.before"
 fi
 
+if step "documentation and a single co-edit are not evidence that two tasks are about one thing"; then
+# hub_cap assumes a cross-cutting file is HIGH degree. Where the cross-cutting surface is
+# documentation it is LOW degree, so the rule kept README.md (degree 5) as evidence while
+# excluding tests/conformance.sh (13) as a hub — it dropped the code that indicates shared
+# subject matter and kept the prose that does not. Measured on this repository: 28 of 46 leaf
+# files were documentation, and 34 of 43 links came from a SINGLE shared file.
+#
+# THE THIRD ASSERTION IS THE ONE THAT MATTERS. Two rules that only ever REFUSE to union would
+# satisfy the first two and destroy clustering entirely, which is a worse defect than the
+# over-fusion being fixed. Every check here has an inverse for that reason.
+cu="$WORK.clustunion"; rm -rf "$cu"; mkdir -p "$cu/src"
+( cd "$cu" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email a@b.c; git config user.name T
+  bash "$KIT/tooling/kit-init.sh" >/dev/null 2>&1
+  # No epic on any of them: epic-union would confound every assertion below.
+  for t in D1 D2 E1 E2 F1 F2; do
+    printf -- '---\nid: T-%s\ntitle: %s\ntier: T2\n---\nb\n' "$t" "$t" > ".project/tasks/T-$t.md"
+  done
+  printf 'x\n' > README.md; printf 'x\n' > src/a.txt
+  printf 'x\n' > src/b.txt; printf 'x\n' > src/c.txt
+  git add -A && git commit -q --no-verify -m "chore: seed"
+  c() { printf '%s\n' "$2" > "$1"; shift 2; git add -A; git commit -q --no-verify -m "feat: w
+
+Task-Id: $1
+Tier: T2"; }
+  # D1/D2 share ONLY a doc.               E1/E2 share ONLY ONE code file.
+  c README.md   d1 T-D1;  c README.md   d2 T-D2
+  c src/a.txt   e1 T-E1;  c src/a.txt   e2 T-E2
+  # F1/F2 share TWO code files — the case that must still union.
+  printf 'f1\n' > src/b.txt; printf 'f1\n' > src/c.txt; git add -A
+  git commit -q --no-verify -m "feat: f1
+
+Task-Id: T-F1
+Tier: T2"
+  printf 'f2\n' > src/b.txt; printf 'f2\n' > src/c.txt; git add -A
+  git commit -q --no-verify -m "feat: f2
+
+Task-Id: T-F2
+Tier: T2"
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
+  bash "$KIT/tooling/kit-plan.sh"  >/dev/null 2>&1
+  Q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+  cl() { Q "SELECT cluster FROM plan_item WHERE task_id='$1';"; }
+  [ -n "$(cl T-D1)" ] || exit 1                       # all six must be planned at all
+  [ "$(cl T-D1)" != "$(cl T-D2)" ] || exit 1          # a shared DOC is not evidence
+  [ "$(cl T-E1)" != "$(cl T-E2)" ] || exit 1          # ONE shared code file is not evidence
+  [ "$(cl T-F1)"  = "$(cl T-F2)" ] || exit 1          # TWO shared code files still ARE
+  exit 0 )
+check $? "a shared doc and a single shared file do not union, two shared files still do"
+rm -rf "$cu"
+fi
+
 if step "a degenerate cluster withholds its packs and says so, and a raised cap still writes them"; then
 # kit-index.sh withholds a co-change graph whose average degree exceeds cochange.max_degree,
 # because answering "everything" is worse than an honest unknown. Clustering had no equivalent
@@ -3365,16 +3418,22 @@ cl2="$WORK.clustdeg"; rm -rf "$cl2"; mkdir -p "$cl2"
   printf -- '---\nid: T-A2\ntitle: a2\ntier: T2\nepic: alpha\n---\nb\n' > .project/tasks/T-A2.md
   printf -- '---\nid: T-B1\ntitle: b1\ntier: T2\nepic: beta\n---\nb\n'  > .project/tasks/T-B1.md
   printf -- '---\nid: T-B2\ntitle: b2\ntier: T2\nepic: beta\n---\nb\n'  > .project/tasks/T-B2.md
-  printf 'x\n' > shared.md
+  mkdir -p src; printf 'x\n' > src/x.txt; printf 'x\n' > src/y.txt
   git add -A && git commit -q --no-verify -m "chore: seed"
-  # One file, touched by one task from each epic. Degree 2, so hub_cap keeps it as "evidence"
-  # of shared subject matter — and the two epics fuse into one cluster.
-  printf 'y\n' > shared.md; git add -A
+  # TWO non-documentation files, touched by one task from each epic. Both filters must be
+  # cleared for the union to happen, and clearing them is the point: this fixture exists to
+  # produce a genuine degenerate cluster, not an artificial one.
+  #
+  # It used to bridge through a single `shared.md`, and A+B broke it for two independent
+  # reasons at once — `cluster.ignore_glob` excludes `*.md`, and one shared file no longer
+  # meets `cluster.min_shared`. Both were the new rules working. Left as a marker: if this
+  # fixture ever stops fusing again, check whether a real rule changed before changing it back.
+  printf 'a\n' > src/x.txt; printf 'a\n' > src/y.txt; git add -A
   git commit -q --no-verify -m "feat: a
 
 Task-Id: T-A1
 Tier: T2"
-  printf 'z\n' > shared.md; git add -A
+  printf 'b\n' > src/x.txt; printf 'b\n' > src/y.txt; git add -A
   git commit -q --no-verify -m "feat: b
 
 Task-Id: T-B1
