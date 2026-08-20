@@ -70,17 +70,59 @@ predates all of it. Folded in here rather than filed separately, because this ta
 "exercise it for real" and two tasks racing at one target is the duplication an audit exists to
 prevent.
 
-- [ ] Run through `claude --plugin-dir <kit>` and confirm skills and agents resolve as
+- [x] Run through `claude --plugin-dir <kit>` and confirm skills and agents resolve as
       `coding-kit:*`. Nothing else proves the manifest is right.
-- [ ] **`task-context` end to end, which is where ADR 0004's whole argument lands:** step 1's
+- [x] **`task-context` end to end, which is where ADR 0004's whole argument lands:** step 1's
       `kit-index.sh --if-stale` must leave `plan_item` intact, and step 4 must find the pack it
       resolves. Before 2026-08-17 step 1 deleted what step 4 read; the fix is proven by conformance
       and unproven in a session.
+
+      **DONE 2026-08-20 on a synthetic subject. This is a smoke test, not the trial** — the
+      subject is three Python files and three tasks that this session authored, so it exercises
+      the PATH and proves nothing about brownfield behaviour. The criteria below and above still
+      require a real, unfamiliar repository.
+
+      Method: a throwaway repo adopted with `kit-init.sh`, confirmed by
+      `kit-preflight.sh --isolated` to have no remote and no shared object store, invoked as
+      `claude --plugin-dir <kit> --allowedTools "Read,Grep,Glob,Bash,Task,Skill"`. Baseline
+      captured first — **3 plan rows, 2 packs, 0 spend rows, 0 spend events** — because "the hooks
+      fired" is only a measurement against a recorded zero.
+
+      | check | result |
+      |---|---|
+      | skill resolves and its procedure is followed | yes |
+      | **`plan_item` across step 1** | **3 before, 3 after** |
+      | step 4 resolves and dereferences its pack | `default`/cluster 1 → `c1.md`, existed and loaded |
+      | spend events written by the hooks | **0 → 2** |
+      | per-agent attribution | `scope=subagent`, `agent=general-purpose` |
+      | `kit-preflight.sh --spend` | *"spend capture is live — 2 event(s), 2 row(s)"* |
+
+      **The plan_item row is the whole point.** Before 2026-08-17 step 1 deleted exactly what step
+      4 reads, so a session would have found no row and silently skipped the pack. Proven by
+      conformance for days; this is the first time it has been true in an actual session.
+
+      **Two things the run surfaced that a passing test would have hidden.** The pack loaded and
+      was nearly EMPTY — it named the sibling task and recorded no files and no defect classes,
+      because no commit in the subject carries a `Task-Id` yet. That is
+      `T-20260817-a-cluster-pack-file-list-ignores-declare` visible in a live session rather than
+      in a query. And the session correctly reported blast radius as **"unknown, not small"**
+      rather than reading the empty result as "no dependencies", which is the distinction
+      `skills/task-context` §Reporting exists to preserve.
+
+      **Not exercised:** `--packs` recovery, the `cluster.max_share` withhold (the subject has 3
+      tasks, below `cluster.min_tasks: 10`, so the floor correctly suppressed it), a stale plan, a
+      refused plan, and any reviewer agent.
 - [ ] `kit-plan.sh --packs` recovers a clone's packs, and the withhold notice surfaces where a
       human reads it — `STATUS.generated.md`, not stderr.
-- [ ] Per-agent spend rows land with `scope=subagent`. Hooks fire only under the plugin, so this is
+- [x] Per-agent spend rows land with `scope=subagent`. Hooks fire only under the plugin, so this is
       the precondition for every cost figure the trial reports, and `kit-preflight.sh --spend` is
       the check.
+
+      **Confirmed 2026-08-20** in the run above: one `scope=main` row and one
+      `scope=subagent`/`agent=general-purpose` row, from a recorded baseline of zero. This is also
+      the precondition for `T-20260808-cluster-packs-are-generated-and-read-by-` — measured from a
+      development session the kit yields only `scope=main` rows that conflate every agent, and the
+      experiment would report a confidently wrong number.
 - [ ] The new clustering rules behave on the subject's real backlog: record the cluster
       distribution and whether packs were withheld. `cluster.min_shared` and `cluster.ignore_glob`
       were tuned against **one** backlog on 2026-08-19 and are seeded values by the kit's own
