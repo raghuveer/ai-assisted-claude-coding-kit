@@ -46,6 +46,38 @@ Adopt the register's two guard conditions as policy rather than prose:
 - [ ] A period with no data says so, rather than printing zeroes that read as measurements —
       the `0 / 0 via:kit` defect must not be reproduced here.
 
+## A hand-run instance, 2026-08-20 — `docs/design-input/2026-08-20-retro-period-one.md`
+
+The command does not exist, so period one was run **by hand**, deliberately before building it, so
+the command has a target shape derived from a real period rather than an invented one. It is not
+an acceptance criterion met; it is the specification earned.
+
+**It produced a concrete change**, which AC1 requires of every retro:
+`agents/implementation-reviewer.md` gains universal failure mode **(i) — a fix that closes a
+finding at its SITE may leave its CONSUMER unchanged.** Earned from a measured instance this
+period: a review said *"task-context step 4 has no miss path"*, a recovery command and a status
+notice were built, the finding was marked fixed and the task closed — and step 4 still had no miss
+path, found by a live session days later. Nobody checked the consumer.
+
+**No change to the risk-tiering table**, and that is a finding rather than an omission: escape rate
+needs escapes, and `event.kind='escaped'` has **0 rows and always has**. There is no calibration
+evidence, and changing floors without it is what that table's own comment forbids.
+
+**Both guard conditions evaluated:** no agent produced zero findings (all three reviewers raised
+some), and no efficiency gain was claimed, so nothing to weigh escapes against.
+
+**What the hand run taught the command**, beyond the ACs already listed:
+
+- [ ] Report **disposition latency** — findings recorded versus dispositioned, and the interval.
+      Not currently derivable, and it is the single number that would have surfaced this period's
+      real problem: 351 findings recorded against 17 ever dispositioned before it.
+- [ ] Say plainly that the retro **cannot see operator error**. Most of this period's lost time was
+      mine — an in-flight suite reported as a result, a running script edited, `git checkout` over
+      uncommitted work, scripted patches whose anchors silently missed — and no artefact the kit
+      produces would catch any of it. A retro that measures only the pipeline reports a healthy
+      period and implies coverage it does not have, which is the boundary discipline
+      `security-reviewer` already applies to SCA, SAST and DAST.
+
 ## Notes
 
 Filed 2026-08-11 from R-16, **scoped to wiring existing metrics** rather than building

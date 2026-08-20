@@ -48,6 +48,13 @@ The project overlay adds the ones this repo has actually shipped, with citations
 - **(h) A fix ported from a sibling control must bring that control's REASONING, not just its shape.**
   When code adopts a pattern from elsewhere in the repo, read what that pattern was defending against and
   check whether every part came across. Half a ported fix looks correct and reopens a closed defect.
+- **(i) A fix that closes a finding at its SITE may leave its CONSUMER unchanged.** When a diff claims to
+  address a prior finding, find who *reads* the thing that was fixed and check that path too. A mechanism
+  can be repaired, made observable, and still be unreachable from the code that needed it — which reads as
+  closed in the record and is open in behaviour. Added 2026-08-20 from a measured instance: a review said
+  *"task-context step 4 has no miss path"*; a recovery command and a status notice were built, the finding
+  was marked fixed, the task closed — and step 4 still had no miss path, found by a live session days
+  later. Nobody had checked the consumer.
 
 ## Output
 
