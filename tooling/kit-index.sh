@@ -1345,35 +1345,23 @@ rm -f "$FAILED_MARK"
 mv -f "$NEW" "$DB" ||
   { kit_warn "could not replace ${DB#$ROOT/}; it was left unchanged."; build_failed; }
 
-# A fix mark names a commit. Nothing checked that the commit is still in this history, so a
-# branch that was rebased away, or a SHA that never existed, left the finding marked fixed
-# forever with its evidence pointing at nothing. Checked here rather than in SQL because only
-# git can answer it, and only for rows that carry a SHA -- a handful, not a walk of the log.
-#
-# WHAT THIS DOES NOT DETECT, said plainly: a REVERT. A reverted fix leaves its commit in
-# history and adds another undoing it, so the mark still resolves and still reads as addressed.
-# Deciding whether a later commit undoes an earlier one is not a lookup, and pretending this
-# covers it would be the false-rationale this kit exists to refuse.
-# Counts MARKS, not distinct commits, because that is what the report says it counts -- three
-# marks citing one vanished SHA under-reported as one. And read with `while read`, not
-# `for _c in $(...)`: an unquoted command substitution word-splits and globs, and a value stored
-# before `--commit` was validated is arbitrary text. That is the interpolation shape LESSONS §4
-# says to sweep for rather than fix one instance of, and it was introduced here while fixing
-# something else.
-# A plan survives a rebuild now (ADR 0004), so for the first time it can outlive the backlog
-# it was computed from: tasks close, split, or change tier underneath it. That possibility is
-# the COST of persisting it, and a carried-forward plan that could not say it was stale would
-# be a worse defect than the one this fixed -- a plan that visibly vanished, replaced by one
-# that is confidently wrong.
-#
-# Compared here rather than in the SQL stream because the digest is computed from the finished
-# index, and by the one function kit-plan.sh also calls. Two copies of that query would report
-# every plan permanently stale or permanently fresh, and both fail silently.
 STALE_PLANS=0
 if [ -d "$PLANS_DIR" ]; then
   PLAN_DIGEST_NOW=$(kit_plan_digest "$DB")
   for _pf in "$PLANS_DIR"/*.tsv; do
     [ -f "$_pf" ] || continue
+    # A REFUSED PLAN IS NOT A STALE ONE, and reporting it as either fresh or stale is worse than
+    # saying nothing: section 3c loaded ZERO rows from it, so "the ordering is current" and "the
+    # ordering has moved" are both false. This block used to re-read the same file with only the
+    # two headers it needed and no row validation at all, so a file 3c had rejected still got a
+    # digest comparison — and on a match it actively DELETED the stale marker.
+    #
+    # It defers to the refusal list rather than duplicating 3c's checks. Duplicating them is how
+    # the two readers drift, which is the defect ADR 0004 removed by deleting the second writer;
+    # a second validator would reintroduce it on the read side.
+    if [ -s "$KIT_PLAN_REFUSED" ] && grep -qF "${_pf#$ROOT/}" "$KIT_PLAN_REFUSED" 2>/dev/null; then
+      continue
+    fi
     _pg=$(awk -F'\t' '$1=="#goal"{print $2; exit}' "$_pf" | tr -d '\r')
     _pd=$(awk -F'\t' '$1=="#tasks_digest"{print $2; exit}' "$_pf" | tr -d '\r')
     [ -n "$_pg" ] || continue
@@ -1445,6 +1433,30 @@ if [ "$STALE_PLANS" -gt 0 ]; then
   kit_warn "  The ordering still loads; it may name tasks that have closed or changed tier."
 fi
 
+# A fix mark names a commit. Nothing checked that the commit is still in this history, so a
+# branch that was rebased away, or a SHA that never existed, left the finding marked fixed
+# forever with its evidence pointing at nothing. Checked here rather than in SQL because only
+# git can answer it, and only for rows that carry a SHA -- a handful, not a walk of the log.
+#
+# WHAT THIS DOES NOT DETECT, said plainly: a REVERT. A reverted fix leaves its commit in
+# history and adds another undoing it, so the mark still resolves and still reads as addressed.
+# Deciding whether a later commit undoes an earlier one is not a lookup, and pretending this
+# covers it would be the false-rationale this kit exists to refuse.
+# Counts MARKS, not distinct commits, because that is what the report says it counts -- three
+# marks citing one vanished SHA under-reported as one. And read with `while read`, not
+# `for _c in $(...)`: an unquoted command substitution word-splits and globs, and a value stored
+# before `--commit` was validated is arbitrary text. That is the interpolation shape LESSONS §4
+# says to sweep for rather than fix one instance of, and it was introduced here while fixing
+# something else.
+# A plan survives a rebuild now (ADR 0004), so for the first time it can outlive the backlog
+# it was computed from: tasks close, split, or change tier underneath it. That possibility is
+# the COST of persisting it, and a carried-forward plan that could not say it was stale would
+# be a worse defect than the one this fixed -- a plan that visibly vanished, replaced by one
+# that is confidently wrong.
+#
+# Compared here rather than in the SQL stream because the digest is computed from the finished
+# index, and by the one function kit-plan.sh also calls. Two copies of that query would report
+# every plan permanently stale or permanently fresh, and both fail silently.
 MISSING=0
 while IFS= read -r _c; do
   [ -n "$_c" ] || continue
