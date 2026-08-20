@@ -112,8 +112,33 @@ prevent.
       **Not exercised:** `--packs` recovery, the `cluster.max_share` withhold (the subject has 3
       tasks, below `cluster.min_tasks: 10`, so the floor correctly suppressed it), a stale plan, a
       refused plan, and any reviewer agent.
-- [ ] `kit-plan.sh --packs` recovers a clone's packs, and the withhold notice surfaces where a
+- [x] `kit-plan.sh --packs` recovers a clone's packs, and the withhold notice surfaces where a
       human reads it — `STATUS.generated.md`, not stderr.
+
+      **Done 2026-08-20 on the same synthetic subject, all five paths, still a smoke test.**
+
+      | path | result |
+      |---|---|
+      | stale plan (task added, not replanned) | warned, and `STATUS.generated.md` carried it |
+      | replan clears it | `plan_stale` 0, `plan_item` 4 |
+      | refused plan (non-numeric `layer`) | *"layer/rank are not plain numbers"*, **0 rows loaded**, STATUS named the file and the reason |
+      | orphan notice while refused | **suppressed** — a refused plan is not reported as an orphaned pack |
+      | `--packs` recovery in a clone | 0 → **2 packs**, plan file **byte-identical**, missing-pack notice cleared |
+
+      The suppression row is the one worth keeping: reporting a refused plan as an orphaned pack
+      would be the wrong cause and the wrong remedy, which is what a T3 security review flagged.
+
+      **The `cluster.max_share` withhold was NOT exercised** — the subject has 4 tasks, below
+      `cluster.min_tasks: 10`, so the floor correctly suppressed it. That floor exists because a
+      percentage has no meaning at small n, and it is doing its job here rather than being
+      skipped. The withhold path remains conformance-proven only.
+
+      **A defect this surfaced is filed as
+      `T-20260820-task-context-has-no-branch-for-a-missing`:** `--packs` fixes the recovery and
+      `kit-status.sh` makes the state discoverable, but `skills/task-context` step 4 — the
+      consumer — still has no branch for a row whose pack is absent, and the repair it *does*
+      name (bare `kit-plan.sh`) discards the committed plan. A live session recovered correctly
+      only by reading `kit-plan.sh`'s source.
 - [x] Per-agent spend rows land with `scope=subagent`. Hooks fire only under the plugin, so this is
       the precondition for every cost figure the trial reports, and `kit-preflight.sh --spend` is
       the check.
