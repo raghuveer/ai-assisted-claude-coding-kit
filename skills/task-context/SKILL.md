@@ -33,9 +33,16 @@ is the failure this skill exists to prevent.
    and acceptance criteria. Do not read sibling task files.
 
 4. Load the cluster pack, if this task is in a plan. Tasks are grouped by what they are
-   about — a shared epic, a shared source file, a declared dependency — and the pack holds
-   what every session in that group needs: the sibling tasks, the files the group touches,
-   and defect classes already confirmed in those files.
+   about — a shared epic, or shared source files — and the pack holds what every session in
+   that group needs: the sibling tasks, the files the group touches, and defect classes
+   already confirmed in those files.
+
+   **A declared dependency does NOT group tasks**, and saying it did was wrong here for as long
+   as this file has existed. `kit-plan.sh` removed dependency as a union signal because it says
+   *"after", not "about"* — unioning it fused every epic one chain passed through. Files count
+   only when a pair shares at least `cluster.min_shared` of them and none is matched by
+   `cluster.ignore_glob`, because documentation was measured at 61% of the evidence base and a
+   single co-edit at 79% of all links.
 
    ```sh
    sqlite3 -separator ' ' .project/index.db "

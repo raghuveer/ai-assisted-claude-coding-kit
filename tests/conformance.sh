@@ -3213,7 +3213,7 @@ pl="$WORK.plan"; rm -rf "$pl"; mkdir -p "$pl/src"
 
   bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1
   bash "$KIT/tooling/kit-plan.sh"  >/dev/null 2>&1
-  Q "$ROWS" > before.rows; Q "SELECT id,title,created_at FROM goal;" > before.goal
+  Q "$ROWS" > before.rows; Q "SELECT id,title,created_at,state FROM goal;" > before.goal
   [ -s before.rows ] || exit 1                     # a plan of nothing proves nothing
   [ -f .project/plans/default.tsv ] || exit 1      # the plan is a FILE, not only a table
 
@@ -3221,7 +3221,7 @@ pl="$WORK.plan"; rm -rf "$pl"; mkdir -p "$pl/src"
   # skill's step 1 then rebuilds. Before ADR 0004 this is where the plan died.
   printf -- '---\nid: T-P3\ntitle: three\ntier: T3\n---\nedited\n' > .project/tasks/T-P3.md
   bash "$KIT/tooling/kit-index.sh" --if-stale >/dev/null 2>&1
-  Q "$ROWS" > after.rows; Q "SELECT id,title,created_at FROM goal;" > after.goal
+  Q "$ROWS" > after.rows; Q "SELECT id,title,created_at,state FROM goal;" > after.goal
   cmp -s before.rows after.rows || exit 1
   # created_at included deliberately: it was strftime('now') in the emitted SQL, so a rebuild
   # re-stamped the goal and no round-trip check could ever have passed.

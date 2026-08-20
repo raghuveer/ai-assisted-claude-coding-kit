@@ -205,6 +205,19 @@ CREATE INDEX idx_finding_pattern ON finding(pattern, class);
 CREATE TABLE goal (
   id         TEXT PRIMARY KEY,
   title      TEXT,
+  -- RESERVED AND CURRENTLY UNWRITTEN. Nothing sets it and nothing reads it, and section 3c's
+  -- `INSERT OR REPLACE` omits it, so every rebuild resets it to 'open'. That is stated here
+  -- rather than left to be discovered, because the trap is silent: the first writer to set a
+  -- goal 'closed' would find it silently 'open' again after the next index, with no symptom.
+  --
+  -- It is kept rather than dropped because a milestone genuinely needs a state and
+  -- `T-20260819-goals-are-the-milestone-mechanism-and-on` is the task that would use it. The
+  -- condition for using it is a TEXT SOURCE first -- a header in the plan file, derived like
+  -- every other column -- for the reason ADR 0004 records: a table nothing can rebuild from
+  -- text is the second source of truth this design exists to avoid.
+  --
+  -- The round-trip conformance step selects `state`, so the day a writer appears without a
+  -- text source, that step goes red rather than the reset staying invisible.
   state      TEXT NOT NULL DEFAULT 'open',
   created_at TEXT
 );

@@ -175,6 +175,21 @@ a plan that visibly vanished with one that is confidently wrong, which is the sa
   the same goal will conflict in `.project/plans/default.tsv`. That is a visible merge conflict
   over an ordering decision, which is the correct place for that disagreement to surface. It was
   previously invisible because neither person's plan survived their own next session.
+
+  > **Amended 2026-08-20 — merge conflicts are not the whole team cost**, and a review said so
+  > before this shipped. Two more follow from the plan being a tracked file, and both are
+  > everyday rather than occasional:
+  >
+  > **Every replan dirties a tracked file**, so it needs a commit — and under
+  > `git.trailer_enforcement: enforce` that commit needs `Task-Id:` and `Tier:` trailers unless
+  > it matches `git.trivial_pattern`. Re-running the planner is no longer free.
+  >
+  > **In an active team the stale notice will be on more often than off.** Any merged task add
+  > or close moves the digest, so `plan_stale` fires until someone replans. That is the
+  > always-on warning `kit_plan_digest`'s own comment cites `MEASUREMENTS.md` §B.6 to avoid,
+  > arriving through a channel that comment did not consider. It is accepted here rather than
+  > designed away — the alternative is a plan that goes stale silently — but if it fires on most
+  > sessions in practice, the digest granularity is wrong and that is the signal to re-cut it.
 - **Not addressed here:** whether the ordering itself is any good.
   `T-20260817-one-shared-file-merges-two-whole-epics-s` records that 61 of 77 open tasks currently
   land in one cluster. Persisting a degenerate plan faithfully is still persisting a degenerate

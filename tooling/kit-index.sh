@@ -1009,8 +1009,24 @@ done
 # missing rows would reorder work silently, which is worse than no plan.
 PLANS_DIR="$ROOT/$STATE_DIR/plans"
 if [ -d "$PLANS_DIR" ]; then
+  # TWO FILES MAY NOT CLAIM ONE GOAL. Each emits DELETE-then-INSERT for its `#goal`, so with a
+  # duplicate the shell's glob order silently decides which ordering survives — an ordering no
+  # planner computed and nobody chose. Every file claiming a contested goal is refused, not just
+  # the later one: "last one wins" is a filename sort, not a decision.
+  _dupes=$(for _p in "$PLANS_DIR"/*.tsv; do
+             [ -f "$_p" ] && awk -F'\t' '$1=="#goal"{sub(/\r$/,"",$2); print $2; exit}' "$_p"
+           done | sort | uniq -d)
+  for _d in $_dupes; do
+    printf '%s\tgoal %s is declared by more than one plan file\n' "$PLANS_DIR" "$_d" >> "$KIT_PLAN_REFUSED"
+    kit_warn "goal '$_d' is declared by more than one plan file; none of them is loaded"
+    kit_warn "  Glob order would decide which ordering survives. Remove or rename the duplicate."
+  done
   for _pf in "$PLANS_DIR"/*.tsv; do
     [ -f "$_pf" ] || continue
+    if [ -n "$_dupes" ]; then
+      _g=$(awk -F'\t' '$1=="#goal"{sub(/\r$/,"",$2); print $2; exit}' "$_pf")
+      printf '%s\n' "$_dupes" | grep -qxF "${_g:-}" && continue
+    fi
     awk -F'\t' -v file="${_pf#$ROOT/}" '
       function q(s){ gsub(/\047/,"\047\047",s); return s }
       function refuse(why) { reason = why; bad = 1 }
@@ -1040,6 +1056,16 @@ if [ -d "$PLANS_DIR" ]; then
       $1=="#goal"        { goal=$2;     next }
       $1=="#created"     { created=$2;  next }
       $1=="#withheld"    { withheld=$2; next }
+      # The plan travels between machines and kit versions through git, so these two are
+      # CHECKED rather than skipped as comments. A file written by a kit that reordered
+      # plan_item would otherwise be read positionally by an older one -- rank landing silently
+      # in layer, with no symptom until the ordering is wrong. Absent means version 1, so plans
+      # written before this header stay loadable.
+      $1=="#version"     { version=$2;  next }
+      $1=="#columns"     { cols_seen=1
+                           if (NF!=7 || $2!="goal_id" || $3!="task_id" || $4!="layer" || \
+                               $5!="rank" || $6!="score" || $7!="cluster") cols_bad=1
+                           next }
       /^#/               { next }
       /^[ \t]*$/         { next }
       {
@@ -1065,6 +1091,10 @@ if [ -d "$PLANS_DIR" ]; then
         if (goal == "")            refuse("no \043goal header")
         else if (goal ~ /[^A-Za-z0-9._-]/)
           refuse("\043goal is not a safe path segment: \047" goal "\047")
+        else if (version != "" && version != "1")
+          refuse("\043version " version " is newer than this kit reads (1)")
+        else if (cols_seen && cols_bad)
+          refuse("\043columns does not match this kit\047s column order")
         if (bad) {
           printf "%s\t%s\n", file, reason > ENVIRON["KIT_PLAN_REFUSED"]
           printf "kit: %s was NOT loaded — %s\n", file, reason > "/dev/stderr"
@@ -1072,6 +1102,11 @@ if [ -d "$PLANS_DIR" ]; then
         }
         printf "INSERT OR REPLACE INTO goal(id,title,created_at) VALUES(\047%s\047,\047%s\047,\047%s\047);\n", \
                q(goal), q(goal), q(created)
+        # Reads as a no-op and is kept deliberately: the build starts from a fresh schema, so on
+        # the normal path this deletes nothing. It is the guard for a goal that appears twice
+        # WITHIN one file — the duplicate-across-files case is refused before either loads, but
+        # nothing stops a hand-edited file repeating its own goal, and without this the rows
+        # would accumulate instead of replacing.
         printf "DELETE FROM plan_item WHERE goal_id=\047%s\047;\n", q(goal)
         for (i=1; i<=rows; i++)
           printf "INSERT OR REPLACE INTO plan_item VALUES(\047%s\047,\047%s\047,%d,%d,%s,%d);\n", \
@@ -1369,6 +1404,17 @@ if [ -d "$PLANS_DIR" ]; then
       sqlite3 "$DB" "DELETE FROM meta WHERE key='plan_ignored:$_pgq';" 2>/dev/null
       git -C "$ROOT" ls-files --error-unmatch -- "$_pf" >/dev/null 2>&1 ||
         kit_warn "the plan for '$_pg' is not committed yet; \`git add\` it or it stays local to this machine"
+      # THE LF PIN, CHECKED HERE RATHER THAN WRITTEN BY kit-init.sh. kit-init runs once, at
+      # adoption, so a repository that adopted the kit before ADR 0004 never receives the pin
+      # and nothing would ever say so. The indexer runs every session, which makes it the only
+      # place the gap is observable. Checked, not written: silently editing a project's
+      # .gitattributes from the indexer would be a write nobody asked for.
+      if [ -f "$ROOT/.gitattributes" ] &&
+         ! grep -qxF '.project/plans/*.tsv text eol=lf' "$ROOT/.gitattributes" 2>/dev/null; then
+        kit_warn "the plan is committed but .gitattributes does not pin it to LF"
+        kit_warn "  A CRLF checkout carries a CR into the goal id and the digest, which marks"
+        kit_warn "  every plan stale against itself. Add: .project/plans/*.tsv text eol=lf"
+      fi
     fi
     # No digest at all is an OLDER plan file, not a fresh one. Treated as stale and said so:
     # assuming it matches is the laundering this check exists to prevent.
