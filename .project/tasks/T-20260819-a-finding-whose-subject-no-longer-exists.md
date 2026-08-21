@@ -2,11 +2,26 @@
 id: T-20260819-a-finding-whose-subject-no-longer-exists
 title: A finding whose subject no longer exists has no disposition so it blocks a gate forever
 epic: feedback-loop
-tier: T2
+tier: T3
 lang: bash
-paths: tooling/kit-resolve.sh, tooling/kit-status.sh, tooling/kit-preflight.sh, .claude/CLAUDE.md
+paths: tooling/kit-resolve.sh, tooling/kit-status.sh, tooling/kit-preflight.sh, tooling/kit-index.sh, tooling/kit-event.sh, tooling/kit_findings.py, tooling/schema.sql, tests/conformance.sh, docs/TRIAL-PROTOCOL.md, .claude/CLAUDE.md
 state: open
 ---
+
+> **Retiered T2 → T3 on 2026-08-21, by the project's own floor rule rather than by judgement.**
+> `tier.rule: tooling/kit-index.sh T3`, and floors are never ceilings. The implementation had to
+> teach the indexer a sixth acting kind, which the original `paths:` did not anticipate.
+>
+> **An earlier version of this note said the floor report could not see the under-declaration.
+> That was wrong, and an approach review refuted it.** `kit-index.sh:1293` raises `tier_floor`
+> from **`touches` edges**, which come from commit trailers — not only from declared `paths:`.
+> `T-20260813-nine-criticals-predate-summary-and-canno` declares three files, none of them
+> `kit-index.sh`, and is reported `recorded T2, floor T3` today by exactly that route.
+>
+> The true and weaker statement: a `touches` edge exists only **after** the commit is made and the
+> index rebuilt, so the report is **late, not blind** — it names a landed commit as under-tiered
+> rather than stopping one. Filed as
+> `T-20260821-kit-trailers-never-checks-tier-against-t`.
 
 ## Intent
 
