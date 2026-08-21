@@ -1,6 +1,37 @@
 # ADR 0006: Admissible evidence for a disposition
 
-- **Date:** 2026-08-21   **Status:** **Proposed**   **Supersedes:** [[0005-evidence-for-a-disposition-must-be-re-checkable]]   **Related:** [[0004-where-the-plan-lives]]
+- **Date:** 2026-08-21   **Status:** **REJECTED — do not implement**   **Supersedes:** [[0005-evidence-for-a-disposition-must-be-re-checkable]]   **Related:** [[0004-where-the-plan-lives]]
+
+> **Superseded-by: 7491700**
+
+> **Rejected 2026-08-21 by two reviewers launched concurrently, both returning REJECT with 4
+> criticals each and 33 findings, recorded in `7491700`.** Kept rather than deleted, on the same
+> grounds as 0005: the review is the value, and the findings against it are recorded against
+> `T-20260819-a-finding-whose-subject-no-longer-exists`.
+>
+> **It failed the way its own predecessor failed, in the same section.** §Consequences claimed
+> *"three open criticals close by construction"*. Queried: **all three are MAJOR** —
+> check-once-trust-forever, no-retraction and guard-in-the-caller. The five real open criticals
+> were different findings. A confident, checkable, false load-bearing claim is what this document
+> was written to avoid repeating, in a document whose first line promises every number was
+> measured and its command named. *"275 findings carry a summary"* is **297**, restated from
+> 0005's rejection banner rather than re-measured.
+>
+> **The design defect underneath.** The decision says both *"the citation is not stored"* and
+> *"matching stays as `kit-resolve.sh` now implements it"*. Those cannot both hold: `git grep -l`
+> returns **filenames, not lines**, so with no citation at rebuild the check degrades to
+> **presence**. That re-opens at the indexer every defeat `aeaf7ab` closed at the caller three
+> hours earlier — any `Superseded-by:` line clears, and self-supersession returns. The re-check
+> was weaker than the once-check it replaced, and was presented as a strengthening.
+>
+> Reproduced independently before any of it was accepted: `.git/HEAD` mtime does not move on
+> commit; `:(glob)**`, `*` and `:(icase)` as an agent-supplied `file_path` all matched a marker in
+> an unrelated file; a marker inside a fenced code block matches; and the 769 ms measurement was
+> scoped to `docs/**`, which covers 7 of the 34 distinct cited paths.
+>
+> What survived: both tasks this document said it filed **do** exist, unlike 0005 which claimed
+> three and filed none. **No successor has been written yet** — which is why the findings against
+> this ADR cite the rejection commit rather than an ADR 0007.
 
 Successor to ADR 0005, which was **rejected on the day it was written** with 3 criticals and 22
 findings. That document argued the right idea — a disposition must cite evidence the kit can

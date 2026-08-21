@@ -2,6 +2,8 @@
 
 - **Date:** 2026-08-21   **Status:** **REJECTED — do not implement**   **Supersedes:** —   **Related:** [[0004-where-the-plan-lives]]
 
+> **Superseded-by: 0006-admissible-evidence-for-a-disposition**
+
 > **Rejected 2026-08-21 by an approach review, on the day it was written, with 3 criticals and 22
 > findings.** Kept rather than deleted, because the review is the value: this document is the
 > worked example of the failure it was written to prevent, and the findings against it are recorded
