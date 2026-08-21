@@ -1011,6 +1011,50 @@ sp="$WORK.supersede"; rm -rf "$sp"; mkdir -p "$sp/.claude" "$sp/.project/tasks" 
   bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --superseded --by docs/other.md >/dev/null 2>&1 &&
     { printf '    ^ a marker naming X accepted a mark citing Y\n' >&2; exit 1; }
 
+  # 4a. THE FOUR REPRODUCED DEFEATS. The first version of this step used only `docs/other.md` for
+  # the mismatch case -- a string sharing no substring boundary with the marker, which is the one
+  # case a SUBSTRING test also refuses. So the step passed while `grep -qF -- "$by"` accepted every
+  # substring of the marker line, and two reviewers found it independently at critical severity.
+  # `--by '-'` was accepted against the live repository and wrote `"by":"-"` into the committed log.
+  # Each case below fails on the pre-fix code; none of them did before.
+  #
+  # A test that only exercises the cases a control was written against cannot tell you the control
+  # holds. These are the cases it was NOT written against.
+  for bad in '-' 'Superseded' 'Superseded-by' 'docs' 'd' 'new.md'; do
+    bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --superseded --by "$bad" >/dev/null 2>&1 &&
+      { printf '    ^ --by %s satisfied a marker naming docs/new.md\n' "$bad" >&2; exit 1; }
+  done
+  # A newline made `grep -F` read --by as a pattern LIST whose empty element matched every line.
+  # Written with a literal so command substitution cannot strip it -- the first attempt to test
+  # this passed because $(printf '...\n') drops the trailing newline and tested nothing.
+  _nl='
+'
+  bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --superseded --by "docs/new.md${_nl}" >/dev/null 2>&1 &&
+    { printf '    ^ a newline in --by was accepted\n' >&2; exit 1; }
+  # SELF-SUPERSESSION BY BASENAME. The self-check was exact equality against the full path sitting
+  # under a substring match, so the bare filename cleared both halves.
+  printf '# design one\n\n> **Superseded-by: old.md**\n\nrejected.\n' > docs/old.md
+  bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --superseded --by old.md >/dev/null 2>&1 &&
+    { printf '    ^ a document superseded itself by basename\n' >&2; exit 1; }
+  printf '# design one\n\n> **Superseded-by: docs/new.md**\n\nrejected.\n' > docs/old.md
+  # THE TOOL'S OWN PRESCRIBED MARKER MUST BE ACCEPTED. The refusal message tells the operator to
+  # write `> **Superseded-by: X**`, so the matching rule has to strip the emphasis it asks for.
+  # A guard whose remedy it rejects is worse than no guard, and this function has made that exact
+  # mistake once already, on the character class that finds the line.
+  bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --superseded --by docs/new.md >/dev/null 2>&1 ||
+    { printf '    ^ the marker this tool tells the operator to write was refused\n' >&2; exit 1; }
+  bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --open --note "undo the probe above" >/dev/null 2>&1
+
+  # 4b. A TRAILING --by MUST EXIT, NOT HANG. `shift 2` with one argument left shifts nothing and
+  # there is no `set -e`, so the parse loop spun forever -- triggered by the exact typo this
+  # command's own error message invites. Bounded, because the failure mode of a regression here is
+  # an infinite loop that would hang the whole suite rather than fail one step.
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 10 bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --superseded --by >/dev/null 2>&1
+    [ $? = 124 ] &&
+      { printf '    ^ a trailing --by hung the argument parser\n' >&2; exit 1; }
+  fi
+
   # 5. NOW IT IS ACCEPTED, and it leaves the gate. Asserted after the four refusals so this
   # cannot be the only thing the step proves.
   bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --superseded --by docs/new.md >/dev/null 2>&1 || exit 1

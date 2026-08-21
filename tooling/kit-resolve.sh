@@ -45,6 +45,10 @@ kit_active "$ROOT" || exit 0
 
 finding=""; verdict=""; commit=""; note=""; list=0; ftask=""; fsev=""; unfixed=0
 unass=0; reason=""; supers=0; by=""
+# A literal newline, held in a variable so the `case` glob below can name one. Written this way
+# rather than as $'\n' because that is a bashism and this script runs under whatever /bin/sh the
+# adopting project has.
+_NL=$(printf '\nx'); _NL=${_NL%x}
 while [ $# -gt 0 ]; do
   case "$1" in
     --finding)  finding=${2:-}; shift; shift ;;
@@ -52,7 +56,12 @@ while [ $# -gt 0 ]; do
     --open)     verdict=0; shift ;;
     --unassessable) unass=1; shift ;;
     --superseded) supers=1; shift ;;
-    --by) by=${2:-}; shift 2 ;;
+    # `shift; shift`, NOT `shift 2`. With one argument left, `shift 2` returns non-zero and shifts
+    # NOTHING; there is no `set -e` here, so `$1` stayed `--by` and the loop spun forever. The
+    # trigger is the exact typo this command's own error message invites -- "requires --by NAME" --
+    # so an operator re-running without the value got a hang instead of a refusal. Two reviewers
+    # reproduced it. Every other value-taking flag in this case already uses the safe form.
+    --by) by=${2:-}; shift; shift ;;
     --reason)   reason=${2:-}; shift; shift ;;
     --commit)   commit=${2:-}; shift; shift ;;
     --note)     note=${2:-}; shift; shift ;;
@@ -255,6 +264,28 @@ if db_readable; then
       kit_warn "  subject to read. If the finding cannot be judged at all, that is --unassessable."
       exit 2
     fi
+    # THE SUBJECT MUST BE INSIDE THE REPOSITORY. `file_path` is agent-supplied free text -- the
+    # finding contract bounds its LENGTH and nothing else, and `sanitise()` strips quotes and
+    # control bytes but leaves `../` intact. Without this, a finding anchored at enough `../`
+    # segments to climb out of the root makes the guard stat and grep a file elsewhere on the
+    # machine, and the mismatch branch echoes that file's first matching line back to stderr.
+    #
+    # The whole justification for a marker guard is that the withdrawal lands in THIS tree, where
+    # a reviewer sees it in a diff. A subject outside the root is in no diff and in front of no
+    # reader, so the guard would be performing a check whose premise is false. `-f` also follows
+    # symlinks, which this does not attempt to solve -- stated, not silently assumed.
+    case "$fpath" in
+      /*|?:*|*"$_NL"*)
+        kit_warn "'$fpath' is not a repository-relative path; refusing --superseded"
+        kit_warn "  the guard reads a marker from inside this tree, and an absolute path is"
+        kit_warn "  outside the premise it checks."
+        exit 2 ;;
+      ..|../*|*/../*|*/..)
+        kit_warn "'$fpath' escapes the repository root; refusing --superseded"
+        kit_warn "  a withdrawal outside this tree appears in no diff and in front of no reader,"
+        kit_warn "  which is the entire reason the marker is required."
+        exit 2 ;;
+    esac
     if [ ! -f "$ROOT/$fpath" ]; then
       kit_warn "'$fpath' is not a file in this repository, so no marker can be read from it"
       kit_warn "  a subject that was DELETED is a different case from one that was superseded,"
@@ -283,18 +314,61 @@ if db_readable; then
       kit_warn "  then re-run this. If the subject still stands, the finding is still open."
       exit 2
     fi
-    # A marker naming something OTHER than --by means one of the two is wrong, and the tool cannot
-    # tell which. Guessing would make the citation decorative.
-    if ! printf '%s' "$marker" | grep -qF -- "$by"; then
+    # EQUALITY ON THE EXTRACTED VALUE, NOT CONTAINMENT ANYWHERE ON THE LINE.
+    #
+    # This was `printf '%s' "$marker" | grep -qF -- "$by"` and it did not bind. The marker LINE
+    # contains the literal key `Superseded-by:`, so every substring of that key satisfied it:
+    # `--by '-'`, `--by by`, `--by Superseded` all passed against any marked file. Reproduced on
+    # this repository -- `--by '-'` was ACCEPTED and wrote `"by":"-"` into the committed log, which
+    # then could not be retracted because superseded_at has no retraction. Two reviewers found it
+    # independently and both rated it critical.
+    #
+    # A newline in `--by` was a second, separate defeat of the same line: `grep -F` reads its
+    # pattern as a NEWLINE-SEPARATED LIST, and an empty element matches every line. Comparing
+    # extracted values rather than grepping removes that whole class, and the explicit refusal
+    # below keeps the error legible rather than letting it fail as a mismatch.
+    #
+    # Normalisation is defined here rather than left to the reader, because "equality" over
+    # markdown is not self-evident and an under-specified rule is what produced the substring bug.
+    # Both sides get: CR stripped (a CRLF checkout reads the CR as part of the value -- this
+    # repository has already been bitten by that on markdown read as data), surrounding whitespace
+    # trimmed, and surrounding `*` and `_` removed. That last one is REQUIRED, not cosmetic: the
+    # refusal message above tells the operator to write `> **Superseded-by: X**`, so a rule that
+    # rejected the emphasis would reject its own prescribed remedy -- the exact failure this
+    # function already made once, one line up.
+    case "$by" in
+      *"$_NL"*)
+        kit_warn "--by contains a newline; refusing"
+        kit_warn "  a multi-line citation cannot name one artefact, and it used to match every"
+        kit_warn "  marker line by accident. Name a single ADR, revision or commit."
+        exit 2 ;;
+    esac
+    _norm() {
+      printf '%s' "$1" | tr -d '\015' |
+        sed -e 's/^[[:space:]>*_]*//' -e 's/[[:space:]*_]*$//'
+    }
+    # The value is everything after the FIRST colon; the key itself never reaches the comparison.
+    marker_val=$(_norm "$(printf '%s' "$marker" | sed 's/^[^:]*://')")
+    by_val=$(_norm "$by")
+    # Case-folded, because the marker is FOUND case-insensitively one line up (`grep -aiE`). A
+    # guard that locates a line one way and compares it another is two rules wearing one name.
+    if [ "$(printf '%s' "$marker_val" | tr 'A-Z' 'a-z')" \
+       != "$(printf '%s' "$by_val"     | tr 'A-Z' 'a-z')" ]; then
       kit_warn "'$fpath' is marked superseded, but not by what --by names"
-      kit_warn "  marker: $(printf '%s' "$marker" | sed 's/^[[:space:]>]*//')"
-      kit_warn "  --by:   $by"
+      kit_warn "  marker names: $marker_val"
+      kit_warn "  --by names:   $by_val"
       kit_warn "  one of them is wrong and this cannot tell which, so it records neither."
       exit 2
     fi
-    # Nothing supersedes itself. Without this, marking the subject with its own path satisfies
-    # every check above and the guard becomes a formality any operator can perform on any file.
-    if [ "$by" = "$fpath" ]; then
+    # NOTHING SUPERSEDES ITSELF, and the comparison has to survive spelling. This was exact
+    # equality against `$fpath` sitting under a SUBSTRING match, so `--by <basename>` cleared both:
+    # the basename is contained in the marker line, and it is not equal to the full path. Equality
+    # above closes most of it; the basename comparison closes the rest, because a marker written as
+    # the bare filename plus `--by <that filename>` would otherwise still let a document withdraw
+    # itself. `./x` and `x` are the same file and are compared as such.
+    _base() { printf '%s' "${1##*/}"; }
+    _fp_clean=${fpath#./}
+    if [ "$by_val" = "$_fp_clean" ] || [ "$(_base "$by_val")" = "$(_base "$_fp_clean")" ]; then
       kit_warn "--by names the subject itself ('$fpath')"
       kit_warn "  a document cannot be the thing that withdrew it; name what replaced it."
       exit 2
