@@ -11,9 +11,10 @@ KIND=${2:-note}
 # THE GENERIC WRITER MAY NOT ADDRESS A KIND THE INDEXER ACTS ON.
 #
 # The boundary is not a list of bad words, it is a property: kit-index.sh either MUTATES a row
-# for a kind, or merely records the event. The kinds it mutates for are the four below, and each
-# has its own writer that validates -- findings and fix-marks through kit_findings.py, spend
-# through kit-spend.sh, vindication through kit-vindicate.sh. This script validates nothing: it
+# for a kind, or merely records the event. The kinds it mutates for are the six below, and each
+# has its own writer that validates -- findings and the three disposition marks through
+# kit_findings.py, spend through kit-spend.sh, vindication through kit-vindicate.sh. This
+# script validates nothing: it
 # takes the kind as a free argument and splices its third argument in as raw JSON, so before this
 # refusal it could mint any of them.
 #
@@ -26,8 +27,13 @@ KIND=${2:-note}
 # kit-index.sh's dispatch is the AUTHORITY for this list, not this file. tests/conformance.sh
 # derives the kinds from its `k=="..."` branches and fails if the two disagree, so teaching the
 # indexer to act on a fifth kind without adding it here goes red rather than reopening the hole.
+# `finding-superseded` added 2026-08-20, BY THIS CHECK GOING RED rather than by anyone
+# remembering. The verb landed with its own guard -- kit-resolve.sh refuses it unless the subject
+# file carries a matching `Superseded-by:` line -- and that guard is worth nothing if the generic
+# writer can mint the event directly. It clears the criticals gate exactly as `finding-fixed`
+# does, so it belongs here for exactly the same reason.
 case "$KIND" in
-  finding|finding-fixed|finding-unassessable|spend|vindication)
+  finding|finding-fixed|finding-unassessable|finding-superseded|spend|vindication)
     kit_warn "kit-event.sh will not write '$KIND': the indexer acts on it, so it belongs to"
     kit_warn "  the writer that validates it, not to the generic recorder."
     exit 2 ;;

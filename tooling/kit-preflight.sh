@@ -3,6 +3,7 @@
 # kit-preflight.sh --spend               spend capture is live in THIS repository
 # kit-preflight.sh --criticals           no unfixed critical is outstanding in THIS repository
 # kit-preflight.sh --unassessable        the standing blind spot --criticals deliberately excludes
+# kit-preflight.sh --superseded          the OTHER thing it excludes: findings whose subject died
 #
 # The checks docs/TRIAL-PROTOCOL.md §0 gates on, as commands rather than as prose. A pre-flight
 # box that a human evaluates by reading is a box that gets ticked while tired; two of this
@@ -13,7 +14,7 @@
 # caller must check the status rather than the output.
 set -uo pipefail
 
-usage() { printf 'usage: kit-preflight.sh --isolated <copy> | --spend | --criticals | --unassessable\n' >&2; exit 2; }
+usage() { printf 'usage: kit-preflight.sh --isolated <copy> | --spend | --criticals | --unassessable | --superseded\n' >&2; exit 2; }
 
 case "${1:-}" in
   --isolated)
@@ -106,6 +107,53 @@ case "${1:-}" in
     printf 'Record this number in the trial report. TRIAL-PROTOCOL section 0 says when it stops you.\n'
     exit 0 ;;
 
+  --superseded)
+    # THE FOURTH STATE, and it needs its own box for the same reason the third does: `--criticals`
+    # excludes it, so a repository whose every remaining critical was superseded reports ZERO and
+    # passes §0 with nothing said. Adding an exclusion to the gate without adding the report that
+    # exposes it is how a gate quietly stops meaning what its reader thinks it means -- and this
+    # repository was in exactly that state the moment the fourth verb landed: the gate went to
+    # zero with thirteen criticals excluded behind it.
+    #
+    # It is NOT the same blind spot as --unassessable, and merging the two counts would lose the
+    # distinction that matters. An unassessable critical is unreadable: nobody can say what it
+    # was. A superseded one is perfectly readable, was REAL, and its subject was withdrawn --
+    # frequently BECAUSE of it. One is missing evidence; the other is evidence that worked.
+    #
+    # Exit 0 either way, for the reason --unassessable does: this supplies the number, the
+    # protocol supplies the judgement.
+    . "$(dirname "$0")/kit-lib.sh"
+    ROOT=$(kit_root) || { kit_warn "not a git repository"; exit 2; }
+    kit_active "$ROOT" || { kit_warn "the kit is not adopted here"; exit 2; }
+    STATE_DIR=$(kit_cfg "$(kit_profile "$ROOT")" paths.state ".project")
+    DB="$ROOT/$STATE_DIR/index.db"
+    [ -f "$DB" ] || { kit_warn "no index at ${DB#$ROOT/}; run kit-index.sh"; exit 2; }
+    n=$(sqlite3 -noheader "$DB" "SELECT COUNT(*) FROM finding
+                                  WHERE severity='critical' AND fixed_at IS NULL
+                                    AND unassessable_at IS NULL
+                                    AND superseded_at IS NOT NULL;" 2>&1)
+    case "$n" in
+      ''|*[!0-9]*)
+        kit_warn "the superseded query FAILED -- this is not a report of zero"
+        printf '%s\n' "$n" | sed 's/^/  /' >&2
+        kit_warn "  the usual cause is an index older than a column this query reads; rebuild it"
+        exit 2 ;;
+    esac
+    if [ "$n" = 0 ]; then
+      printf 'no superseded critical: --criticals is not hiding a withdrawn subject\n'
+      exit 0
+    fi
+    printf '%s superseded critical(s) — EXCLUDED from --criticals, and each one was REAL:\n' "$n"
+    sqlite3 -noheader -separator '  ' "$DB" \
+      "SELECT id, COALESCE(task_id,'(no task)'), COALESCE(file_path,'(no subject)'),
+              'superseded by '||COALESCE(superseded_by,'(not recorded)')
+         FROM finding WHERE severity='critical' AND fixed_at IS NULL
+          AND unassessable_at IS NULL
+          AND superseded_at IS NOT NULL ORDER BY task_id, id;" 2>/dev/null |
+      tr -d '\r' | sed 's/^/  /'
+    printf 'Record this number in the trial report. These are not repairs; they are subjects that died.\n'
+    exit 0 ;;
+
   --criticals)
     . "$(dirname "$0")/kit-lib.sh"
     ROOT=$(kit_root) || { kit_warn "not a git repository"; exit 2; }
@@ -130,10 +178,18 @@ case "${1:-}" in
     # from what survives; each is named by its own `finding-unassessable` event carrying a
     # reason, and kit-status.sh reports the total as a standing blind spot rather than folding
     # it into zero. Excluded from the gate, never from the record.
+    # A finding whose SUBJECT was withdrawn leaves the gate on the same terms and for the same
+    # reason: it is excluded from the gate and never from the record. It is individually marked,
+    # the mark names what withdrew the subject, and kit-resolve.sh refuses it unless the subject
+    # file itself carries a matching `Superseded-by:` line -- so this exclusion is reachable only
+    # by an operator who wrote the withdrawal into the tree where the next reader will see it.
+    # Without the fourth verb, 31 findings reviewing a rejected design sat here permanently and
+    # their task could never close no matter how much correct work was done on it.
     n=$(sqlite3 -noheader "$DB" "
       SELECT COUNT(*) FROM finding f
        WHERE f.severity='critical' AND f.fixed_at IS NULL
          AND f.unassessable_at IS NULL
+         AND f.superseded_at IS NULL
          AND NOT (COALESCE(f.vindicated,1) = 0 AND 1 = (
                SELECT COUNT(*) FROM finding g
                 WHERE COALESCE(g.task_id,'') = COALESCE(f.task_id,'')
@@ -148,7 +204,8 @@ case "${1:-}" in
         # reader hunting for the wrong column. Same defect as
         # T-20260809-the-unverified-tier-floor-message-names-; the fix is to describe the class.
         kit_warn "  the usual cause is an index older than a column this query reads"
-        kit_warn "  (fixed_at and unassessable_at are both newer than some indexes); rebuild it"
+        kit_warn "  (fixed_at, unassessable_at and superseded_at are each newer than some"
+        kit_warn "  indexes); rebuild it"
         exit 2 ;;
     esac
     if [ "$n" != 0 ]; then

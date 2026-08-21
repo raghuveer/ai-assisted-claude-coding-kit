@@ -2,6 +2,7 @@
 # kit-resolve.sh --finding ID --fixed [--commit SHA] [--note TEXT]   mark a finding addressed
 # kit-resolve.sh --finding ID --open  [--note TEXT]                  retract that mark
 # kit-resolve.sh --finding ID --unassessable --reason TEXT           it cannot be judged at all
+# kit-resolve.sh --finding ID --superseded --by NAME                 its SUBJECT was withdrawn
 # kit-resolve.sh --list [--task ID] [--severity SEV] [--unfixed]     the ids, so the above is usable
 #
 # Answers "was this finding ADDRESSED". That is a DIFFERENT question from the one
@@ -43,13 +44,15 @@ ROOT=$(kit_root) || exit 0
 kit_active "$ROOT" || exit 0
 
 finding=""; verdict=""; commit=""; note=""; list=0; ftask=""; fsev=""; unfixed=0
-unass=0; reason=""
+unass=0; reason=""; supers=0; by=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --finding)  finding=${2:-}; shift; shift ;;
     --fixed)    verdict=1; shift ;;
     --open)     verdict=0; shift ;;
     --unassessable) unass=1; shift ;;
+    --superseded) supers=1; shift ;;
+    --by) by=${2:-}; shift 2 ;;
     --reason)   reason=${2:-}; shift; shift ;;
     --commit)   commit=${2:-}; shift; shift ;;
     --note)     note=${2:-}; shift; shift ;;
@@ -121,9 +124,34 @@ if [ "$unass" = 1 ] && [ -n "$verdict" ]; then
   kit_warn "  addressed and unjudgeable are different claims; record one of them"
   exit 2
 fi
-[ -n "$finding" ] && { [ -n "$verdict" ] || [ "$unass" = 1 ]; } || {
+# Four dispositions now, so the exclusion is counted rather than enumerated pairwise. Written as
+# three `if` chains it was already one missed combination away from wrong, and adding a fourth
+# would have needed three more comparisons -- the shape where the one nobody writes is the one
+# that ships.
+_ndisp=0
+[ -n "$verdict" ] && _ndisp=$((_ndisp + 1))
+[ "$unass" = 1 ]  && _ndisp=$((_ndisp + 1))
+[ "$supers" = 1 ] && _ndisp=$((_ndisp + 1))
+if [ "$_ndisp" -gt 1 ]; then
+  kit_warn "exactly one disposition per invocation; $_ndisp were given"
+  kit_warn "  addressed, unjudgeable and superseded are different claims about different"
+  kit_warn "  questions. Recording two from one command lets last-write-wins pick the meaning."
+  exit 2
+fi
+if [ "$supers" = 1 ] && [ -z "$by" ]; then
+  kit_warn "--superseded requires --by NAME"
+  kit_warn "  name the ADR, the later revision, or the commit that withdrew the subject. A mark"
+  kit_warn "  that clears a gate without saying what cleared it is a clearance, not a record."
+  exit 2
+fi
+if [ "$supers" != 1 ] && [ -n "$by" ]; then
+  kit_warn "--by is only meaningful with --superseded"
+  exit 2
+fi
+[ -n "$finding" ] && { [ -n "$verdict" ] || [ "$unass" = 1 ] || [ "$supers" = 1 ]; } || {
   kit_warn "usage: --finding ID (--fixed|--open) [--commit SHA] [--note TEXT]"
   kit_warn "       --finding ID --unassessable --reason TEXT"
+  kit_warn "       --finding ID --superseded --by NAME"
   kit_warn "       --list [--task ID] [--severity SEV] [--unfixed]"; exit 2; }
 
 # REFUSE AN ID NO FINDING HAS. Appending it would put a mark in the permanent log that the
@@ -190,6 +218,88 @@ if db_readable; then
       exit 2
     fi
   fi
+  # THE SUBJECT MUST BE MARKED DEAD IN THE TREE, not merely asserted dead on the command line.
+  #
+  # The obvious guard -- "refuse if the subject file still exists" -- does not work, and finding
+  # that out is what shaped this one. The case that produced this verb is 31 findings against
+  # docs/design-input/2026-08-15-entry-mechanism.md, a document that is still on disk, still 15KB,
+  # and still referenced by an ADR and by its own successor. Rejected designs are KEPT; that is
+  # what makes the record worth having. What ended is the subject's STANDING, and standing is not
+  # a property of the filesystem.
+  #
+  # So the operator must write the withdrawal into the subject itself, and this reads it back.
+  # Two things follow that a `--by` citation alone would not give:
+  #   - it is reviewable in a diff, like every other claim in this repository, instead of being
+  #     visible only inside an append-only log nobody reads by hand;
+  #   - it lands in front of the NEXT reader of the subject, who is otherwise the person most
+  #     likely to act on a document that quietly stopped being true.
+  #
+  # Why this is not theatre: on the very task that motivated the verb, 26 of its 57 open findings
+  # point at subjects that are still live -- design 2, tooling/kit-entry.sh, conformance, an ADR.
+  # A verb guarded only by "did you type --by" would have cleared all 57. It has to be able to
+  # refuse, and this is the thing it refuses.
+  if [ "$supers" = 1 ]; then
+    fpath=$(sqlite3 -noheader "$DB" "SELECT COALESCE(file_path,'') FROM finding WHERE id='$fesc';" 2>&1)
+    case "$fpath" in
+      *"no such column"*|*"Error"*|*"error"*)
+        kit_warn "cannot read the file_path of '$finding' -- refusing rather than guessing"
+        printf '%s\n' "$fpath" | sed 's/^/  /' >&2
+        exit 2 ;;
+    esac
+    # A finding with no subject on record cannot have its subject checked. Refusing is the only
+    # honest answer: allowing it would make "the row happens to be missing an anchor" the widest
+    # route out of the gate, which is precisely backwards.
+    if [ -z "$fpath" ]; then
+      kit_warn "'$finding' records no file_path, so its subject cannot be identified"
+      kit_warn "  --superseded is refused: the guard is a marker IN the subject, and there is no"
+      kit_warn "  subject to read. If the finding cannot be judged at all, that is --unassessable."
+      exit 2
+    fi
+    if [ ! -f "$ROOT/$fpath" ]; then
+      kit_warn "'$fpath' is not a file in this repository, so no marker can be read from it"
+      kit_warn "  a subject that was DELETED is a different case from one that was superseded,"
+      kit_warn "  and this verb deliberately does not cover it -- deleting the evidence must not"
+      kit_warn "  be the cheapest way out of the criticals gate."
+      exit 2
+    fi
+    # The marker is trailer-shaped, matching the idiom this repository already enforces on
+    # commits, and is allowed to sit inside a markdown blockquote so it can be written as the
+    # callout a reader actually notices. Matched with grep -F on the value, never as a pattern:
+    # `$by` is operator text and interpolating it into a regex is a defect this repository has an
+    # open task about.
+    # The leading class allows `*` and `_` as well as whitespace and `>`, because the marker this
+    # command TELLS the operator to write is a bold line inside a blockquote. The first version
+    # accepted only whitespace and `>`, so it refused the exact text of its own error message --
+    # a guard whose remedy it rejects is worse than no guard, because the operator concludes the
+    # withdrawal is unrecognisable and stops trying.
+    marker=$(grep -aiE '^[[:space:]>*_]*Superseded-by:' "$ROOT/$fpath" 2>/dev/null | head -1)
+    if [ -z "$marker" ]; then
+      kit_warn "'$fpath' carries no 'Superseded-by:' line, so its subject still stands"
+      kit_warn "  refusing --superseded. This verb records that a subject was WITHDRAWN; if that"
+      kit_warn "  happened, say so in the subject where its next reader will see it:"
+      kit_warn ""
+      kit_warn "      > **Superseded-by: $by**"
+      kit_warn ""
+      kit_warn "  then re-run this. If the subject still stands, the finding is still open."
+      exit 2
+    fi
+    # A marker naming something OTHER than --by means one of the two is wrong, and the tool cannot
+    # tell which. Guessing would make the citation decorative.
+    if ! printf '%s' "$marker" | grep -qF -- "$by"; then
+      kit_warn "'$fpath' is marked superseded, but not by what --by names"
+      kit_warn "  marker: $(printf '%s' "$marker" | sed 's/^[[:space:]>]*//')"
+      kit_warn "  --by:   $by"
+      kit_warn "  one of them is wrong and this cannot tell which, so it records neither."
+      exit 2
+    fi
+    # Nothing supersedes itself. Without this, marking the subject with its own path satisfies
+    # every check above and the guard becomes a formality any operator can perform on any file.
+    if [ "$by" = "$fpath" ]; then
+      kit_warn "--by names the subject itself ('$fpath')"
+      kit_warn "  a document cannot be the thing that withdrew it; name what replaced it."
+      exit 2
+    fi
+  fi
 else
   # No index is not permission to guess. The check is the point of the command.
   kit_warn "index at ${DB#$ROOT/} is missing or unreadable; run kit-index.sh first"
@@ -229,6 +339,13 @@ if [ "$unass" = 1 ]; then
            --finding "$finding" --reason "$reason" \
            --task "${ftask:-}" --actor "$_actor") || {
     kit_warn "refusing to record: the event could not be serialised"; exit 1; }
+elif [ "$supers" = 1 ]; then
+  # The blank --by refusal lives in the writer, not here, so it holds for every caller rather
+  # than for this one path -- the same split as --reason on an unassessable mark.
+  _out=$(python3 "$(dirname "$0")/kit_findings.py" --superseded \
+           --finding "$finding" --by "$by" \
+           --task "${ftask:-}" --actor "$_actor") || {
+    kit_warn "refusing to record: the event could not be serialised"; exit 1; }
 else
   _out=$(python3 "$(dirname "$0")/kit_findings.py" --resolve \
            --finding "$finding" --fixed "$verdict" --commit "$commit" --note "$note" \
@@ -243,7 +360,13 @@ if ! printf '%s\n' "$_out" >> "$ROOT/$STATE_DIR/events.ndjson"; then
   kit_warn "could not append to $STATE_DIR/events.ndjson -- NOTHING was recorded"
   exit 1
 fi
-if [ "$unass" = 1 ]; then
+if [ "$supers" = 1 ]; then
+  printf 'kit: superseded recorded for %s\n' "$finding" >&2
+  printf 'kit:   by: %s\n' "$by" >&2
+  printf 'kit:   it leaves the criticals gate and STAYS in the record. A design that died\n' >&2
+  printf 'kit:   because a review found problems with it is evidence the review worked, and\n' >&2
+  printf 'kit:   kit-status.sh reports the count separately rather than folding it into zero.\n' >&2
+elif [ "$unass" = 1 ]; then
   printf 'kit: unassessable recorded for %s\n' "$finding" >&2
   printf 'kit:   it leaves the criticals gate and STAYS in the record; kit-status.sh reports\n' >&2
   printf 'kit:   the count as a standing blind spot, never as zero.\n' >&2

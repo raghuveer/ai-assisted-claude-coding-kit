@@ -35,6 +35,21 @@
   saying why is the laundering the gate exists to prevent. **This is yours, not the agent's**, for
   the same reason `--fixed` is. It is not a synonym for `--fixed`: addressed and unjudgeable are
   different claims and the tool refuses to record both at once.
+- A finding whose **subject was withdrawn** — the design it reviewed was rejected, the revision it
+  criticised was replaced — is marked
+  `kit-resolve.sh --finding ID --superseded --by NAME`. A fourth claim, not a synonym for any of
+  the three above: `--fixed` would say it was addressed and nothing was, `--unassessable` says
+  nobody can tell what it said and these are perfectly legible, `--false` says it was never real
+  and **it was — being real is why the subject died.** Collapsing that into "fixed" erases the
+  most valuable thing a review does.
+
+  **The guard is a marker in the tree, not the flag.** `--superseded` is refused unless the
+  finding's own `file_path` carries a `Superseded-by:` line naming the same thing `--by` does. So
+  the withdrawal is reviewable in a diff and lands in front of the next reader of the subject.
+  It is refused outright when the finding records no `file_path`, and when the file is **absent** —
+  deleting the evidence must not be the cheapest way out of the gate. Like `--unassessable`, it
+  leaves the criticals gate, stays in the record permanently, and `kit-status.sh` counts it
+  separately rather than folding it into zero. **Yours, not the agent's**, for the same reason.
 - You run `kit-resolve.sh --fixed`, after deciding the fix is real. `--commit` must resolve, and
   a mark whose commit later leaves the history is reported on rebuild. A REVERT is not detected.
 - You put `Via:` on the trailer, after deciding it.

@@ -464,6 +464,63 @@ def unassessable_event(argv):
     return line
 
 
+def superseded_event(argv):
+    """Whether a finding's SUBJECT still stands. The fourth fact, and the three that came before
+    it cannot express it: `vindicated` says whether the finding was real, `fixed_at` whether it was
+    addressed, `unassessable_at` whether either question can be answered from what survives.
+
+    None of them fits a review that killed the thing it reviewed. `--fixed` would be false --
+    nothing was fixed. `--unassessable` would be false and is mechanically refused anyway, because
+    these findings carry summaries and are perfectly legible. `kit-vindicate.sh --false` is the
+    worst of the three: they were REAL, and being real is why the subject was withdrawn.
+
+    Measured 2026-08-19: 31 findings on one task review a design document whose successor opens by
+    rejecting it. Without this verb they sit in the criticals gate permanently and that task can
+    never close, no matter how much correct work is done on it.
+
+    `--by` is REQUIRED and must be non-empty, for the reason `--reason` is required on an
+    unassessable mark: a disposition that clears a gate without naming what cleared it is a
+    clearance. It is NOT the whole guard -- kit-resolve.sh separately requires the subject file to
+    carry a `Superseded-by:` line naming the same thing, so that the withdrawal is visible in the
+    tree and not only in this log."""
+    opts = {"finding": "", "by": "", "at": "", "task": "", "actor": ""}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a.startswith("--") and a[2:].replace("-", "_") in opts:
+            if i + 1 >= len(argv):
+                raise Rejected("%s needs a value" % a)
+            opts[a[2:].replace("-", "_")] = argv[i + 1]
+            i += 2
+        else:
+            raise Rejected("unknown argument %s" % a)
+    if not opts["finding"]:
+        raise Rejected("--finding is required (the id from kit-resolve.sh --list)")
+    if not sanitise(opts["by"]):
+        raise Rejected("--by is required and must not be blank.\n"
+                       "  This mark removes a finding from the criticals gate. What withdrew the\n"
+                       "  subject is the only thing that makes that a record rather than a clearance.")
+    # Same sub-second stamp and the same validation as the other two marks, for the same reason:
+    # they are applied last-write-wins over events sorted by `at`, and a whole-second tie breaks on
+    # the text of the line rather than on intent.
+    if not opts["at"]:
+        opts["at"] = datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ")
+    elif not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{6})?Z$", opts["at"]):
+        raise Rejected("--at must be YYYY-MM-DDTHH:MM:SS[.ffffff]Z, got %r.\n"
+                       "  It is the ordering key for marks on one finding, not a label."
+                       % opts["at"])
+    event = {"kind": "finding-superseded", "at": sanitise(opts["at"]),
+             "finding": sanitise(opts["finding"]), "by": sanitise(opts["by"])}
+    if opts["task"]:
+        event["task"] = sanitise(opts["task"])
+    if opts["actor"]:
+        event["actor"] = sanitise(opts["actor"])
+    line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+    _assert_flat(line)
+    return line
+
+
 def print_contract():
     sys.stdout.write("finding object fields (JSON, one object per finding under `findings`):\n")
     for name, required, want, low, high, why in CONTRACT:
@@ -515,13 +572,14 @@ def main():
         print_contract()
         return 0
     if mode not in ("--validate", "--emit-events", "--gap-event", "--correction", "--resolve",
-                    "--unassessable"):
+                    "--unassessable", "--superseded"):
         sys.stderr.write("kit-findings: unknown mode %s\n" % mode)
         return 2
     # Dispatched before stdin is touched: these modes read none, and a mode that blocks on a
     # terminal it was never given looks exactly like a hang.
-    if mode in ("--resolve", "--unassessable"):
-        builder = resolve_event if mode == "--resolve" else unassessable_event
+    if mode in ("--resolve", "--unassessable", "--superseded"):
+        builder = {"--resolve": resolve_event, "--unassessable": unassessable_event,
+                   "--superseded": superseded_event}[mode]
         try:
             sys.stdout.buffer.write((builder(sys.argv[2:]) + "\n").encode("utf-8"))
         except Rejected as exc:

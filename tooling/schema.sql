@@ -137,10 +137,36 @@ CREATE TABLE finding (
                                     -- rows by query would have exempted every FUTURE one.
                                     -- Derived from `finding-unassessable` events, never written
                                     -- directly -- same rule as fixed_at.
-  unassessable_reason TEXT          -- why it cannot be judged. NOT optional at the writer:
+  unassessable_reason TEXT,         -- why it cannot be judged. NOT optional at the writer:
                                     -- kit_findings.py refuses a blank one, because a
                                     -- disposition that removes a finding from a gate without
                                     -- saying why is the laundering this column exists to avoid.
+  superseded_at TEXT,               -- NULL | timestamp the operator recorded that this finding's
+                                    -- SUBJECT was withdrawn, rejected or replaced. A FOURTH fact,
+                                    -- and none of its three neighbours can carry it:
+                                    --   fixed_at        false -- nothing was fixed, the subject died
+                                    --   unassessable_at false -- these are perfectly legible; that
+                                    --                   mark is for findings whose text does not
+                                    --                   survive, and the writer refuses it for any
+                                    --                   finding carrying a summary
+                                    --   vindicated=0    worst of the three -- they were REAL, and
+                                    --                   being real is why the subject was withdrawn.
+                                    --                   It also keys on (task, class), so refuting
+                                    --                   one would take unrelated findings with it.
+                                    -- Measured 2026-08-19: 31 findings on one task review a design
+                                    -- its own successor opens by rejecting. With no fourth verb they
+                                    -- sit in the criticals gate forever, so no amount of correct
+                                    -- work could ever close that task -- the same unsatisfiable gate
+                                    -- unassessable_at was built to remove, one category over.
+                                    -- Derived from `finding-superseded` events, never written
+                                    -- directly -- same rule as fixed_at.
+  superseded_by TEXT                -- what withdrew it: an ADR, a later revision, or a commit.
+                                    -- NOT optional at the writer, and separately NOT sufficient on
+                                    -- its own: kit-resolve.sh also requires the subject FILE to
+                                    -- carry a `Superseded-by:` line naming the same thing. A
+                                    -- citation the operator types is a claim; a marker in the tree
+                                    -- is reviewable in a diff and lands in front of the next reader
+                                    -- of the subject. Both, or the mark is refused.
 );
 
 -- What a unit of work actually cost. One row per transcript -- the session's for the main

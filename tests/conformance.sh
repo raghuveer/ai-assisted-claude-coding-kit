@@ -956,6 +956,94 @@ check $? "marked unassessable clears the gate, blank reasons are refused, the ro
 rm -rf "$ua"
 fi
 
+if step "a superseded critical needs a marker in its subject, and a live subject is refused"; then
+# The FOURTH disposition. 31 findings on one task review a design document whose successor opens
+# by rejecting it, and none of the three existing verbs fits: `--fixed` is false because nothing
+# was fixed, `--unassessable` is false AND mechanically refused because they carry summaries, and
+# `--false` is worst because they were real -- being real is why the design died. So the task
+# could never close, no matter how much correct work was done on it.
+#
+# The danger is the obvious one: on that same task, 26 of 57 open findings point at subjects that
+# are STILL LIVE. A verb guarded only by "did you pass --by" would have cleared all 57. So the
+# guard is a `Superseded-by:` marker in the subject FILE, and the refusal is what is asserted
+# here -- an acceptance-only test would pass on a mechanism with no guard at all.
+sp="$WORK.supersede"; rm -rf "$sp"; mkdir -p "$sp/.claude" "$sp/.project/tasks" "$sp/docs"
+( cd "$sp" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email fixture@x; git config user.name fixture
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"; echo "---"
+  } > .claude/project-profile.md
+  printf -- '---\nid: T-s\ntitle: s\ntier: T1\n---\nb\n' > .project/tasks/T-s.md
+  printf '# design one\n\nstill standing.\n' > docs/old.md
+  printf '# design two\n\nrejects design one.\n'  > docs/new.md
+
+  printf '%s' '{"findings":[{"class":"correctness","severity":"critical","file":"docs/old.md","line":3,"summary":"a critical against a design that will later be withdrawn"}]}' |
+    bash "$KIT/tooling/kit-finding.sh" --task T-s --agent approach-reviewer --json >/dev/null 2>&1 || exit 1
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1 || exit 1
+
+  # 1. UNMARKED, IT COUNTS. Without this every assertion below could pass on a gate that never
+  # fired in the first place.
+  bash "$KIT/tooling/kit-preflight.sh" --criticals >/dev/null 2>&1 &&
+    { printf '    ^ the gate passed with an unmarked critical outstanding\n' >&2; exit 1; }
+
+  fid=$(sqlite3 -noheader .project/index.db \
+        "SELECT id FROM finding WHERE severity='critical' LIMIT 1;" | tr -d '\015')
+  [ -n "$fid" ] || { printf '    ^ no finding id; nothing was tested\n' >&2; exit 1; }
+
+  # 2. THE SUBJECT IS LIVE, SO THE MARK IS REFUSED -- and nothing is appended. This is THE
+  # property. docs/old.md exists and carries no marker, which is the state every live subject is
+  # in, so a guard that passes here is a general-purpose exit from the criticals gate.
+  pre=$(cksum .project/events.ndjson)
+  bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --superseded --by docs/new.md >/dev/null 2>&1 &&
+    { printf '    ^ a finding whose subject still stands accepted --superseded\n' >&2; exit 1; }
+  [ "$(cksum .project/events.ndjson)" = "$pre" ] ||
+    { printf '    ^ a refused mark still appended to the log\n' >&2; exit 1; }
+
+  # 3. A BLANK --by IS REFUSED, the same anti-laundering property --reason carries: a disposition
+  # that clears a gate without naming what cleared it is a clearance.
+  bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --superseded --by "  " >/dev/null 2>&1 &&
+    { printf '    ^ a blank --by was accepted\n' >&2; exit 1; }
+
+  # 4. THE MARKER MUST NAME WHAT --by NAMES. Otherwise the citation is decorative: any marked
+  # file would clear a mark citing anything at all.
+  printf '# design one\n\n> **Superseded-by: docs/new.md**\n\nrejected.\n' > docs/old.md
+  bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --superseded --by docs/other.md >/dev/null 2>&1 &&
+    { printf '    ^ a marker naming X accepted a mark citing Y\n' >&2; exit 1; }
+
+  # 5. NOW IT IS ACCEPTED, and it leaves the gate. Asserted after the four refusals so this
+  # cannot be the only thing the step proves.
+  bash "$KIT/tooling/kit-resolve.sh" --finding "$fid" --superseded --by docs/new.md >/dev/null 2>&1 || exit 1
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1 || exit 1
+  bash "$KIT/tooling/kit-preflight.sh" --criticals >/dev/null 2>&1 ||
+    { printf '    ^ the gate still blocks on a critical marked superseded\n' >&2; exit 1; }
+
+  # Excluded from the GATE, never from the RECORD, and never reported as addressed -- a design
+  # that died because a review found problems with it is evidence the review worked.
+  bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1 || exit 1
+  grep -q 'SUPERSEDED' STATUS.generated.md ||
+    { printf '    ^ the excluded critical vanished from the status file\n' >&2; exit 1; }
+  grep -q 'all marked addressed' STATUS.generated.md &&
+    { printf '    ^ status claims every critical was addressed; one was superseded\n' >&2; exit 1; }
+  [ "docs/new.md" = "$(sqlite3 -noheader .project/index.db \
+          "SELECT superseded_by FROM finding WHERE id='$fid';" | tr -d '\015')" ] ||
+    { printf '    ^ what superseded it was not stored\n' >&2; exit 1; }
+
+  # 6. A SUBJECT THAT WAS DELETED IS NOT A SUBJECT THAT WAS SUPERSEDED. Without this, removing
+  # the evidence is the cheapest route out of the gate.
+  printf '%s' '{"findings":[{"class":"correctness","severity":"critical","file":"docs/gone.md","line":1,"summary":"a critical whose subject file is not in the tree at all"}]}' |
+    bash "$KIT/tooling/kit-finding.sh" --task T-s --agent approach-reviewer --json >/dev/null 2>&1 || exit 1
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1 || exit 1
+  gid=$(sqlite3 -noheader .project/index.db \
+        "SELECT id FROM finding WHERE file_path='docs/gone.md' LIMIT 1;" | tr -d '\015')
+  [ -n "$gid" ] || { printf '    ^ the absent-subject finding was not recorded\n' >&2; exit 1; }
+  bash "$KIT/tooling/kit-resolve.sh" --finding "$gid" --superseded --by docs/new.md >/dev/null 2>&1 &&
+    { printf '    ^ a finding whose subject file is absent accepted --superseded\n' >&2; exit 1; }
+  exit 0 )
+check $? "superseded needs a matching marker in the subject; live and deleted subjects refused"
+rm -rf "$sp"
+fi
+
 if step "a failed build leaves the previous index alone and keeps saying so"; then
 # Two halves of one defect. `fl` was the only value on the task INSERT not passed through
 # q(), so `tier.rule: src/** T3','x` ended the SQL literal early: the statement failed, the
@@ -3520,6 +3608,15 @@ check $? "and the flag it calls is one kit-preflight.sh documents"
 # The report has to carry the number, or §0's "count went up" stop is unevaluable next trial.
 grep -q 'Unassessable crits:' "$P"
 check $? "the report template carries the count, so the next trial can compare"
+# EVERY EXCLUSION FROM --criticals NEEDS A BOX, and this is the check that says so for the fourth
+# one. The gate excludes superseded findings exactly as it excludes unassessable ones, so §0 is
+# incomplete without it -- and the day the verb landed this repository passed --criticals with
+# THIRTEEN excluded criticals behind the zero. A gate is only as honest as the report of what it
+# does not count.
+grep -q 'kit-preflight.sh --superseded' "$P"
+check $? "TRIAL-PROTOCOL section 0 also calls the superseded count"
+grep -qE 'kit-preflight\.sh --superseded' "$KIT/tooling/kit-preflight.sh"
+check $? "and that flag is one kit-preflight.sh documents too"
 fi
 
 if step "every table the schema declares is populated from text, or the index cannot hold it"; then

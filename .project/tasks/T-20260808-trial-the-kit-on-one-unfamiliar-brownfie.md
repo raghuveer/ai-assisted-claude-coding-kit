@@ -3,9 +3,22 @@ id: T-20260808-trial-the-kit-on-one-unfamiliar-brownfie
 title: Trial the kit on one unfamiliar brownfield polyglot project
 epic: validation
 tier: T2
-blocked_by: T-20260808-record-how-a-task-was-executed-so-kit-wo,T-20260808-a-repeatable-trial-protocol-for-running-,T-20260808-adoption-paths-for-an-empty-folder-and-f,T-20260813-nine-criticals-predate-summary-and-canno
+blocked_by: T-20260808-record-how-a-task-was-executed-so-kit-wo,T-20260808-a-repeatable-trial-protocol-for-running-,T-20260808-adoption-paths-for-an-empty-folder-and-f,T-20260813-nine-criticals-predate-summary-and-canno,T-20260819-a-finding-whose-subject-no-longer-exists
 state: open
 ---
+
+> **Fifth blocker added 2026-08-21, and it is mechanical rather than argued.** §0's criticals
+> gate stands at **4**, and all four review
+> `docs/design-input/2026-08-15-entry-mechanism.md` — design 1, which design 2 rejected outright.
+> **No existing verb can clear them.** `--fixed` is false because nothing was fixed;
+> `kit-resolve.sh:186` *refuses* `--unassessable` for any finding carrying a summary and all four
+> carry one; `kit-vindicate.sh --false` keys on `(task, class)` and would refute unrelated
+> findings on the same task, besides being the wrong claim — they were real, and being real is
+> why the design died. So the gate cannot reach zero until
+> `T-20260819-a-finding-whose-subject-no-longer-exists` lands.
+>
+> This edge existed in prose for two days before anything recorded it, which is the same failure
+> the fourth blocker's note describes. A dependency nothing can read is not a dependency.
 
 > **Fourth blocker added 2026-08-14.** §0's criticals gate stopped filtering by task state, and
 > nine criticals that predate the `summary` column cannot be assessed — so the gate cannot reach

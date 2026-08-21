@@ -1,5 +1,20 @@
 # Entry mechanism — turning an existing codebase into a candidate task list
 
+> **Superseded-by: docs/design-input/2026-08-15-entry-mechanism-2.md**
+>
+> **This design was rejected, and it is kept because it was.** Its successor opens by saying so —
+> *"that design was rejected twice"* — and §A of that document records the specific reversal:
+> *"Design 1's per-area inventory. **Reject — now measured, not argued**"*, falsified against three
+> real repositories.
+>
+> **31 review findings against this file are real and were never fixed.** They are not defects
+> anyone will repair; they are why this document stopped being the plan. They are recorded as
+> `superseded` rather than `fixed` (nothing was fixed), `unassessable` (they are perfectly legible)
+> or `false` (they were right). See `kit-resolve.sh --finding ID --superseded --by NAME`.
+>
+> Read it as history. Nothing here is current, and `docs/adr/0001-anchor-entry-facts-to-files.md`
+> is the decision that stands.
+
 Design input for `T-20260814-one-entry-mechanism-brownfield-is-the-ge`. Not a decision record.
 Written before implementation, to be attacked by `approach-reviewer` and walked through with the
 operator before anything is built.

@@ -57,6 +57,25 @@ Stop unless every box is ticked. Record the answers; they are part of the result
       intact. That is the state this box exists to make visible, and it is the exact shape the
       whole criticals chain was built to remove: **a pre-flight box that a third state silently
       satisfies.**
+- [ ] **The fourth state: superseded criticals. Run it, and record the number.**
+
+          bash tooling/kit-preflight.sh --superseded
+
+      Same hole, one category over, and it opened the day the fourth disposition landed —
+      `--criticals` excludes `superseded_at` too, so a repository whose every remaining critical
+      criticised a withdrawn design reports **zero** and passes with nothing said. This
+      repository was in precisely that state within minutes of the verb existing: the gate went
+      to zero with **thirteen** excluded criticals behind it, nine unassessable and four
+      superseded.
+
+      **It is not the same blind spot and the two counts are not summed.** An unassessable
+      critical is unreadable — nobody can say what it was, and that is a gap in the record. A
+      superseded one is perfectly readable, **was real, and its subject was withdrawn, often
+      because of it.** One is missing evidence; the other is evidence that did its job. Reporting
+      them as one number would erase the most valuable thing a review produces.
+
+      Non-zero is not a stop. It is a **figure the trial report carries**, next to the
+      unassessable count, so "no unfixed critical outstanding" is read as what it is.
 
       **This is NOT a stop by itself.** An unassessable critical is a standing blind spot, not
       an unaddressed defect, and treating it as a stop would restore the unsatisfiable gate.
@@ -389,6 +408,7 @@ kit ran and produced no output.
 Question:              <the one written at pre-flight>
 Kit SHA:               <sha>        Time-box: <hours>    Actual: <hours>
 Unassessable crits:    <n from kit-preflight.sh --unassessable>   (previous trial: <n>)
+Superseded crits:      <n from kit-preflight.sh --superseded>     (previous trial: <n>)
 Subject:               <languages, size, commits, age>   Greenfield/brownfield: <which>
 Outcome:               COMPLETE | ABORTED (<cause>) | VOID (<condition>)
 Baseline before kit:   build <pass/fail>, tests <pass/fail>, <duration>

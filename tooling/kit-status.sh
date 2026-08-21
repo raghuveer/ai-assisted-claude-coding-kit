@@ -525,10 +525,12 @@ OPENCRIT=$(q "SELECT COALESCE(NULLIF(f.task_id,''),'(unattributed)')||'  '||COUN
                 FROM finding f LEFT JOIN task t ON t.id = f.task_id
                WHERE f.severity='critical' AND f.fixed_at IS NULL
                  AND f.unassessable_at IS NULL
+                 AND f.superseded_at IS NULL
                  AND NOT (COALESCE(f.vindicated,1) = 0 AND $UNAMBIG)
                GROUP BY f.task_id ORDER BY COUNT(*) DESC;"); OCRC=$?
 CRITTOT=$(q "SELECT COUNT(*) FROM finding f WHERE f.severity='critical' AND f.fixed_at IS NULL
               AND f.unassessable_at IS NULL
+              AND f.superseded_at IS NULL
               AND NOT (COALESCE(f.vindicated,1) = 0 AND $UNAMBIG);")
 # THE BLIND SPOT, COUNTED SEPARATELY AND NEVER FOLDED INTO ZERO. These left the gate because the
 # operator marked each one individually as unjudgeable, with a reason -- not because a query
@@ -536,12 +538,21 @@ CRITTOT=$(q "SELECT COUNT(*) FROM finding f WHERE f.severity='critical' AND f.fi
 # outstanding" cannot be read as "nothing was ever wrong".
 CRITUNASS=$(q "SELECT COUNT(*) FROM finding
                 WHERE severity='critical' AND fixed_at IS NULL AND unassessable_at IS NOT NULL;")
+# THE FOURTH DISPOSITION, COUNTED SEPARATELY FOR A DIFFERENT REASON THAN THE THIRD. An
+# unassessable critical is a blind spot -- nobody can say what it was. A superseded one is the
+# opposite: it is perfectly legible, it was REAL, and the subject it criticised was withdrawn
+# because of it. Folding those into "fixed" would erase the most useful thing a review ever
+# does, which is kill a design before it is built.
+CRITSUPER=$(q "SELECT COUNT(*) FROM finding
+                WHERE severity='critical' AND fixed_at IS NULL AND unassessable_at IS NULL
+                  AND superseded_at IS NOT NULL;")
 # CLOSING A TASK IS NOT FIXING ITS CRITICALS. The gate filtered `state='progress'`, so a
 # critical on a done task did not count -- "fix it" and "close it" cleared the pre-flight
 # equally. Counted and named here, because it is the direction that hides work.
 CRITDONE=$(q "SELECT COUNT(*) FROM finding f JOIN task t ON t.id=f.task_id
                WHERE f.severity='critical' AND f.fixed_at IS NULL
                  AND f.unassessable_at IS NULL
+                 AND f.superseded_at IS NULL
                  AND NOT (COALESCE(f.vindicated,1) = 0 AND $UNAMBIG) AND t.state IN ('done','abandoned');")
 CRITALL=$(q "SELECT COUNT(*) FROM finding WHERE severity='critical';")
 printf '\n## Outstanding criticals\n\n'
@@ -565,8 +576,21 @@ elif [ -n "$OPENCRIT" ]; then
 else
   # Said explicitly. An empty section reads as "not measured" -- which is what this whole
   # section replaces -- and there is a real difference between no criticals and no marks.
-  printf -- '- none outstanding (%s critical finding(s) recorded, all marked addressed)\n' \
-    "${CRITALL:-0}"
+  #
+  # "all marked addressed" WAS A FALSE CLAIM and had been since unassessable_at was added: a
+  # critical excluded as unjudgeable is not addressed, and one excluded as superseded is not
+  # addressed either -- its subject died. The line printed the total and then asserted a
+  # disposition for every row in it, which is the folding-into-zero this whole section exists to
+  # prevent, in the one sentence a reader who stops at the first line will take away. It now
+  # states only what is true and defers the rest to the notices below.
+  _cother=$(( ${CRITUNASS:-0} + ${CRITSUPER:-0} ))
+  if [ "$_cother" -gt 0 ]; then
+    printf -- '- none actionable (%s critical finding(s) recorded; %s addressed, %s excluded — see below)\n' \
+      "${CRITALL:-0}" "$(( ${CRITALL:-0} - _cother ))" "$_cother"
+  else
+    printf -- '- none outstanding (%s critical finding(s) recorded, all marked addressed)\n' \
+      "${CRITALL:-0}"
+  fi
 fi
 
 # OUTSIDE the branch above on purpose. If every remaining critical is unassessable the list is
@@ -582,6 +606,20 @@ if [ "${CRITUNASS:-0}" != 0 ]; then
   printf -- '>\n'
   printf -- '> Read the count above as "%s actionable, %s unjudgeable" rather than as a total.\n' \
     "${CRITTOT:-0}" "$CRITUNASS"
+fi
+
+# OUTSIDE the branch too, and for the reason the unassessable notice is: this matters most when
+# the list is empty, which is exactly when a nested notice would not print.
+if [ "${CRITSUPER:-0}" != 0 ]; then
+  printf -- '\n> **%s critical(s) are excluded as SUPERSEDED, and that is not the same as\n' "$CRITSUPER"
+  printf -- '> fixed either.** Nothing was fixed: the subject each one criticised was withdrawn,\n'
+  printf -- '> rejected or replaced, and each mark names what withdrew it. The subject file\n'
+  printf -- '> itself carries a matching `Superseded-by:` line — `kit-resolve.sh` refuses the\n'
+  printf -- '> mark without one, so this exclusion cannot be reached by assertion alone.\n'
+  printf -- '>\n'
+  printf -- '> **These were REAL, and being real is why the subject died.** That is the most\n'
+  printf -- '> valuable thing a review does, so it is counted here rather than folded into a\n'
+  printf -- '> total that would read as though the defects had been repaired.\n'
 fi
 
 # Marks that did NOT apply. The indexer used to say this on stderr alone, where a run inside

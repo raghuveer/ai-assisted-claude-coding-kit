@@ -42,25 +42,94 @@ done on it.** A gate that cannot be satisfied by any amount of correct work is t
 
 ## Acceptance criteria
 
-- [ ] A finding can be recorded as **superseded** — its subject was withdrawn, rejected or replaced
+- [x] A finding can be recorded as **superseded** — its subject was withdrawn, rejected or replaced
       — distinctly from fixed, unassessable and false. The distinction is the point: a review that
       killed a design is evidence the review worked, and collapsing it into "fixed" erases that.
-- [ ] The mark **names what superseded it** — the ADR, the revision, or the commit that withdrew
+
+      `kit-resolve.sh --finding ID --superseded --by NAME`, recorded as a `finding-superseded`
+      event and derived into `finding.superseded_at` / `superseded_by`. Routed through the SAME
+      deferred array in `kit-index.sh` as the other two marks, which is what makes a mark naming an
+      unknown id get *reported* rather than run as an UPDATE that matches nothing and exits 0.
+- [x] The mark **names what superseded it** — the ADR, the revision, or the commit that withdrew
       the subject. `--reason` is required on `--unassessable` because a mark that clears a gate
       without saying why is laundering; this is the same requirement for the same reason.
-- [ ] It **leaves the gate and stays in the record**, exactly as `--unassessable` does, and
+
+      `--by` is required and refused blank, in `kit_findings.py` rather than in the shell, so it
+      holds for every caller instead of for one path.
+- [x] It **leaves the gate and stays in the record**, exactly as `--unassessable` does, and
       `kit-status.sh` reports the count separately rather than folding it into zero. A design that
       was rejected because a review found 31 problems is a fact worth keeping.
-- [ ] **The route is not reachable for a finding whose subject still exists.** `--unassessable`
+
+      It also caught a **false claim that was already there**: the "none outstanding" line read
+      *"N critical finding(s) recorded, all marked addressed"*, which had been untrue since
+      `unassessable_at` existed and became untrue a second way here. It now reports
+      `13 addressed, 13 excluded` rather than asserting a disposition for every row.
+- [x] **The route is not reachable for a finding whose subject still exists.** `--unassessable`
       already refuses a finding that carries a summary; this needs the equivalent guard, or it
       becomes the escape hatch for anything inconvenient — which would make the whole findings
       record worthless.
-- [ ] `.claude/CLAUDE.md` gains it in the operator block alongside `--fixed` and `--unassessable`,
+
+      **The obvious guard does not work, and finding that out shaped the real one.** The subject
+      here — `docs/design-input/2026-08-15-entry-mechanism.md` — is still on disk, still 15KB, and
+      still referenced by an ADR and by its own successor. Rejected designs are KEPT. What ended is
+      its STANDING, and standing is not a property of the filesystem.
+
+      So the guard is a **withdrawal marker in the subject itself**: `--superseded` is refused
+      unless the finding's `file_path` carries a `Superseded-by:` line naming what `--by` names.
+      Refused when the finding records no `file_path`, when the file is **absent** (deleting the
+      evidence must not be the cheapest way out of the gate), when the marker is missing, and when
+      the marker names something else. The withdrawal is then reviewable in a diff and lands in
+      front of the next reader of the subject.
+
+      The measurement that justifies the strictness: on this one task, **26 of 57 open findings
+      point at subjects that are still live** — design 2, `tooling/kit-entry.sh`, conformance, an
+      ADR. A verb guarded only by "did you pass `--by`" would have cleared all 57.
+- [x] `.claude/CLAUDE.md` gains it in the operator block alongside `--fixed` and `--unassessable`,
       and it is **operator-reserved for the same reason**: a session deciding its own findings are
       moot is the signature that carries no information.
-- [ ] A check that can fail, covering both directions: a finding on a live subject must be refused,
+- [x] A check that can fail, covering both directions: a finding on a live subject must be refused,
       and a superseded one must leave `kit-preflight.sh --criticals` while still being counted by
       `kit-status.sh`.
+
+      Six assertions, four of them refusals, and the refusals come first so the acceptance cannot
+      be the only thing the step proves. It fails on the pre-fix code: `--superseded` did not
+      exist, so the refusals would pass vacuously and the acceptance would fail.
+
+### Added during implementation — the gate grew an exclusion its report could not see
+
+Not in the original criteria, and it is the same defect as the one the period-one retro named:
+**a fix at the site that leaves the consumer unchanged.** `kit-preflight.sh --criticals` gained a
+fourth exclusion, and `TRIAL-PROTOCOL.md` §0 — the box that exists to expose what the gate does not
+count — had no way to see it. Within minutes of the verb landing, this repository passed
+`--criticals` with **thirteen** excluded criticals behind the zero.
+
+- [x] `kit-preflight.sh --superseded`, mirroring `--unassessable`: exit 0 either way, because a
+      standing exclusion is a figure the report carries, not a stop.
+- [x] A §0 box that calls it, and a report-template line, so the next trial can compare.
+- [x] The two counts are **never summed**. An unassessable critical is unreadable — a gap in the
+      record. A superseded one is perfectly readable, was real, and its subject was withdrawn
+      because of it. Merging them would erase the difference between missing evidence and evidence
+      that worked.
+
+### The suite caught a hole this change opened, which is the whole reason it is shaped that way
+
+`tooling/kit-event.sh` refuses to write any kind `kit-index.sh` MUTATES a row for, because that
+script validates nothing and splices its third argument in as raw JSON. The conformance step
+derives that list from the indexer's own `k=="..."` branches rather than restating it, so teaching
+the indexer a sixth acting kind without guarding it **goes red instead of quietly reopening the
+hole.** Its comment said so in advance; it then did it.
+
+The hole was real and total: `kit-event.sh T-x finding-superseded '{"finding":"<id>","by":"y"}'`
+would have cleared a critical from the gate with `kit-resolve.sh` never invoked — **forging past
+the marker guard that is the entire point of this task**, and past the operator reservation in
+`.claude/CLAUDE.md`, by the same route that once forged `finding-fixed`.
+
+- [x] `finding-superseded` added to the refusal in `kit-event.sh`. Verified in both directions: the
+      forge exits 2, an ordinary `progress` kind still appends.
+
+**Nobody remembered to do this. A derived list did.** That is the difference between a check that
+restates a rule and one that reads its source — and it is the argument for writing the next guard
+the same way.
 
 ## Notes
 

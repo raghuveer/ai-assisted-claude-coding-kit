@@ -937,6 +937,16 @@ if [ "$SRC_EVENTS" = ndjson ] && [ -f "$EV" ]; then
         fref[nf] = jf($0,"finding")
         f[nf] = sprintf("UPDATE finding SET unassessable_at=\047%s\047, unassessable_reason=\047%s\047 WHERE id=\047%s\047;", q(a), q(jf($0,"reason")), q(jf($0,"finding")))
       }
+      # Whether the SUBJECT of a finding still stands -- the fourth fact. Same deferred array as the
+      # other two marks, and for the same reason rather than for symmetry: it inherits the orphan
+      # naming and the collision refusal, so a mark naming an id no finding has is REPORTED rather
+      # than run as an UPDATE that matches nothing and exits 0. A disposition that silently fails
+      # to apply leaves the gate reading clean for a reason nobody recorded.
+      if (k=="finding-superseded") {
+        nf++
+        fref[nf] = jf($0,"finding")
+        f[nf] = sprintf("UPDATE finding SET superseded_at=\047%s\047, superseded_by=\047%s\047 WHERE id=\047%s\047;", q(a), q(jf($0,"by")), q(jf($0,"finding")))
+      }
     }
     END {
       for (i=1; i<=nv; i++) print v[i]
