@@ -3555,10 +3555,18 @@ echo "  commits: $(git rev-list --count HEAD)"
 #      rows are in the compared `.dump` and are written AFTER the atomic swap by a different
 #      code path. It is not order-dependent. That was the reason for waiting for the whole run
 #      before touching these two lines rather than re-pinning on the first red.
-EXPECT_HEAD=496afb810ba4a0560ad4cbbd6177c9694f0830ee
+#      Re-pinned 2026-08-22, and the reason is nameable rather than "it moved": kit-init.sh
+#      stopped writing `.project/entry-candidates.md` into .gitignore, because that file is a
+#      model-authored proposal rather than derived output and is now tracked. The fixture commits
+#      kit-init's output, so its content changed and its sha followed.
+#      The diagnostic said which half moved before anything was touched -- "seed differs: a file
+#      kit-init.sh commits is not byte-identical here" -- and ubuntu and macos computed the SAME
+#      new pair, which is what makes this a re-pin rather than a reproducibility failure. Two
+#      platforms agreeing on a new value is evidence; one platform moving would not be.
+EXPECT_HEAD=9675ffe7c8df6db224c8b395a64c2bb90541760d
 # The seed alone, so a mismatch says WHICH half moved: seed intact means this script changed,
 # seed moved means a file kit-init.sh commits did.
-EXPECT_SEED=c2ca588545bba17fbbf2bec961beb223990f5d94
+EXPECT_SEED=81d2ffe1f54e7b5d94fde4085234931eb539db49
 fi
 
 if step "trailer hook" fixture; then
