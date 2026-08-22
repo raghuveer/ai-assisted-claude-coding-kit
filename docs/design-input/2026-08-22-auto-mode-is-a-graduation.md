@@ -375,6 +375,43 @@ whether style ever needs to be represented.
 Recorded here so a later session does not re-open it as an oversight — and note that §8.2 is what
 makes the deferral cheap, since authority does not vary by person.
 
+### 8.6 An absent limit and a breached limit are two finding classes, not one
+
+Operator decision. They differ on four axes, which is why severity would not have carried it:
+
+| | Absent limit | Breached limit |
+|---|---|---|
+| Subject | a **definition** that does not exist | an **artifact** that violates one |
+| Authority | escalates — a limit is project-scoped or overlay-scoped, so it is above the developer's §8.2 authority | the developer's, against the task's criteria |
+| Timing | detectable **before any code is written**, at entry and planning | detectable only after the artifact exists |
+| Resolution | a human **supplies an input**, or records that it does not apply | the code changes |
+
+**The absent one is the dangerous one in auto-mode, and this is the point of separating them.** A
+breach is loud: a check fails. An absence is silent, because nothing failed — nothing was checked.
+That is §3's named failure mode exactly — *a definition that does not exist cannot be diverged
+from* — and it now has an instrument attached to it instead of only a warning.
+
+**It generalises past latency `[judgement]`.** Absent-versus-breached is a pattern, not a
+non-functional special case: absent acceptance criterion versus failed one, absent security
+guideline versus violated one, absent tier floor versus below-floor. The kit already applies this
+principle to *counts* — an absent denominator is reported as absent rather than as zero, and the
+below-floor section says when no floors exist. **This is absent-is-not-zero applied to definitions
+rather than to numbers**, and treating it as one idea rather than two is what keeps it consistent.
+
+**And it gives accelerators a second job.** For the kit to say a limit is *missing*, it needs a
+basis for expecting one — and what a given kind of project ought to specify is precisely what a
+technology or industry accelerator carries. So an accelerator does not only **supply pre-decided
+answers (§5, stage 2); it defines what must be specified at all.** `[judgement]` That is a
+stronger reason to build accelerator distribution than reuse was, and it puts accelerators on the
+path to the §8.4 prerequisite rather than beside it.
+
+**Resolution reuses the guard design, and must.** An absent limit can be legitimately absent — a
+CLI tool has no latency SLO. So it resolves two ways: the limit is supplied, or it is recorded as
+not applicable **with a reason**. The second is the same shape as the existing marks that clear a
+gate while saying why, and it should not grow a fourth spelling of that idea. It also means an
+absent-limit finding resolves through §3.1's deviation adjudication rather than through a code
+change, which is the first place the two mechanisms touch.
+
 ---
 
 ## 9. Open questions this document does not answer
@@ -385,8 +422,11 @@ makes the deferral cheap, since authority does not vary by person.
 - What evidence justifies moving a control's addressee from human to machine, control by control.
 - Whether the two additions proposed in §8.3 hold — immediate surfacing when the adjudicator lacks
   authority over the layer, and on a budget threshold breach.
-- Which non-functional dimensions get a mechanism first (§8.4), and whether a breached limit and an
-  *absent* limit are the same finding class or two.
+- ~~Whether a breached limit and an absent limit are the same finding class or two~~ — **closed by
+  §8.6**: two.
+- Which non-functional dimensions get a mechanism first (§8.4).
+- Whether an absent-limit check can run before an accelerator exists to say what should be present
+  (§8.6), or whether the two have to land together.
 - Whether divergence detection is one mechanism across all definition classes or one per class.
 - Which authority may accept a deviation against which layer (§3.1), and whether that is expressed
   as a role, a person, or a rule in the profile.
