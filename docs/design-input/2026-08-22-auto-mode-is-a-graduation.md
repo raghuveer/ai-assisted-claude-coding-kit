@@ -412,6 +412,56 @@ gate while saying why, and it should not grow a fourth spelling of that idea. It
 absent-limit finding resolves through §3.1's deviation adjudication rather than through a code
 change, which is the first place the two mechanisms touch.
 
+### 8.7 Work happens outside the kit, and it is still the evidence graduation is judged on
+
+Operator context, given as examples of the kind of collaborative work already happening — and
+therefore of where coordination, not capability, is the thing to remove.
+
+- **Tests including load tests have been run with Claude's support**, before the kit existed.
+- **Some testing is performed outside the kit's scope**, by developers and testers.
+- **Most applications here were built with Claude Code before the kit's sub-agent scenario existed,
+  including deployment to Rancher Desktop and to cloud.**
+- **Accelerator distribution and the absent-limit check may land together** (§8.6's open question,
+  now closed), and **accelerators evolve over time** rather than arriving complete.
+
+Five things follow, and the first is a scope boundary worth stating before it gets crossed.
+
+**The kit consumes outcomes; it does not own the pipeline.** §8.4 makes latency-within-limits part
+of judging an outcome appropriate, and that cannot be judged without running something somewhere.
+The temptation is to have the kit orchestrate test and deployment. It should not: an add-on that
+requires you to adopt its pipeline is the same mistake as one that requires its runtime (goal 4).
+`[judgement]` **The kit's job is to record that a load test ran, against which limit, with what
+result — not to run it.**
+
+**Therefore outside-the-kit results are a first-class ingest problem, not an edge case.** A
+tester's result and a load test run in a session the kit never saw are exactly the evidence the
+watching human weighs. If they cannot land in the record, graduation is judged on partial
+evidence — and partial in the worst way, because the missing parts are the ones the operator named
+first. This is the same principle `Via:` already encodes for work provenance (`kit`, `agent`,
+`manual`, absent meaning unknown), applied to results rather than to authorship;
+`docs/ADAPTERS.md` and the `ingest.*` contract are where it belongs, and
+`T-20260814-a-reviewer-s-verdict-and-narrative-are-d` already covers recording bounded facts
+agents return.
+
+**Less coordination, not fewer activities `[judgement]`.** The examples are not a list of jobs for
+the kit to absorb. What they have in common is **relay**: a load test result reaching whoever
+decides, a tester's finding reaching the developer, a deployment outcome reaching the plan. The
+kit removes coordination by **making the record the shared surface**, which is a much smaller claim
+than automating the activities and is the one consistent with being an add-on.
+
+**An evolving accelerator forces the absent-limit check to declare its own coverage.** If an
+accelerator knows three of the ten limits a kind of project should carry, the check can only find
+three absences — and reporting "no absent limits" would be exactly the green-that-cannot-fail this
+project has recorded before. So the check must state its basis: which accelerator, at which
+version, covering how many dimensions. **That is absent-is-not-zero applied a third time — to the
+checker's own coverage** — and it is what keeps the check honest while accelerators are still
+young.
+
+**And the loop closes: a limit a human supplies that the accelerator did not ask for is a candidate
+accelerator entry.** That is how an accelerator earns content from use rather than from
+authorship, which is the ladder that already exists. It also means the absent-limit check gets
+better precisely by being run on projects, which is the right incentive.
+
 ---
 
 ## 9. Open questions this document does not answer
@@ -425,8 +475,12 @@ change, which is the first place the two mechanisms touch.
 - ~~Whether a breached limit and an absent limit are the same finding class or two~~ — **closed by
   §8.6**: two.
 - Which non-functional dimensions get a mechanism first (§8.4).
-- Whether an absent-limit check can run before an accelerator exists to say what should be present
-  (§8.6), or whether the two have to land together.
+- ~~Whether an absent-limit check can run before an accelerator exists to say what should be
+  present~~ — **closed by §8.7**: they may land together.
+- What shape a result from outside the kit arrives in (§8.7) — a trailer, an ingest adapter, or a
+  file a tester writes — and what the minimum is that still makes it evidence rather than a claim.
+- Whether a deployment is an event the record should carry at all, given the kit does not own the
+  pipeline, or whether only its *outcomes* are in scope.
 - Whether divergence detection is one mechanism across all definition classes or one per class.
 - Which authority may accept a deviation against which layer (§3.1), and whether that is expressed
   as a role, a person, or a rule in the profile.
