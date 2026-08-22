@@ -2112,7 +2112,8 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
                   AND COALESCE(vindicated,1) <> 0;")
   gateclosed=$(Q "SELECT COUNT(*) FROM finding f JOIN task t ON t.id=f.task_id
                    WHERE f.severity='critical' AND f.fixed_at IS NULL
-                     AND COALESCE(f.vindicated,1) <> 0 AND t.state IN ('done','abandoned');")
+                     AND COALESCE(f.vindicated,1) <> 0
+                     AND t.state IN (SELECT state FROM state_class WHERE is_closed = 1);")
   gaterefuted=$(Q "SELECT COUNT(*) FROM finding WHERE severity='critical' AND fixed_at IS NULL
                     AND vindicated=0;")
   bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
@@ -2882,6 +2883,23 @@ check $? "the reader-facing tables list the same states the code defines"
                     grep -rn "kind IN (SELECT state FROM state_class" "$KIT/tooling" | sed 's/^/    /'; }
   [ "$n" = 0 ] )
 check $? "no query compares an event kind against the canonical-only state table"
+
+# AND NO QUERY SPELLS THE PARTITION OUT AGAIN. The change replaced nineteen longhand copies of
+# the closed set with one definition -- and the TWENTIETH was in this file, inside a query THIS
+# SUITE runs, where the single-home check could not see it: that check compares the definition
+# STRING, and a partition written out inside a WHERE clause is not that string. It returned 0
+# where it wanted 1, and CI caught it.
+#
+# `tests` is searched as well as `tooling` for exactly that reason.
+#
+# The pattern is deliberately not quoted in this comment. Written out, it matches ITSELF and the
+# step fails on its own prose -- which is what happened first, and is the same self-catch the via
+# vocabulary step above records about its own first run.
+( n=$(grep -rnE "state (NOT )?IN \('(done|completed|abandoned|cancelled)'" "$KIT/tooling" "$KIT/tests" 2>/dev/null | wc -l | tr -d ' ')
+  [ "$n" = 0 ] || { echo "  $n site(s) spell the closed partition out longhand; join state_class:"
+                    grep -rnE "state (NOT )?IN \('(done|completed|abandoned|cancelled)'" "$KIT/tooling" "$KIT/tests" | sed 's/^/    /'; }
+  [ "$n" = 0 ] )
+check $? "the closed partition is never written longhand, in tooling or in the suite itself"
 rm -rf "$sv"
 fi
 
