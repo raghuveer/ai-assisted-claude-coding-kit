@@ -3249,11 +3249,20 @@ check $? "a conforming proposal passes, thirteen malformed ones are refused, and
 # new cases passed.
 dp="$WORK.disp"; rm -rf "$dp"; mkdir -p "$dp"
 ( cd "$dp" || exit 1
-  # A GIT REPOSITORY, because kit-entry.sh calls kit_root at line 33 -- BEFORE the --check branch
-  # -- and exits 2 outside one. A bare mkdir made every case fail with "not a git repository",
-  # which matches neither `conforms` nor `not safe to paste`, so the accept cases AND the refuse
-  # cases both failed and the step said nothing about the grammar it exists to test.
+  # A GIT REPOSITORY **AND AN ADOPTED KIT**. kit-entry.sh runs kit_root and kit_active before it
+  # reaches the --check branch, so a bare mkdir fails with "not a git repository" and a bare
+  # `git init` fails with "kit not adopted here". Neither message matches `conforms` OR `not safe
+  # to paste`, so the accept cases and the refuse cases BOTH fail and the step reports nothing
+  # about the grammar it exists to test.
+  #
+  # Worth stating because it was got wrong twice in a row: a broken fixture does not announce
+  # itself as broken, it announces the feature as broken. And had this step contained only
+  # refusal cases it would have gone GREEN -- every line "refused", for entirely the wrong
+  # reason. The accept cases are what make the fixture's own health observable.
   git init -q -b main 2>/dev/null
+  mkdir -p .claude
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "tier.default: T1"; echo "---"; } > .claude/project-profile.md
   prop() { { printf '## Open questions\n\n1. Why?\n   evidence: a.go:1\n   answer:\n\n'
              printf '## Candidate tasks\n\n- [ ] C\n      evidence: a.go:1\n      %s\n\n' "$1"
              printf '## Could not determine\n\n- nothing\n'; } > p.md
