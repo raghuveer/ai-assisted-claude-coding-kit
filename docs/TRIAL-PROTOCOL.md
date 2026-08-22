@@ -240,6 +240,42 @@ revision 1 stated it. The honest rule: **the subject is the variable; the kit mo
 Record both SHAs and diff them, and when a figure moves, say plainly that either the subject or
 the kit could account for it. A two-trial difference is a hypothesis, not a finding.
 
+#### WALL-CLOCK IS NOT COMPARABLE ACROSS MACHINES, and on this one it is not a measurement of the kit
+
+Record the **machine's process-creation latency** beside any wall-clock figure, because on the
+development machine it dominates everything else. Measured 2026-08-22:
+
+    $sw=[Diagnostics.Stopwatch]::StartNew()
+    for($i=0;$i -lt 50;$i++){ Start-Process cmd.exe -ArgumentList '/c','exit' -NoNewWindow -Wait }
+    $sw.Stop(); "{0:N0} ms per spawn" -f ($sw.Elapsed.TotalMilliseconds/50)
+
+**1,015 ms per process creation.** A healthy machine is 10–30 ms. The consequence is arithmetic
+rather than opinion: a minimal three-task fixture costs ~61 spawns and takes **25 seconds** to
+index, the suite performs **90 index builds**, and that is essentially its entire runtime — about
+an hour locally against **43 seconds** for the same suite on ubuntu in CI.
+
+**It does not parallelise.** 160 spawns took 65 s sequentially and 56 s across eight concurrent
+workers — 1.16×, not 8×, on sixteen idle cores, with `sys` time *rising*. Process creation is
+serialised at roughly 2.5/sec however many ask, so neither `xargs -P` nor more cores helps.
+
+**Four causes were tested and refuted**, each by measurement rather than argument:
+
+| hypothesis | result |
+|---|---|
+| Defender path exclusions | 80 s vs 79 s |
+| Overwolf process hooks | 76 s vs 79 s |
+| msys `fork` emulation | PowerShell → `cmd.exe` is *slower* still |
+| Defender real-time protection **off** | **1,016 ms vs 1,015 ms** |
+
+`fltmc filters` lists only Microsoft drivers — no third-party endpoint, backup or sync filter.
+The cause is unidentified and is tracked as its own task.
+
+**What this means for a trial report.** Any duration measured on that machine describes the
+machine, not the kit. State the spawn latency beside it, or report API time and token counts and
+mark wall-clock UNAVAILABLE — the same honesty §7 requires of a missing cost figure. Two trials
+run on different machines cannot have their wall-clock compared at all, and the fd trial's
+"six seconds" for co-change was measured before any of this was known.
+
 ### Record every time
 
 | | |
