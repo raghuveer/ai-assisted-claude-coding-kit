@@ -27,6 +27,32 @@ RC=0
 while read -r _lref lsha _rref rsha; do
   [ -n "${lsha:-}" ] || continue
 
+  # A DIRECT PUSH TO THE DEFAULT BRANCH IS REFUSED, and this is the only layer that can refuse
+  # it before the push happens. Branch protection on the server rejects it too, but only after
+  # the round trip -- and a Claude Code PreToolUse hook cannot see this at all, because git is
+  # Bash and `hooks/hooks.json` matches `Write|Edit|NotebookEdit` only. That limit is recorded
+  # in docs/TRIAL-PROTOCOL.md section 4 and it is why this check lives here rather than there.
+  #
+  # ADVISORY, LIKE EVERY LOCAL HOOK. `--no-verify` skips it, and this file says so rather than
+  # implying a gate it does not close -- the same honesty `.claude/CLAUDE.md` applies to `Via:`.
+  # What makes the rule bind is the server-side protection; this makes it bind EARLY, while the
+  # work is still one branch away from being correct.
+  #
+  # KIT_PUSH_MAIN=1 is the deliberate override, for the case the operator has been using all
+  # along: a small change vetted locally, pushed straight to the default branch on purpose. An
+  # override that must be typed is a decision; a hook with no override is one people delete.
+  case "${_rref:-}" in
+    refs/heads/main|refs/heads/master)
+      if [ "${KIT_PUSH_MAIN:-0}" != 1 ]; then
+        echo "pre-push: refusing a direct push to ${_rref#refs/heads/}" >&2
+        echo "  Open a branch and a PR, so CI verifies ubuntu and macos before it lands." >&2
+        echo "  Deliberate exception:  KIT_PUSH_MAIN=1 git push" >&2
+        RC=1
+        continue
+      fi
+      echo "pre-push: KIT_PUSH_MAIN=1 -- direct push to ${_rref#refs/heads/} allowed" >&2 ;;
+  esac
+
   # A deletion pushes the zero sha as the local side. There is nothing to validate, and
   # treating it as a range would ask git to resolve a commit that does not exist.
   case "$lsha" in "$ZERO"|"") continue ;; esac
