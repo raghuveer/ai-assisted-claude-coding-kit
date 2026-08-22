@@ -292,10 +292,101 @@ differently and some change priority sharply:
 
 ---
 
-## 8. Open questions this document does not answer
+## 8. Decisions taken in this session
 
-- Where the practitioner layer's boundary sits, beyond the testable rule proposed in §4.
+Five answers from the operator, recorded with what each closes and what it leaves open. Where a
+decision needed a boundary the operator did not draw, the boundary below is **proposed, not
+decided**, and is marked as such.
+
+### 8.1 The audience spans seniority, and that is why supply matters
+
+> Wanted to make this coding kit available to developers, seniors to juniors, who may find
+> optimistic outcomes based on provided project inputs, solution overlay etc.
+
+This sharpens §5's middle stage from a claim about efficiency into the actual value proposition.
+**Accelerators and the overlay are the seniority-levelling mechanism**: every decision they supply
+is a decision a junior does not have to improvise and a senior does not have to re-make. "Reuse
+across projects" undersells it — the same mechanism that reduces variance between two runs reduces
+variance between two people.
+
+`[judgement]` Two consequences follow that were not obvious before. **Legibility (§2) has to be
+stronger than for an expert audience** — a junior cannot be relied on to know what to look at, so
+the kit must surface the checks rather than assume the reader will think of them; this is the
+argument for §8.4 below. And **the overlay's completeness matters more**, because §3's failure mode
+— an under-specified project running quietly and wrongly — lands hardest on whoever has least
+context to notice.
+
+### 8.2 Deviation authority: task acceptance criteria only
+
+A developer adjudicates deviations **against a task's acceptance criteria and nothing else**.
+Project-scoped floors and thresholds, and the solution overlay, escalate to whoever owns them.
+
+Closes the first open question of §3.1. It is also the answer that composes with §8.1: it is the
+same rule for a junior and a senior, so authority does not have to be reasoned about per person,
+and §8.5's deferral of the practitioner layer costs nothing.
+
+### 8.3 Uncertainty default: tier decides, and the rest batches
+
+The operator placed this between "decide by tier" and "batch and ask once". Both, composed:
+
+- **Tier decides whether an uncertain call can wait.** T0 and T1 surface immediately; T2 and T3 are
+  recorded and carried.
+- **What can wait is batched to one question per goal**, rather than one interruption per event.
+
+`[judgement]` — **proposed boundary, not decided.** Two additions that seem to follow and need
+confirming: anything touching a layer the current adjudicator has no authority over (§8.2) surfaces
+immediately regardless of tier, because batching a question nobody present can answer only delays
+it; and a budget threshold breach surfaces immediately for the same reason it is on the graduation
+checklist — unattended plus unbounded is the failure that cannot be noticed late.
+
+The important property is that this adds **no new dial**. The interrupt budget binds to the tier
+machinery that already exists, which means it is calibrated by the same decision an operator
+already makes per task.
+
+### 8.4 What "appropriate outcome" means — and it includes non-functional conformance
+
+Asked what a developer inspects beyond unit and integration tests, the operator named **all four
+offered signals** — runs it and exercises the behaviour; reads the diff and the reasoning; checks
+against the plan and acceptance criteria; looks at what it chose *not* to do — **and added a
+fifth**:
+
+> latency within prescribed limits, functional and security guidelines compliance in code etc.
+
+**This is the most consequential answer in the session `[judgement]`, and it re-prioritises the
+roadmap.** The chain is short and hard to escape: graduation depends on a person judging outcomes
+appropriate (§2); that judgement includes non-functional conformance; the kit has **no mechanism**
+that makes an absent or breached non-functional requirement visible — it was the dimension where
+the competitive comparison found us furthest behind a stated goal. So **non-functional coverage is
+not a mid-term improvement. It is a graduation prerequisite**, and it moves ahead of most of what
+the earlier roadmap put in front of it.
+
+Three of the five signals also happen to be things the kit could surface rather than leave to
+inspection: conformance to plan and acceptance criteria, what was deferred or silently decided, and
+non-functional limits. The other two — running the thing, reading the reasoning — stay human, and
+should. `[judgement]` The design target is not to replace the inspection but to make the three
+mechanisable ones cheap enough that attention is left for the two that are not.
+
+### 8.5 The practitioner layer is deferred
+
+Not needed yet. §4's three-layer model stands as analysis; its third layer is **parked by operator
+decision**, not left open. Ship the invariant and project layers first and let the trial say
+whether style ever needs to be represented.
+
+Recorded here so a later session does not re-open it as an oversight — and note that §8.2 is what
+makes the deferral cheap, since authority does not vary by person.
+
+---
+
+## 9. Open questions this document does not answer
+
+- ~~Where the practitioner layer's boundary sits~~ — **closed by §8.5**: parked, not open.
+- ~~Which authority may accept a deviation against which layer~~ — **closed by §8.2**: task
+  acceptance criteria only, the same rule for every seniority.
 - What evidence justifies moving a control's addressee from human to machine, control by control.
+- Whether the two additions proposed in §8.3 hold — immediate surfacing when the adjudicator lacks
+  authority over the layer, and on a budget threshold breach.
+- Which non-functional dimensions get a mechanism first (§8.4), and whether a breached limit and an
+  *absent* limit are the same finding class or two.
 - Whether divergence detection is one mechanism across all definition classes or one per class.
 - Which authority may accept a deviation against which layer (§3.1), and whether that is expressed
   as a role, a person, or a rule in the profile.
@@ -306,5 +397,7 @@ differently and some change priority sharply:
   need it and neither exists.
 - What a stop condition looks like that is not simply "an error occurred".
 - Whether goals-as-delegation-unit needs anything beyond the `goal` rows that already exist.
-- How a team — as opposed to a solo practitioner — shares an overlay while personalising style,
-  which is §4 and the team story colliding, and neither is designed yet.
+- How a team shares an overlay — the style half of this is parked by §8.5, but the team story
+  itself is not designed.
+- What a junior developer sees that a senior does not need (§8.1), and whether that is extra
+  surfacing or the same surfacing with more explanation.
