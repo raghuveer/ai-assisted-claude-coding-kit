@@ -99,7 +99,16 @@ grep -qxF '.project/packs/' "$GI" 2>/dev/null || echo '.project/packs/' >> "$GI"
 # paths.state, not a hardcoded .project: kit-entry.sh writes into whatever the profile declares,
 # so a subject that configured a different state directory would have had these committed.
 _ST=$(kit_cfg "$ROOT/.claude/project-profile.md" paths.state ".project")
-for _e in entry-facts.tsv entry-comment-runs.tsv entry-report.md entry-candidates.md; do
+# THREE, NOT FOUR. `entry-candidates.md` was in this list and is deliberately NOT ignored any
+# more: kit-entry.sh does not write it -- the model does, following docs/ENTRY-PROPOSAL.md -- so
+# it is a PROPOSAL a human reviews rather than derived output, and a re-run cannot reproduce the
+# same judgement the way it reproduces a census.
+#
+# Caught by running kit-init.sh on this repository AFTER the un-ignore: the line was appended
+# straight back, silently. This loop only ever ADDS, so a deliberate removal survives exactly
+# until the next kit-init.sh -- including for an adopter who ran it for an unrelated reason. An
+# append-only writer over a file a human also edits reverts decisions without saying so.
+for _e in entry-facts.tsv entry-comment-runs.tsv entry-report.md; do
   grep -qxF "$_ST/$_e" "$GI" 2>/dev/null || echo "$_ST/$_e" >> "$GI"
 done
 echo "updated .gitignore"

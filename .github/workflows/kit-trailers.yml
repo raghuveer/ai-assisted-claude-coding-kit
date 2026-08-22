@@ -10,6 +10,16 @@
 # squash turns main red immediately instead of quietly costing a task. Detection, not
 # prevention.
 
+# THE JOB NAMES BELOW ARE LOAD-BEARING. Branch protection on `main` requires these four checks
+# by name -- `structure`, `trailers`, `conformance (ubuntu-latest)`, `conformance (macos-latest)`.
+# A required check that never reports blocks every merge forever, so renaming a job, or changing
+# the matrix so a leg reports under a different name, silently locks the branch until someone
+# edits the protection rule to match. Rename here and there, in the same change, or not at all.
+#
+# The matrix names are composed by GitHub as `<job> (<matrix value>)` -- adding an OS adds a
+# check that protection does not require, which is harmless; removing one leaves a required
+# check with nothing to satisfy it, which is not.
+
 name: kit trailers
 
 on:

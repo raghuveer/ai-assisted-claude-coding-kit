@@ -402,13 +402,45 @@ b
 
 Task-Id: T-typo
 Tier: T2"
-  git push origin main >/dev/null 2>&1 && exit 1          # must be REFUSED
+  # KIT_PUSH_MAIN=1 ON BOTH, and the FIRST one is why it matters. pre-push now also refuses a
+  # direct push to the default branch, so without the override this step would refuse every
+  # push -- and the "must be REFUSED" assertion would pass whether or not the trailer check
+  # worked at all. A step that goes green for the wrong reason is the failure this suite exists
+  # to catch, and widening the hook introduced one here.
+  #
+  # The override isolates what this step tests. Branch policy is exercised where it belongs, in
+  # the step below; this one is about a typo'd Task-Id being catchable while it is still one
+  # amend away.
+  KIT_PUSH_MAIN=1 git push origin main >/dev/null 2>&1 && exit 1   # must be REFUSED: bad trailer
   git commit -q --amend --no-verify -m "feat: w
 
 Task-Id: T-real
 Tier: T2"
-  git push origin main >/dev/null 2>&1 || exit 1 )        # must now succeed
+  KIT_PUSH_MAIN=1 git push origin main >/dev/null 2>&1 || exit 1 ) # must now succeed
 check $? "refuses a typo'd Task-Id, accepts it once amended"
+
+# THE BRANCH RULE, TESTED ON ITS OWN. The step above needs KIT_PUSH_MAIN=1 to isolate what it
+# tests, so without this the rule would be exercised only as a side effect of being overridden --
+# which is the same as not being tested. Both directions and the override, on a fixture whose
+# trailers are VALID, so a refusal can only be the branch rule.
+( cd "$pp/work" || exit 1
+  git checkout -q -b feature 2>/dev/null
+  echo y > b.txt && git add -A
+  git commit -q --no-verify -m "feat: v
+
+Task-Id: T-real
+Tier: T2"
+  # A feature branch is allowed.
+  git push -q origin feature >/dev/null 2>&1 || { echo "  a feature branch was refused"; exit 1; }
+  git checkout -q main 2>/dev/null
+  git merge -q --no-edit feature >/dev/null 2>&1
+  # main is refused without the override...
+  git push origin main >/dev/null 2>&1 && { echo "  a direct push to main was ALLOWED"; exit 1; }
+  # ...and allowed with it. An override that must be typed is a decision; a hook without one is
+  # a hook people delete -- the same argument kit-guard.sh:5 makes about over-blocking.
+  KIT_PUSH_MAIN=1 git push origin main >/dev/null 2>&1 || { echo "  the override did not work"; exit 1; }
+  exit 0 )
+check $? "a feature branch pushes, a direct push to main is refused, and the override works"
 rm -rf "$pp"
 fi
 
@@ -3523,10 +3555,18 @@ echo "  commits: $(git rev-list --count HEAD)"
 #      rows are in the compared `.dump` and are written AFTER the atomic swap by a different
 #      code path. It is not order-dependent. That was the reason for waiting for the whole run
 #      before touching these two lines rather than re-pinning on the first red.
-EXPECT_HEAD=496afb810ba4a0560ad4cbbd6177c9694f0830ee
+#      Re-pinned 2026-08-22, and the reason is nameable rather than "it moved": kit-init.sh
+#      stopped writing `.project/entry-candidates.md` into .gitignore, because that file is a
+#      model-authored proposal rather than derived output and is now tracked. The fixture commits
+#      kit-init's output, so its content changed and its sha followed.
+#      The diagnostic said which half moved before anything was touched -- "seed differs: a file
+#      kit-init.sh commits is not byte-identical here" -- and ubuntu and macos computed the SAME
+#      new pair, which is what makes this a re-pin rather than a reproducibility failure. Two
+#      platforms agreeing on a new value is evidence; one platform moving would not be.
+EXPECT_HEAD=9675ffe7c8df6db224c8b395a64c2bb90541760d
 # The seed alone, so a mismatch says WHICH half moved: seed intact means this script changed,
 # seed moved means a file kit-init.sh commits did.
-EXPECT_SEED=c2ca588545bba17fbbf2bec961beb223990f5d94
+EXPECT_SEED=81d2ffe1f54e7b5d94fde4085234931eb539db49
 fi
 
 if step "trailer hook" fixture; then
