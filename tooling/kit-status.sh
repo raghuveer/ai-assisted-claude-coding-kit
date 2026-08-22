@@ -69,13 +69,22 @@ printf -- '- %s completed, %s cancelled, %s abandoned\n' \
 # and the indexer resolves them; silence about that is how two vocabularies become permanent. This
 # is a number to watch fall, not a warning to act on -- no work is required to reduce it.
 _TASKDIR=$(kit_cfg "$PROFILE" paths.tasks ".project/tasks")
-_LEG=0
+_LEG=0; _LEGBREAK=""
 for _p in $(kit_state_legacy); do
   _n=$(grep -l "^state: ${_p%%:*}\$" "$ROOT/$_TASKDIR"/*.md 2>/dev/null | wc -l | tr -d ' ')
+  [ "${_n:-0}" -gt 0 ] && _LEGBREAK="$_LEGBREAK ${_n}x ${_p%%:*}->${_p##*:},"
   _LEG=$((_LEG + _n))
 done
-[ "${_LEG:-0}" -gt 0 ] &&
-  printf -- '- %s task file(s) still write a legacy state name; the index resolves them (ADR 0008)\n' "$_LEG"
+if [ "${_LEG:-0}" -gt 0 ]; then
+  # BROKEN DOWN BY VALUE, not just totalled. A bare count says a debt exists; naming which
+  # spellings and how many is what someone can act on, and it is what makes the number fall
+  # visibly rather than sit there. Nothing here is broken -- the index resolves every one of
+  # them -- so this is a remediation backlog, deliberately not a warning.
+  printf -- '- %s task file(s) still write a legacy state name:%s resolved on read (ADR 0008)\n' \
+    "$_LEG" "$(printf '%s' "$_LEGBREAK" | sed 's/,$//')"
+  printf -- '  Not an error, and no work is required. Rewriting them to the canonical value is\n'
+  printf -- '  safe at any time and is tracked by `T-20260822-legacy-state-spellings-in-task-files-sho`.\n'
+fi
 
 # An id referenced by history that no task file backs. The indexer no longer invents a task for
 # it -- that is what put a typo'd id in the Open list, the backlog count and an escape-rate
