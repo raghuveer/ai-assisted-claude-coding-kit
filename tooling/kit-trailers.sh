@@ -115,8 +115,12 @@ check_msg() {
     # Read from kit_state_vocab, not spelled out here. This case statement WAS the single home
     # for the vocabulary while the partitions of it lived in nineteen other places; now the
     # vocabulary has one home too and this is a consumer like any other. See docs/adr/0008.
+    # BOTH VOCABULARIES ARE VALID INPUT. The canonical seven, and the legacy spellings 127
+    # existing commits already carry -- rejecting those would make `git log` unverifiable
+    # against its own history, and history cannot be amended.
     _ok=0
     for _w in $(kit_state_vocab); do [ "$v" = "$_w" ] && _ok=1; done
+    for _p in $(kit_state_legacy); do [ "$v" = "${_p%%:*}" ] && _ok=1; done
     [ "$_ok" = 1 ] || printf '  invalid  Task-Status: %s\n' "$v"
   fi
 

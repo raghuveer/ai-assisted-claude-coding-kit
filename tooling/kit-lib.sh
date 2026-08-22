@@ -139,16 +139,52 @@ kit_via_vocab() { printf 'kit agent manual unknown'; }
 # from them and the queries join against it, because the derivation SQL lives in a QUOTED heredoc
 # (`cat <<'DERIVE'`) where no shell expansion happens. Text is truth, the table is derived and
 # disposable -- the same split this repository applies to task files and index.db.
-kit_state_vocab()    { printf 'started progress blocked unblocked done abandoned'; }
+# A LIFECYCLE, not a bag of values. The previous six were `started progress blocked unblocked
+# done abandoned`, of which THREE had never been used across 130 tasks -- `blocked`, `unblocked`
+# and `abandoned` all measured zero -- while `open`, the most-used value in the repository at 115
+# tasks, was not in the list at all. See docs/adr/0008.
+#
+#   created      filed, after research and task segregation; not yet planned
+#   planned      implementation approach decided and written down
+#   in-progress  development or testing under way
+#   on-hold      deliberately not being worked, after creation
+#   completed    implementation finished
+#   cancelled    NO LONGER RELEVANT -- a judgement about the WORK
+#   abandoned    WE STOPPED -- a judgement about the ATTEMPT
+#
+# `cancelled` and `abandoned` are both kept and that is the point of the change. Collapsing them
+# either way loses the distinction: filing dropped attempts as `cancelled` asserts they were never
+# worth doing, which is the original complaint mirrored.
+#
+# There is no `paused`: blockedness is carried structurally by `blocked_by:`, which kit-plan.sh
+# reads for layering, and the measured fate of a state that duplicates it is `blocked` -- zero uses.
+kit_state_vocab()    { printf 'created planned in-progress on-hold completed cancelled abandoned'; }
 
 # Closed = the work is not coming back, whether it finished or was dropped. Read by kit-plan.sh
 # for what may be ordered, by kit-status.sh for what counts as open, and by kit_plan_digest below.
-kit_state_closed()   { printf 'done abandoned'; }
+kit_state_closed()   { printf 'completed cancelled abandoned'; }
 
-# The states whose actor is the task's OWNER. Deliberately not "vocab minus closed": `unblocked`
-# is excluded because unblocking someone else's task does not make it yours. This was a fourth
-# literal list, three values wide, sitting beside the other two and matching neither.
-kit_state_activity() { printf 'started progress blocked'; }
+# The states whose actor is the task's OWNER. Deliberately not "vocab minus closed": a task nobody
+# has picked up yet has no owner to infer. Maps forward from the old `started progress blocked`.
+kit_state_activity() { printf 'in-progress on-hold'; }
+
+# IN THE ESCAPE-RATE DENOMINATOR -- the populations that judge the pipeline. CLOSED AND MEASURED
+# ARE DIFFERENT SETS, and `cancelled` is the reason this partition exists at all: work that was
+# never work must not count toward what the pipeline did or failed to do. `abandoned` IS measured,
+# because it was real work this pipeline touched and hiding it would flatter the record.
+#
+# One boolean cannot carry this. A binary open/closed forces `cancelled` into the denominator and
+# reproduces the exact distortion the change was made to remove.
+kit_state_measured() { printf 'completed abandoned'; }
+
+# LEGACY SPELLINGS ARE ACCEPTED FOREVER, as `written:canonical` pairs. Nothing is rewritten: 127
+# commits already carry `Task-Status: started|progress|done` and are immutable, and 130 task files
+# carry `open` or `done`. They stay valid input; the canonical value is what is stored and queried.
+#
+# Normalisation happens ONCE, where the index is built, so every consumer downstream sees exactly
+# the seven values above and no query is more complex than before. Accepting both spellings at
+# nineteen partition sites instead would be the drift this whole change removes, doubled.
+kit_state_legacy()   { printf 'open:created started:in-progress progress:in-progress unblocked:in-progress blocked:on-hold done:completed'; }
 
 # `a b c` -> `'a','b','c'` for interpolation into SQL built in shell. The values are this file's
 # own literals, never caller input, so quoting is about correctness of the emitted SQL and not

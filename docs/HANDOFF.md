@@ -103,7 +103,7 @@ history that will not be rewritten:
 | Trailer | Purpose |
 |---|---|
 | `Task-Id:` | links commit → task; everything rests on this |
-| `Task-Status:` | started / progress / blocked / done / abandoned |
+| `Task-Status:` | created / planned / in-progress / on-hold / completed / cancelled / abandoned — legacy spellings still accepted, ADR 0008 |
 | `Tier:` | T0–T3 actually used — required for escape-rate measurement |
 | `Fixes-Escape-Of:` | links a fix back to the task whose tier should have caught it |
 

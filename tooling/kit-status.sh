@@ -53,9 +53,34 @@ OPEN=$(q "SELECT t.id||'  '||COALESCE(NULLIF(n.title,''),t.id)||'  ['||COALESCE(
 [ -n "$OPEN" ] && printf '%s\n' "$OPEN" | sed 's/^/- /' || printf '_none_\n'
 
 printf '\n## Closed\n\n'
-printf -- '- %s done, %s abandoned\n' \
-  "$(q "SELECT COUNT(*) FROM task WHERE state='done';")" \
+# THREE COUNTS, NOT TWO, AND cancelled IS WHY THE THIRD EXISTS. `abandoned` judges the ATTEMPT --
+# we stopped; `cancelled` judges the WORK -- it should not be done at all. Reporting them as one
+# number is the misread docs/adr/0008 was written to remove: a backlog whose irrelevant items were
+# filed as abandoned reads as a project that abandons a great deal.
+printf -- '- %s completed, %s cancelled, %s abandoned\n' \
+  "$(q "SELECT COUNT(*) FROM task WHERE state='completed';")" \
+  "$(q "SELECT COUNT(*) FROM task WHERE state='cancelled';")" \
   "$(q "SELECT COUNT(*) FROM task WHERE state='abandoned';")"
+# CANCELLED IS REPORTED BESIDE THE RATE, NEVER SUBTRACTED FROM IT. The escape-rate denominator
+# below has no WHERE clause on purpose -- that is what makes disappearance impossible by
+# construction rather than by care -- so this states the dilution instead of hiding it. Same
+# practice as docs/LESSONS.md section 11: record the measured value beside the required one.
+_CANC=$(q "SELECT COUNT(*) FROM task WHERE state IN (SELECT state FROM state_class WHERE is_closed = 1 AND is_measured = 0);")
+if [ "${_CANC:-0}" -gt 0 ]; then
+  printf -- '- %s of those are closed-but-not-measured, so they sit in the escape-rate\n' "$_CANC"
+  printf -- '  denominator below without ever having been work. Nothing is excluded from it.\n'
+fi
+# LEGACY SPELLINGS, COUNTED SO THEY DRAIN. Task files may carry `open`/`done`/`progress` forever
+# and the indexer resolves them; silence about that is how two vocabularies become permanent. This
+# is a number to watch fall, not a warning to act on -- no work is required to reduce it.
+_TASKDIR=$(kit_cfg "$PROFILE" paths.tasks ".project/tasks")
+_LEG=0
+for _p in $(kit_state_legacy); do
+  _n=$(grep -l "^state: ${_p%%:*}\$" "$ROOT/$_TASKDIR"/*.md 2>/dev/null | wc -l | tr -d ' ')
+  _LEG=$((_LEG + _n))
+done
+[ "${_LEG:-0}" -gt 0 ] &&
+  printf -- '- %s task file(s) still write a legacy state name; the index resolves them (ADR 0008)\n' "$_LEG"
 
 # An id referenced by history that no task file backs. The indexer no longer invents a task for
 # it -- that is what put a typo'd id in the Open list, the backlog count and an escape-rate

@@ -1,6 +1,6 @@
 # ADR 0008: The task state vocabulary, and where its partitions live
 
-- **Date:** 2026-08-22   **Status:** **Proposed**   **Supersedes:** —   **Related:** [[0004-where-the-plan-lives]]
+- **Date:** 2026-08-22   **Status:** **Accepted**   **Accepted:** 2026-08-22   **Supersedes:** —   **Related:** [[0004-where-the-plan-lives]]
 
 Decides what a task's state can be, what a commit trailer can record, and where the open/closed
 question is answered. Written for `T-20260808-task-state-cannot-express-no-longer-rele`, whose
@@ -71,6 +71,14 @@ The vocabulary is enforced once, at `kit-trailers.sh:115`. The *partition* it fe
 states count as closed — is written out nineteen times. Adding a seventh value means finding all
 nineteen and judging each, which is the drift `LESSONS.md` §4 describes: *"Filing a defect class
 is not the same as sweeping for it, and the sweep is the cheap half."*
+
+**And there were two more copies outside the code**, found only while implementing this:
+`README.md` and `docs/HANDOFF.md` each carry a hand-written list of the vocabulary in a
+reader-facing table. Both went stale the moment the values changed. The single-home check that
+guards `kit_via_vocab` greps `tooling/` and `tests/` only, so nothing was watching them — the
+sweep in §4 was itself swept short. A reader-facing table is legitimate documentation rather
+than a second definition, so the answer is not to ban it but to require it to **agree**, which
+is now asserted.
 
 ### Fact 3 — states and transitions are different objects
 
@@ -151,6 +159,37 @@ ones"*), which is recorded here rather than left implicit.
 `cancelled` and `abandoned` are both kept, and keeping both is the point of the task. Collapsing
 them in either direction loses the distinction: filing dropped attempts as `cancelled` asserts
 they were never worth doing, which is the original complaint mirrored.
+
+**Why a lifecycle rather than the minimum viable set — the operator's reasoning, recorded because
+it answers a challenge raised against this ADR in review.** The objection was that `abandoned` has
+zero uses and `planned` has no consumer, so both are vocabulary grown on a forecast. The answer is
+that the audience is not this repository:
+
+- **The states are what a coding agent MARKS as work progresses**, not labels a human curates
+  afterwards. A kit that moves a task through a lifecycle needs the lifecycle to exist first. The
+  model is a Kanban board — cards move between named columns — and users arriving from Jira and
+  similar tools will expect those columns to be there.
+- **`completed` is terminal and is not retracted.** If the functionality is later changed or
+  removed, that is a **new task**, not a retroactive edit of the old one. This is what stops
+  `cancelled` from being used to rewrite history, and it is why the two closed-but-different
+  verbs do not overlap in practice.
+
+### `planned` has a consumer, and it is the agent
+
+`planned` means an implementation approach exists and has been **reviewed** — whether a human
+architect wrote it, or it came out of a coding agent's plan mode, or the two arrived at it
+together. It is not a synonym for "not started yet".
+
+The challenge against it was that no code reads it differently from `created`, which is exactly
+how `blocked` and `unblocked` died. The distinction is that **its consumer is the next agent, not
+the planner**: on a large task, `planned` is the difference between "implement this" and
+"implement this, and the approach was already agreed" — which is the safer instruction, and the
+one a reader can check.
+
+On small tasks the state is skipped, and that is expected rather than a gap. Recording it
+uniformly is what makes it verifiable: **the value is committed to git**, so another developer's
+kit deployment sees the same state and the same dependencies for that task, without needing the
+conversation it came from.
 
 **No `paused`.** Blockedness is already carried by `blocked_by:`, and the measured fate of
 `blocked`/`unblocked` — zero uses across 130 tasks — is what a redundant state gets here.
@@ -251,10 +290,14 @@ cannot fail is worse than no check. Four assertions:
 3. a `cancelled` task is absent from `kit_state_measured` while a `completed` one is present —
    the assertion with teeth, since this is the distinction the whole task exists to create;
 4. each definition appears in exactly one file, extending the check that already guards
-   `kit_via_vocab`.
+   `kit_via_vocab`;
+5. the reader-facing tables in `README.md` and `docs/HANDOFF.md` list the same states the code
+   defines — the gap that let both go stale unnoticed.
 
 Assertion 2 is the one that would silently rot: an alias table that is written down but not
-applied looks identical to one that is applied, until a query returns nothing.
+applied looks identical to one that is applied, until a query returns nothing. Assertion 5 was
+added *because* it had already failed: both documents were stale when this was implemented, and
+verifying that the new check bites on the pre-change tree confirmed it rather than assuming it.
 
 **What this does not decide.** Whether `kit-plan.sh` should surface `on-hold` differently from
 `created` in its layering — both are open, both are plannable, and no evidence here says they

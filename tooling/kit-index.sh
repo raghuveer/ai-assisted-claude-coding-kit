@@ -399,7 +399,7 @@ if [ "$HAVE_TASKS" = 1 ]; then
       id = v["id"]
       if (id == "") { printf "kit: no id in frontmatter, skipped: %s\n", rel > "/dev/stderr"; return }
       ti = (v["title"] != "" ? v["title"] : id)
-      st = (v["state"] != "" ? v["state"] : "open")
+      st = (v["state"] != "" ? v["state"] : "created")
       printf "INSERT OR REPLACE INTO node VALUES(\047%s\047,\047task\047,\047%s\047,\047%s\047);\n", q(id), q(rel), q(ti)
       fl = floorof(v["paths"])
       # `via` from frontmatter, and anything outside the vocabulary becomes `unknown` rather
@@ -1185,7 +1185,14 @@ fi
 for _st in $(kit_state_vocab); do
   _cl=0; for _c in $(kit_state_closed);   do [ "$_st" = "$_c" ] && _cl=1; done
   _ac=0; for _a in $(kit_state_activity); do [ "$_st" = "$_a" ] && _ac=1; done
-  printf "INSERT OR REPLACE INTO state_class VALUES('%s',%d,%d);\n" "$_st" "$_cl" "$_ac"
+  _me=0; for _m in $(kit_state_measured); do [ "$_st" = "$_m" ] && _me=1; done
+  printf "INSERT OR REPLACE INTO state_class VALUES('%s',%d,%d,%d);\n" "$_st" "$_cl" "$_ac" "$_me"
+  # Identity row FIRST, so a canonical value always resolves through the alias table and every
+  # reader can join it unconditionally rather than remembering to COALESCE.
+  printf "INSERT OR REPLACE INTO state_alias VALUES('%s','%s');\n" "$_st" "$_st"
+done
+for _pair in $(kit_state_legacy); do
+  printf "INSERT OR REPLACE INTO state_alias VALUES('%s','%s');\n" "${_pair%%:*}" "${_pair##*:}"
 done
 
 # ---- 4. derive current state; text sources always win over stale columns -----
@@ -1238,11 +1245,22 @@ UPDATE task SET tier = COALESCE((
    ORDER BY e.seq DESC LIMIT 1), tier);
 
 
+-- NORMALISE THE AUTHORED VALUE FIRST. A task file may carry a legacy spelling forever -- 115 of
+-- 130 say `open` today -- so the written value is resolved through state_alias before anything
+-- reads it. A value in NO alias row is left exactly as written rather than guessed at: an
+-- unrecognised state is a typo to report, and quietly rewriting it to something plausible is how
+-- a typo becomes permanent.
+UPDATE task SET state = (SELECT a.canonical FROM state_alias a WHERE a.written = task.state)
+  WHERE EXISTS (SELECT 1 FROM state_alias a WHERE a.written = task.state);
+
+-- Then the last transition wins, resolved through the same table. The join to state_alias is
+-- what restricts this to state events -- `finding`, `spend` and the rest are not alias rows --
+-- and it is also what keeps the 127 commits already carrying `started`/`progress`/`done`
+-- readable, which is why they never had to be rewritten.
 UPDATE task SET state = COALESCE((
-  SELECT e.kind FROM event e
+  SELECT a.canonical FROM event e JOIN state_alias a ON a.written = e.kind
    WHERE e.task_id = task.id
-     AND e.kind IN (SELECT state FROM state_class)
-   ORDER BY e.seq DESC LIMIT 1), state, 'open');
+   ORDER BY e.seq DESC LIMIT 1), state, 'created');
 
 -- A finding harvested from a reviewer carries no task: the hook that harvests it fires when
 -- the reviewer stops, and nothing in this kit tracks a current task. Bound the same way spend
