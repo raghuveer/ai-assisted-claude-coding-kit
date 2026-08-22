@@ -70,8 +70,15 @@ adoption at all — the decisions were made by whoever did B or C.
 
 **`git init` first.** `kit-init.sh` locates the repository with `git rev-parse --show-toplevel`
 and stops when there is none — it prints git's own `fatal: not a git repository` followed by
-`not a git repository`, **and exits 0**, so a script that only checks the status code will
-continue as though it worked.
+`not a git repository`, **and exits 1**. A script that checks the status code will stop, which
+is the safe direction.
+
+> This paragraph said **exits 0** and built a warning on it — that a caller checking only the
+> status code would continue as though adoption had worked. Measured 2026-08-22:
+> `kit-init.sh:4` is `|| { echo "not a git repository" >&2; exit 1; }`, and running it outside a
+> repository returns 1. The claim was wrong, and it was wrong in the direction that invents a
+> hazard rather than hiding one — which is the easier kind to leave standing, because nobody is
+> harmed by being careful about nothing.
 
     mkdir myproject && cd myproject
     git init
@@ -169,7 +176,43 @@ takes an executable that emits SQL, and the kit reads your source instead of its
 built-for-this answer to "we already have a backlog"; the index is derived and disposable, so
 pointing it at your source loses nothing.
 
-**4. Back-fill what was already finished — including work the kit did not do.** Mark completed
+**4. If you do NOT already have a backlog, derive one from the code.** Step 3 assumes a roadmap
+or a tracker exists. On a codebase that has neither, the kit reads the tree itself:
+
+    $CLAUDE_PLUGIN_ROOT/tooling/kit-entry.sh
+
+It writes three derived files under `paths.state` and **nothing else, ever** — no task file, no
+SQL, no index row:
+
+    entry-facts.tsv          one row per tracked file, uncapped
+    entry-comment-runs.tsv   one row per run of consecutive comment lines, uncapped
+    entry-report.md          totals, degeneracy states and markers, every section naming its
+                             ranking key
+
+That refusal is the only structural control in the entry design (ADR 0001), and it is exactly as
+strong as the script having no code that writes a task. It is not a gate around the orchestrator,
+which holds `Write` and `Bash`. Stated rather than pretended.
+
+Then hand the report and the TSVs to a model and ask for the format in
+[docs/ENTRY-PROPOSAL.md](docs/ENTRY-PROPOSAL.md). What comes back is a **proposal**, not a
+backlog: open questions, candidate tasks each carrying its evidence and the literal `kit-task.sh`
+line you would run, and a `Could not determine` section. Validate it before reading it:
+
+    $CLAUDE_PLUGIN_ROOT/tooling/kit-entry.sh --check <proposal-file>
+
+**You copy the lines you accept, or you do not.** There is no code path from the proposal to a
+task file, and that sentence is the whole of the prevention.
+
+**Candidates are not all new work.** A census on an existing codebase mostly finds things that
+already exist, and some that should not be done at all. Both are expressible — `--state completed
+--via <how>` records an inventory item that is already finished, `--state cancelled` records one
+that should not be done. See ADR 0008 for why those are task states rather than a separate
+vocabulary.
+
+**The `Could not determine` section is the valuable output**, not a gap to be filled in later. An
+inventory that cannot say what it failed to classify is an inventory you cannot trust.
+
+**5. Back-fill what was already finished — including work the kit did not do.** Mark completed
 tasks `state: done` in their frontmatter, and add a lowercase **`via:`** key there (`kit`,
 `agent`, `manual`) on work whose provenance you know. This matters more than it looks: escape
 rate is reported over the kit-run population *and* over every task, side by side, so an
@@ -181,7 +224,7 @@ for outcomes it never touched. Provenance is set by you, never by the agent that
 > to a commit already written. This paragraph said `Via:` for three days and the indexer, which
 > reads `via`, silently recorded every back-filled task as `unknown`.
 
-**5. A `Task-Id` that matches no task file** — from a typo, or from a task you have not filed yet
+**6. A `Task-Id` that matches no task file** — from a typo, or from a task you have not filed yet
 — is **not** counted as work. It is named in the `Unresolved task ids` section of
 `STATUS.generated.md`, with the commit that introduced it, and it reconciles automatically if the
 file turns up later. On a brownfield history you may have several; they are evidence about

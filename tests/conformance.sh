@@ -2868,6 +2868,28 @@ check $? "both vocabularies validate, and a value in neither is still refused"
   done )
 check $? "the reader-facing tables list the same states the code defines"
 
+# NOTHING CHECKED INSTALL.md AT ALL until this step, and that is how it came to claim
+# `kit-init.sh` "exits 0" outside a repository when kit-init.sh:4 is `exit 1` -- a warning built
+# on a hazard that does not exist, found by a readiness review rather than by the suite.
+#
+# A general "no false claims" check is not possible. Two specific properties are:
+#
+#   Every tooling script INSTALL.md tells an adopter to run must EXIST. A document naming a
+#   script that was renamed or deleted sends the reader to a command that fails.
+#
+#   The brownfield path must reach the census. kit-entry.sh worked for weeks while INSTALL.md
+#   mentioned it ZERO times, so the one mechanism that turns an unknown codebase into an
+#   inventory was unreachable from the section a brownfield adopter reads -- documented as an
+#   open decision in docs/design-input/2026-08-16 section 4.2 and settled by pointing at it.
+( miss=0
+  for s in $(grep -oE 'tooling/kit-[a-z-]+\.sh' "$KIT/INSTALL.md" | sort -u); do
+    [ -f "$KIT/$s" ] || { echo "  INSTALL.md names $s, which does not exist"; miss=1; }
+  done
+  grep -q 'kit-entry\.sh' "$KIT/INSTALL.md" ||
+    { echo "  INSTALL.md never mentions kit-entry.sh: the census is unreachable from the adoption path"; miss=1; }
+  [ "$miss" = 0 ] )
+check $? "INSTALL.md names only scripts that exist, and its adoption path reaches the census"
+
 # AN EVENT KIND IS NOT A TASK STATE, and confusing them is a defect this change made FIVE times.
 # `state_class` holds the canonical seven; an event carries whatever word was current when it was
 # recorded, and 87 events in this repository say `progress`. So `e.kind IN (SELECT state FROM
