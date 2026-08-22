@@ -115,9 +115,40 @@ if [ "${1:-}" = "--check" ]; then
   # So the shape is inverted: the line must MATCH a grammar of things known to be safe, and
   # anything else is refused unread. An unparseable line is refused rather than parsed, which is
   # the fail-closed direction. Adding a flag to kit-task.sh means adding it here, deliberately.
+  # THE VOCABULARIES ARE BUILT FROM THEIR DEFINITION, NOT SPELLED OUT HERE. Listing the states
+  # literally inside this pattern would put a copy of the vocabulary into the one file whose job
+  # is refusing unsafe input, and it would go stale the day a state is added -- silently, because
+  # an unlisted value is simply refused and a proposal that should pass would not. That is the
+  # twenty-sixth copy docs/adr/0008 exists to prevent.
+  #
+  # The literal form is deliberately not quoted in this comment: written out, it matches the
+  # conformance guard that hunts for it, and the step fails on this prose. That has now happened
+  # three times in one change, which is the guard working rather than misfiring.
+  #
+  # ALTERNATION, NOT A BRACKET CLASS. `in-progress` and `on-hold` carry hyphens, which are range
+  # operators inside `[...]` and literal inside `(a|b|c)`. Legacy spellings come from the same
+  # definition with the canonical half stripped, so `--state done` stays valid input here exactly
+  # as it is everywhere else.
+  #
+  # `--paths` allows `*` on purpose -- tier.rule matches globs -- and allows no quote, no `$`, no
+  # backtick and no `;`, because the whole point of this gate is that the line is safe to PASTE.
+  #
+  # ORDER-INDEPENDENT: a REPEATED ALTERNATION of flags, not a fixed sequence of optional groups.
+  # The sequence form silently made flag order mandatory -- `--state completed --via manual
+  # --paths x` was refused while the same flags in another order passed -- and the message said
+  # "not safe to paste", which is not what was wrong. With three optional flags that was survivable
+  # and already true of `--epic` before `--lang`; with seven it is a trap, and CI found it by
+  # refusing a line this suite itself had written in the obvious order.
+  #
+  # The repetition admits a duplicate flag (`--tier T1 --tier T2`). That is odd input, not unsafe
+  # input, and kit-task.sh resolves it last-wins. This gate's question is whether the line is safe
+  # to paste, not whether it is tidy -- widening it to police duplicates would be the extraction
+  # this whole shape exists to avoid.
+  _states=$(printf '%s' "$(kit_state_vocab) $(kit_state_legacy | sed 's/:[^ ]*//g')" | tr ' ' '|')
+  _vias=$(printf '%s' "$(kit_via_vocab)" | tr ' ' '|')
   while IFS= read -r ln; do
     [ -n "$ln" ] || continue
-    printf '%s\n' "$ln" | grep -qE "^[[:space:]]*kit-task\.sh --title '[A-Za-z0-9 ._-]+'([[:space:]]+--tier T[0-3])?([[:space:]]+--lang [A-Za-z0-9+#_-]+)?([[:space:]]+--epic [A-Za-z0-9_-]+)?[[:space:]]*$" ||
+    printf '%s\n' "$ln" | grep -qE "^[[:space:]]*kit-task\.sh --title '[A-Za-z0-9 ._-]+'([[:space:]]+(--tier T[0-3]|--lang [A-Za-z0-9+#_-]+|--epic [A-Za-z0-9_-]+|--paths '[A-Za-z0-9 ._/,*-]+'|--state ($_states)|--via ($_vias)|--blocked-by [A-Za-z0-9,_-]+))*[[:space:]]*$" ||
       { kit_warn "candidate line is not safe to paste: $ln"; bad=1; }
   done <<EOF
 $(grep 'kit-task\.sh --title' < "$P")

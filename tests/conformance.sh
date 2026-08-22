@@ -2112,7 +2112,8 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
                   AND COALESCE(vindicated,1) <> 0;")
   gateclosed=$(Q "SELECT COUNT(*) FROM finding f JOIN task t ON t.id=f.task_id
                    WHERE f.severity='critical' AND f.fixed_at IS NULL
-                     AND COALESCE(f.vindicated,1) <> 0 AND t.state IN ('done','abandoned');")
+                     AND COALESCE(f.vindicated,1) <> 0
+                     AND t.state IN (SELECT state FROM state_class WHERE is_closed = 1);")
   gaterefuted=$(Q "SELECT COUNT(*) FROM finding WHERE severity='critical' AND fixed_at IS NULL
                     AND vindicated=0;")
   bash "$KIT/tooling/kit-status.sh" >/dev/null 2>&1
@@ -2247,7 +2248,11 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   want "a whole-second mark starts its second" "$t2keep" "$SHA_TID"
   want "a malformed --at is refused"           "$atbad" 2
   want "  ...and a legal one is not"           "$atgood" 0
-  want "the closing task is really closed"     "$r3state" "done"
+  # `completed`, not `done`. The fixture still WRITES `Task-Status: done` -- legacy spellings stay
+  # valid input forever -- and the indexer resolves it through state_alias, so what is STORED is
+  # the canonical value. Asserting the written word here would have passed whether or not the
+  # alias table did anything, which is the point of checking the stored one. See docs/adr/0008.
+  want "the closing task is really closed"     "$r3state" "completed"
   want "  ...its critical still counts"        "$gateclosed" 1
   want "  ...and status names it"              "$s_closed" 1
   want "an ambiguous refutation does NOT retire" "$ambigref" 1
@@ -2752,6 +2757,152 @@ if step "the via vocabulary is defined in exactly one place"; then
 check $? "one definition of the via vocabulary, read by every consumer"
 fi
 
+if step "the state vocabulary has one home and its aliases actually bind"; then
+# docs/adr/0008. "Is this task closed?" was the literal 'done','abandoned' in NINETEEN places
+# across four files while the vocabulary itself was declared once, so the partition could disagree
+# with itself and nothing would notice. Same rule as the via vocabulary above, same reason.
+#
+# THE PATTERNS COME FROM THE DEFINITIONS, never spelled out here -- writing them literally would
+# make this file the second copy, which is the failure the via step already caught in itself.
+# EXISTENCE IS ASSERTED BEFORE USE, and that is not defensive noise. Run against a tree without
+# these definitions, an unguarded `$(kit_state_measured)` expands to the EMPTY STRING, and every
+# assertion below then compares against nothing -- one of them passed that way on the first
+# attempt, which is a green check that cannot fail (docs/LESSONS.md section 1) inside the step
+# written to prevent exactly that.
+( . "$KIT/tooling/kit-lib.sh"
+  for _get in kit_state_vocab kit_state_closed kit_state_activity kit_state_measured kit_state_legacy; do
+    command -v "$_get" >/dev/null 2>&1 || { echo "  $_get is not defined"; exit 1; }
+    [ -n "$($_get)" ] || { echo "  $_get is empty"; exit 1; }
+  done
+  for _get in kit_state_vocab kit_state_closed kit_state_activity kit_state_measured; do
+    V=$($_get)
+    n=$(grep -rlF "$V" "$KIT/tooling" "$KIT/tests" 2>/dev/null | wc -l | tr -d ' ')
+    [ "$n" = 1 ] || { echo "  '$V' appears in $n file(s), expected 1"; exit 1; }
+  done )
+check $? "each state definition appears in exactly one file"
+
+# THE ALIAS TABLE MUST BIND, NOT MERELY BE DOCUMENTED. This is the assertion that would rot
+# silently: a mapping written down but never applied looks identical to one that is applied,
+# until a query returns nothing. So it is checked end to end -- a task file written the old way,
+# and a trailer written the old way, both landing on canonical values in the index.
+sv="$WORK.state"; rm -rf "$sv"; mkdir -p "$sv/.claude" "$sv/.project/tasks" "$sv/src"
+( cd "$sv" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email fixture@x; git config user.name fixture
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "tier.default: T1"; echo "---"; } > .claude/project-profile.md
+  # Written the LEGACY way, which task files may do forever -- 132 in this repository still do.
+  for t in A B; do
+    { echo "---"; echo "id: T-$t"; echo "title: t"; echo "tier: T1"; echo "state: open"; echo "---"; } \
+      > ".project/tasks/T-$t.md"
+  done
+  echo x > src/a; git add -A >/dev/null 2>&1
+  git commit -q -F - <<'MSG' || exit 1
+seed
+
+Task-Id: T-B
+Tier: T1
+Task-Status: done
+MSG
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1 || exit 1
+  s() { sqlite3 .project/index.db "SELECT state FROM task WHERE id='$1';" | tr -d '\015'; }
+  # `state: open` in the file -> `created` in the index. No file was rewritten to achieve it.
+  [ "$(s T-A)" = created ]   || { echo "  T-A is '$(s T-A)', expected created"; exit 1; }
+  # `Task-Status: done` in an immutable commit -> `completed`. 127 real commits depend on this.
+  [ "$(s T-B)" = completed ] || { echo "  T-B is '$(s T-B)', expected completed"; exit 1; }
+  grep -q '^state: open$' .project/tasks/T-A.md || { echo "  the task file was rewritten"; exit 1; }
+
+  # CLOSED AND MEASURED ARE DIFFERENT SETS, and this is the distinction the whole change exists
+  # for. `cancelled` leaves the open backlog without counting toward what the pipeline achieved;
+  # `abandoned` does count, because it was real work. A single boolean cannot express that, and a
+  # test that only checked is_closed would pass on a design that had collapsed them.
+  q() { sqlite3 .project/index.db "$1" | tr -d '\015'; }
+  [ "$(q "SELECT is_closed||is_measured FROM state_class WHERE state='cancelled';")" = 10 ] ||
+    { echo "  cancelled is not closed-and-unmeasured"; exit 1; }
+  [ "$(q "SELECT is_closed||is_measured FROM state_class WHERE state='abandoned';")" = 11 ] ||
+    { echo "  abandoned is not closed-and-measured"; exit 1; }
+  [ "$(q "SELECT is_closed||is_measured FROM state_class WHERE state='completed';")" = 11 ] ||
+    { echo "  completed is not closed-and-measured"; exit 1; } )
+check $? "a legacy file and a legacy trailer both land on canonical states, and cancelled is closed but unmeasured"
+
+# The validator accepts BOTH vocabularies. Rejecting the legacy spellings would make `git log`
+# unverifiable against 127 commits that already carry them, and history cannot be amended.
+# Run inside the fixture, because `message` resolves Task-Id against the backlog there.
+( cd "$sv" || exit 1
+  . "$KIT/tooling/kit-lib.sh"
+  # Same guard, same reason: without it the legacy loop below iterates over an empty list on a
+  # tree that has no legacy vocabulary, and the step reports PASS having tested one nonsense value.
+  for _get in kit_state_vocab kit_state_legacy; do
+    command -v "$_get" >/dev/null 2>&1 || { echo "  $_get is not defined"; exit 1; }
+    [ -n "$($_get)" ] || { echo "  $_get is empty"; exit 1; }
+  done
+  tv() { printf 'x\n\nTask-Id: T-A\nTier: T1\nTask-Status: %s\n' "$1" > m.txt
+         bash "$KIT/tooling/kit-trailers.sh" message m.txt 2>&1; }
+  for v in $(kit_state_vocab); do
+    printf '%s' "$(tv "$v")" | grep -q 'invalid  Task-Status' &&
+      { echo "  canonical '$v' was rejected"; exit 1; }
+  done
+  for p in $(kit_state_legacy); do
+    printf '%s' "$(tv "${p%%:*}")" | grep -q 'invalid  Task-Status' &&
+      { echo "  legacy '${p%%:*}' was rejected"; exit 1; }
+  done
+  # And the guard still bites: a value in NEITHER vocabulary is refused. Without this the two
+  # loops above would pass against a validator that had stopped checking anything at all.
+  printf '%s' "$(tv nonsense)" | grep -q 'invalid  Task-Status' ||
+    { echo "  a nonsense state was ACCEPTED"; exit 1; }
+  rm -f m.txt )
+check $? "both vocabularies validate, and a value in neither is still refused"
+
+# THE PROSE COPIES DRIFT TOO, and nothing was watching them. The single-home check above greps
+# only tooling/ and tests/, so README.md and docs/HANDOFF.md each carried a hand-written list of
+# the vocabulary that went stale the moment it changed -- found exactly that way. A reader-facing
+# table is legitimate documentation rather than a second definition, so it is not banned; it is
+# required to AGREE. Values, not formatting: the two files render them differently on purpose.
+( . "$KIT/tooling/kit-lib.sh"
+  for f in "$KIT/README.md" "$KIT/docs/HANDOFF.md"; do
+    line=$(grep -m1 'Task-Status:' "$f") || { echo "  no Task-Status row in ${f##*/}"; exit 1; }
+    for v in $(kit_state_vocab); do
+      printf '%s' "$line" | grep -qF -- "$v" ||
+        { echo "  ${f##*/} omits '$v' from its Task-Status row"; exit 1; }
+    done
+  done )
+check $? "the reader-facing tables list the same states the code defines"
+
+# AN EVENT KIND IS NOT A TASK STATE, and confusing them is a defect this change made FIVE times.
+# `state_class` holds the canonical seven; an event carries whatever word was current when it was
+# recorded, and 87 events in this repository say `progress`. So `e.kind IN (SELECT state FROM
+# state_class ...)` matches nothing written before the rename, and the failure is SILENT -- the
+# join simply returns no rows, so attribution, ownership, closed_at and the deleted-task notice
+# all quietly did nothing. Two instances were found by conformance, then two more, then a fifth.
+#
+# docs/LESSONS.md section 4: "Filing a defect class is not the same as sweeping for it, and the
+# sweep is the cheap half." This IS the sweep, kept. Anything reading an event kind resolves it
+# through state_alias first; state_class is for classifying a task's current state.
+( n=$(grep -rn "kind IN (SELECT state FROM state_class" "$KIT/tooling" 2>/dev/null | wc -l | tr -d ' ')
+  [ "$n" = 0 ] || { echo "  $n site(s) compare an event kind to state_class; use state_alias:"
+                    grep -rn "kind IN (SELECT state FROM state_class" "$KIT/tooling" | sed 's/^/    /'; }
+  [ "$n" = 0 ] )
+check $? "no query compares an event kind against the canonical-only state table"
+
+# AND NO QUERY SPELLS THE PARTITION OUT AGAIN. The change replaced nineteen longhand copies of
+# the closed set with one definition -- and the TWENTIETH was in this file, inside a query THIS
+# SUITE runs, where the single-home check could not see it: that check compares the definition
+# STRING, and a partition written out inside a WHERE clause is not that string. It returned 0
+# where it wanted 1, and CI caught it.
+#
+# `tests` is searched as well as `tooling` for exactly that reason.
+#
+# The pattern is deliberately not quoted in this comment. Written out, it matches ITSELF and the
+# step fails on its own prose -- which is what happened first, and is the same self-catch the via
+# vocabulary step above records about its own first run.
+( n=$(grep -rnE "state (NOT )?IN \('(done|completed|abandoned|cancelled)'" "$KIT/tooling" "$KIT/tests" 2>/dev/null | wc -l | tr -d ' ')
+  [ "$n" = 0 ] || { echo "  $n site(s) spell the closed partition out longhand; join state_class:"
+                    grep -rnE "state (NOT )?IN \('(done|completed|abandoned|cancelled)'" "$KIT/tooling" "$KIT/tests" | sed 's/^/    /'; }
+  [ "$n" = 0 ] )
+check $? "the closed partition is never written longhand, in tooling or in the suite itself"
+rm -rf "$sv"
+fi
+
 if step "a tier below its floor is reported"; then
 # Under-tiering is silent and it is the dangerous direction. Two of three recorded tiers in a
 # real backlog were below their floor -- and a floor computed only from touched files would
@@ -3087,6 +3238,82 @@ pr="$WORK.prop"; rm -rf "$pr"; mkdir -p "$pr"
   bash "$KIT/tooling/kit-entry.sh" --check /nonexistent >/dev/null 2>&1; [ "$?" = 2 ] || rc=1
   exit $rc )
 check $? "a conforming proposal passes, thirteen malformed ones are refused, and --check files nothing"
+
+# THE CANDIDATE GRAMMAR CARRIES DISPOSITIONS NOW, and widening a whitelist is the fail-open
+# direction by construction: every flag added is a shape that used to be refused. The comment on
+# that regex records two earlier attempts that both failed open, one of them green on ubuntu and
+# red on macos, so this is checked on both rather than reasoned about.
+#
+# THE FIRST ASSERTION IS THE REGRESSION ONE. A widened pattern that stopped accepting the
+# original four-flag line would break every proposal ever written, and would do it while all the
+# new cases passed.
+dp="$WORK.disp"; rm -rf "$dp"; mkdir -p "$dp"
+( cd "$dp" || exit 1
+  # A GIT REPOSITORY **AND AN ADOPTED KIT**. kit-entry.sh runs kit_root and kit_active before it
+  # reaches the --check branch, so a bare mkdir fails with "not a git repository" and a bare
+  # `git init` fails with "kit not adopted here". Neither message matches `conforms` OR `not safe
+  # to paste`, so the accept cases and the refuse cases BOTH fail and the step reports nothing
+  # about the grammar it exists to test.
+  #
+  # Worth stating because it was got wrong twice in a row: a broken fixture does not announce
+  # itself as broken, it announces the feature as broken. And had this step contained only
+  # refusal cases it would have gone GREEN -- every line "refused", for entirely the wrong
+  # reason. The accept cases are what make the fixture's own health observable.
+  git init -q -b main 2>/dev/null
+  mkdir -p .claude
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "tier.default: T1"; echo "---"; } > .claude/project-profile.md
+  prop() { { printf '## Open questions\n\n1. Why?\n   evidence: a.go:1\n   answer:\n\n'
+             printf '## Candidate tasks\n\n- [ ] C\n      evidence: a.go:1\n      %s\n\n' "$1"
+             printf '## Could not determine\n\n- nothing\n'; } > p.md
+           bash "$KIT/tooling/kit-entry.sh" --check p.md 2>&1; }
+  ok()  { printf '%s' "$(prop "$1")" | grep -q 'conforms' ||
+            { echo "  REFUSED but should pass: $1"; exit 1; }; }
+  no()  { printf '%s' "$(prop "$1")" | grep -q 'not safe to paste' ||
+            { echo "  ACCEPTED but should refuse: $1"; exit 1; }; }
+
+  ok "kit-task.sh --title 'Plain' --tier T1 --lang go --epic core"
+  ok "kit-task.sh --title 'Already there' --state completed --via manual --paths 'docs/a.md'"
+  ok "kit-task.sh --title 'Moot' --state cancelled"
+  ok "kit-task.sh --title 'Glob' --paths 'src/adapters/**'"
+  ok "kit-task.sh --title 'Blocked' --blocked-by T-x,T-y"
+  # Legacy spellings stay valid input everywhere, including here: a census reading a repository
+  # that predates ADR 0008 quotes what it finds rather than translating it.
+  ok "kit-task.sh --title 'Legacy' --state done"
+  # ORDER MUST NOT MATTER. The first version of this grammar was a fixed sequence of optional
+  # groups, so flags had to appear in the order the pattern listed them -- and the refusal said
+  # "not safe to paste", which is not what was wrong with the line. CI caught it on a case this
+  # suite had written in the obvious order rather than the pattern's order.
+  ok "kit-task.sh --title 'Reordered' --state completed --tier T1"
+  ok "kit-task.sh --title 'Reordered' --epic core --lang go"
+  ok "kit-task.sh --title 'Bare'"
+
+  no "kit-task.sh --title 'Bad state' --state nonsense"
+  no "kit-task.sh --title 'Bad via' --via nobody"
+  # --paths reaches a frontmatter key and the line is PASTED into a shell, so every metacharacter
+  # that could make it more than a path is refused. One case per class, not one case in general.
+  no "kit-task.sh --title 'Semi' --paths 'src/a; rm -rf /'"
+  no "kit-task.sh --title 'Subst' --paths 'src/\$(whoami)'"
+  no "kit-task.sh --title 'Tick' --paths 'src/\`id\`'"
+  no "kit-task.sh --title 'Pipe' --paths 'src/a|b'"
+  no "kit-task.sh --title 'Redir' --paths 'src/a>b'"
+  # An unknown flag, and a valid line with a shell command appended. Order-independence is a
+  # REPEATED alternation, so the risk it introduces is that anything could repeat -- these pin
+  # that only the named flags may, and that the line still has to end where it says it does.
+  no "kit-task.sh --title 'Unknown flag' --frobnicate x"
+  no "kit-task.sh --title 'Trailing' --tier T1 ; rm -rf /" )
+check $? "candidate dispositions are accepted, and a value outside either vocabulary is not"
+
+# AND THE GATE READS THE VOCABULARY RATHER THAN RESTATING IT. A literal list in kit-entry.sh
+# would be the twenty-sixth copy of the rule docs/adr/0008 gave one home, in the file whose job
+# is refusing unsafe input -- where going stale fails CLOSED and looks like a malformed proposal.
+( grep -qE 'kit_state_vocab|kit_state_legacy' "$KIT/tooling/kit-entry.sh" ||
+    { echo "  kit-entry.sh does not read the state vocabulary from its definition"; exit 1; }
+  grep -qE "state \((created|completed|cancelled)\|" "$KIT/tooling/kit-entry.sh" &&
+    { echo "  kit-entry.sh spells the state vocabulary out in its pattern"; exit 1; }
+  exit 0 )
+check $? "the candidate grammar derives its vocabularies instead of copying them"
+rm -rf "$dp"
 rm -rf "$pr"
 fi
 

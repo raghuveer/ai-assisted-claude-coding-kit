@@ -234,8 +234,19 @@ rewriting history or parsing two dialects forever.
 |---|---|---|
 | `Task-Id:` | non-trivial commits | task ID |
 | `Tier:` | non-trivial commits | `T0` `T1` `T2` `T3` |
-| `Task-Status:` | when it changes | `started` `progress` `blocked` `unblocked` `done` `abandoned` |
+| `Task-Status:` | when it changes | `created` `planned` `in-progress` `on-hold` `completed` `cancelled` `abandoned` |
 | `Fixes-Escape-Of:` | on escape fixes | task ID |
+
+**`cancelled` and `abandoned` are not synonyms, and the difference is the one worth learning.**
+`abandoned` judges the **attempt** — we stopped. `cancelled` judges the **work** — this should not
+be done at all. Collapsing them loses the distinction exactly where a brownfield inventory needs
+it, on the first day, across possibly most of the backlog: a pile of items that were never work,
+filed as abandoned, reads as a project that abandons a great deal. Only `cancelled` is excluded
+from the escape-rate denominator, because work that was never work cannot judge the pipeline.
+
+Older spellings — `open` `started` `progress` `unblocked` `blocked` `done` — **remain valid input
+forever** and resolve to the values above when the index is built. No task file and no commit has
+to be rewritten. See [`docs/adr/0008`](docs/adr/0008-the-task-state-vocabulary-and-its-partitions.md).
 
 `Tier:` is not bookkeeping. Without it, escape rate per tier is not computable, and the
 tier table in `project-profile.md` stays a guess instead of becoming a measured output.

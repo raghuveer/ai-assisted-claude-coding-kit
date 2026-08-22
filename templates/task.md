@@ -3,7 +3,7 @@ id: T-YYYYMMDD-short-slug
 title: 
 epic: 
 lang: 
-state: open
+state: created
 blocked_by: 
 ---
 

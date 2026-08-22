@@ -53,9 +53,38 @@ OPEN=$(q "SELECT t.id||'  '||COALESCE(NULLIF(n.title,''),t.id)||'  ['||COALESCE(
 [ -n "$OPEN" ] && printf '%s\n' "$OPEN" | sed 's/^/- /' || printf '_none_\n'
 
 printf '\n## Closed\n\n'
-printf -- '- %s done, %s abandoned\n' \
-  "$(q "SELECT COUNT(*) FROM task WHERE state='done';")" \
+# THREE COUNTS, NOT TWO, AND cancelled IS WHY THE THIRD EXISTS. `abandoned` judges the ATTEMPT --
+# we stopped; `cancelled` judges the WORK -- it should not be done at all. Reporting them as one
+# number is the misread docs/adr/0008 was written to remove: a backlog whose irrelevant items were
+# filed as abandoned reads as a project that abandons a great deal.
+printf -- '- %s completed, %s cancelled, %s abandoned\n' \
+  "$(q "SELECT COUNT(*) FROM task WHERE state='completed';")" \
+  "$(q "SELECT COUNT(*) FROM task WHERE state='cancelled';")" \
   "$(q "SELECT COUNT(*) FROM task WHERE state='abandoned';")"
+# The dilution used to be stated here, in prose, because the escape-rate table had no `measured`
+# column to carry it. It now does, and the row names the excluded count in the place a reader is
+# actually comparing numbers. Two statements of one fact drift apart -- this one had already gone
+# stale, still claiming "nothing is excluded" after the exclusion existed.
+# LEGACY SPELLINGS, COUNTED SO THEY DRAIN. Task files may carry `open`/`done`/`progress` forever
+# and the indexer resolves them; silence about that is how two vocabularies become permanent. This
+# is a number to watch fall, not a warning to act on -- no work is required to reduce it.
+_TASKDIR=$(kit_cfg "$PROFILE" paths.tasks ".project/tasks")
+_LEG=0; _LEGBREAK=""
+for _p in $(kit_state_legacy); do
+  _n=$(grep -l "^state: ${_p%%:*}\$" "$ROOT/$_TASKDIR"/*.md 2>/dev/null | wc -l | tr -d ' ')
+  [ "${_n:-0}" -gt 0 ] && _LEGBREAK="$_LEGBREAK ${_n}x ${_p%%:*}->${_p##*:},"
+  _LEG=$((_LEG + _n))
+done
+if [ "${_LEG:-0}" -gt 0 ]; then
+  # BROKEN DOWN BY VALUE, not just totalled. A bare count says a debt exists; naming which
+  # spellings and how many is what someone can act on, and it is what makes the number fall
+  # visibly rather than sit there. Nothing here is broken -- the index resolves every one of
+  # them -- so this is a remediation backlog, deliberately not a warning.
+  printf -- '- %s task file(s) still write a legacy state name:%s resolved on read (ADR 0008)\n' \
+    "$_LEG" "$(printf '%s' "$_LEGBREAK" | sed 's/,$//')"
+  printf -- '  Not an error, and no work is required. Rewriting them to the canonical value is\n'
+  printf -- '  safe at any time and is tracked by `T-20260822-legacy-state-spellings-in-task-files-sho`.\n'
+fi
 
 # An id referenced by history that no task file backs. The indexer no longer invents a task for
 # it -- that is what put a typo'd id in the Open list, the backlog count and an escape-rate
@@ -158,7 +187,7 @@ if [ -n "$UNRES" ]; then
                AND n.id IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM task t WHERE t.id=n.id)
                AND EXISTS (SELECT 1 FROM event e
-                            WHERE e.task_id=n.id AND e.kind IN (SELECT state FROM state_class WHERE is_closed = 1));")
+                            WHERE e.task_id=n.id AND e.kind IN (SELECT a.written FROM state_alias a JOIN state_class c ON c.state=a.canonical WHERE c.is_closed = 1));")
   if [ "${GONE:-0}" -gt 0 ]; then
     printf '\n> **%s id(s) carry a recorded `done` or `abandoned`.** Whatever those closed is\n' "$GONE"
     printf '> not in the counts above — not in the done total, not in the escape-rate denominator\n'
@@ -192,9 +221,11 @@ fi
 # escape it cannot reach is one attached to no task row at all, and that residue is counted
 # separately below. The two are exhaustive: together they are `COUNT(*) WHERE kind='escaped'`.
 printf '\n## Escape rate by tier\n\n'
-printf '_Two populations, both reported. `via:kit` is work this pipeline actually ran; `all` is\n'
-printf 'every task. Neither alone is the escape rate — the first omits work the kit never saw,\n'
-printf 'the second is the un-filtered denominator._\n\n'
+printf '_Three populations, all reported, none of them alone "the escape rate". `via:kit` is work\n'
+printf 'this pipeline actually ran, and omits everything it never saw. `measured` is every task that\n'
+printf 'counts toward judging the pipeline — all of them except `cancelled`, which was never work.\n'
+printf '`all` is the un-filtered denominator and has no WHERE clause at all, so nothing can vanish\n'
+printf 'from it. Where `measured` and `all` differ, the difference is cancelled work._\n\n'
 # Which vocabulary value means "this pipeline ran it", named once. The literal was already in
 # two places here and splitting the rate into two columns would have made it four; an open
 # finding on the provenance task calls out this file for hardcoding it, and while that finding
@@ -204,11 +235,49 @@ printf 'the second is the un-filtered denominator._\n\n'
 # explanatory sentence above still says `via:kit` in prose, which is deliberate -- prose reads
 # worse interpolated, and it is the one place a stale name is obvious rather than silent.
 KITVIA=kit
+# THREE POPULATIONS, AND THE MIDDLE ONE IS WHY `is_measured` EXISTS.
+#
+# `all` keeps NO WHERE CLAUSE, which is what makes disappearance impossible by construction
+# rather than by care -- an earlier gate filtered `state='progress'` and hid two real criticals,
+# so a filter here is not a free move. `measured` is the undiluted rate: it excludes states that
+# are closed but were never work.
+#
+# The exclusion is STRUCTURAL, never `state <> 'cancelled'`. A literal would be a twentieth copy
+# of the rule and would not follow the vocabulary the day another such state is added; joining
+# state_class means the question "does this count toward judging the pipeline?" has exactly one
+# answer, in kit-lib.sh. See docs/adr/0008.
+#
+# Why it matters, measured on a brownfield shape rather than argued: a census that files 200
+# inventory items of which 120 are cancelled turns 5 escapes over 80 real tasks -- 6.25% -- into
+# 5 over 200 -- 2.5%. The pipeline looks 2.5x better for having filed work that was never work.
+#
+# `all` IS ALWAYS PRINTED; `measured` APPEARS ONLY WHEN IT DIFFERS. The first draft had this the
+# other way round and four conformance steps went red -- correctly. `all` is the anchor the report
+# guarantees: the step named "nothing stored is missing from the report" pins its exact shape, and
+# a rate that can drop the un-filtered denominator is one an escape can hide behind. `measured`
+# says something new only when work has been excluded, which is only when something is cancelled;
+# a permanently-equal second column trains a reader to skip both.
+#
+# NO `--` COMMENTS INSIDE THE QUERY STRING. `q()` passes this to sqlite3 as one argument, and a
+# `--` comment swallowed the rest of the statement: the whole section rendered as "_no task
+# recorded yet_", which reads as an empty backlog rather than as a broken query. Comments about
+# SQL live in shell comments, above it.
 ESC=$(q "SELECT printf('%-11s', COALESCE(NULLIF(t.tier,''),'untiered'))||
                 printf('%-18s', SUM(CASE WHEN e.kind='escaped' AND t.via='$KITVIA' THEN 1 ELSE 0 END)||
                                 ' / '||COUNT(DISTINCT CASE WHEN t.via='$KITVIA' THEN t.id END)||' via:$KITVIA')||
-                SUM(CASE WHEN e.kind='escaped' THEN 1 ELSE 0 END)||' / '||COUNT(DISTINCT t.id)||' all'
+                CASE WHEN COUNT(DISTINCT CASE WHEN m.is_measured=1 THEN t.id END) = COUNT(DISTINCT t.id)
+                     THEN ''
+                     ELSE printf('%-20s', SUM(CASE WHEN e.kind='escaped' AND m.is_measured=1 THEN 1 ELSE 0 END)||
+                                          ' / '||COUNT(DISTINCT CASE WHEN m.is_measured=1 THEN t.id END)||' measured')
+                END||
+                SUM(CASE WHEN e.kind='escaped' THEN 1 ELSE 0 END)||' / '||COUNT(DISTINCT t.id)||' all'||
+                CASE WHEN COUNT(DISTINCT CASE WHEN m.is_measured=1 THEN t.id END) = COUNT(DISTINCT t.id)
+                     THEN ''
+                     ELSE '  ('||(COUNT(DISTINCT t.id) -
+                                  COUNT(DISTINCT CASE WHEN m.is_measured=1 THEN t.id END))||' not measured)'
+                END
          FROM task t LEFT JOIN event e ON e.task_id=t.id
+                     LEFT JOIN state_class m ON m.state = t.state
          GROUP BY COALESCE(NULLIF(t.tier,''),'untiered') ORDER BY 1;")
 [ -n "$ESC" ] && printf '%s\n' "$ESC" | sed 's/^/- /' || printf '_no task recorded yet_\n'
 

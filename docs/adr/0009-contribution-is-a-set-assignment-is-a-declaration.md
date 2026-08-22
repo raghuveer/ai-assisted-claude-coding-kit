@@ -1,6 +1,6 @@
 # ADR 0009: Contribution is a set, assignment is a declaration
 
-- **Date:** 2026-08-22   **Status:** **Proposed**   **Supersedes:** —   **Related:** [[0004-where-the-plan-lives]], [[0008-the-task-state-vocabulary-and-its-partitions]]
+- **Date:** 2026-08-22   **Status:** **Accepted**   **Accepted:** 2026-08-22   **Supersedes:** —   **Related:** [[0004-where-the-plan-lives]], [[0008-the-task-state-vocabulary-and-its-partitions]]
 
 Decides the **shape** of two facts the kit currently has one broken column for: who has worked on
 a task, and who is responsible for it now. It does not decide field names or write code — that is

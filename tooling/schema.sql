@@ -16,9 +16,25 @@ CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE state_class (
   state       TEXT PRIMARY KEY,
   is_closed   INTEGER NOT NULL,     -- the work is not coming back: finished, or dropped
-  is_activity INTEGER NOT NULL      -- this state's actor is the task's owner. NOT "not closed":
-                                    -- `unblocked` is excluded because unblocking someone else's
-                                    -- task does not make it yours
+  is_activity INTEGER NOT NULL,     -- this state's actor is the task's owner. NOT "not closed":
+                                    -- a task nobody has picked up has no owner to infer
+  is_measured INTEGER NOT NULL      -- in the escape-rate denominator. NOT a synonym for is_closed:
+                                    -- `cancelled` is closed and NOT measured, because work that
+                                    -- was never work must not count toward what the pipeline did.
+                                    -- `abandoned` is both -- it was real work, and hiding it would
+                                    -- flatter the record. One boolean cannot carry this.
+);
+
+-- LEGACY SPELLING -> CANONICAL STATE, projected from kit_state_legacy in kit-lib.sh, plus an
+-- identity row for every canonical value so a lookup always resolves.
+--
+-- Nothing is rewritten and nothing has to be migrated: 127 commits already carry
+-- `Task-Status: started|progress|done` and are immutable, and 130 task files carry `open` or
+-- `done`. Those stay valid input; this table is how they are read. Normalising here -- once,
+-- where the index is built -- is what lets every partition above stay a plain lookup.
+CREATE TABLE state_alias (
+  written   TEXT PRIMARY KEY,
+  canonical TEXT NOT NULL
 );
 
 CREATE TABLE node (
@@ -31,7 +47,10 @@ CREATE TABLE node (
 CREATE TABLE task (
   id         TEXT PRIMARY KEY REFERENCES node(id),
   epic       TEXT,
-  state      TEXT NOT NULL DEFAULT 'open',
+  -- `created`, not `open`. `open` remains ACCEPTED input -- it is a legacy alias resolved through
+  -- state_alias -- but the canonical value is what this table stores, and a default that has to be
+  -- normalised afterwards is a default that will be read raw by someone eventually.
+  state      TEXT NOT NULL DEFAULT 'created',
   tier       TEXT,
   lang       TEXT,
   created_at TEXT,

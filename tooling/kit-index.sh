@@ -399,7 +399,7 @@ if [ "$HAVE_TASKS" = 1 ]; then
       id = v["id"]
       if (id == "") { printf "kit: no id in frontmatter, skipped: %s\n", rel > "/dev/stderr"; return }
       ti = (v["title"] != "" ? v["title"] : id)
-      st = (v["state"] != "" ? v["state"] : "open")
+      st = (v["state"] != "" ? v["state"] : "created")
       printf "INSERT OR REPLACE INTO node VALUES(\047%s\047,\047task\047,\047%s\047,\047%s\047);\n", q(id), q(rel), q(ti)
       fl = floorof(v["paths"])
       # `via` from frontmatter, and anything outside the vocabulary becomes `unknown` rather
@@ -1185,7 +1185,14 @@ fi
 for _st in $(kit_state_vocab); do
   _cl=0; for _c in $(kit_state_closed);   do [ "$_st" = "$_c" ] && _cl=1; done
   _ac=0; for _a in $(kit_state_activity); do [ "$_st" = "$_a" ] && _ac=1; done
-  printf "INSERT OR REPLACE INTO state_class VALUES('%s',%d,%d);\n" "$_st" "$_cl" "$_ac"
+  _me=0; for _m in $(kit_state_measured); do [ "$_st" = "$_m" ] && _me=1; done
+  printf "INSERT OR REPLACE INTO state_class VALUES('%s',%d,%d,%d);\n" "$_st" "$_cl" "$_ac" "$_me"
+  # Identity row FIRST, so a canonical value always resolves through the alias table and every
+  # reader can join it unconditionally rather than remembering to COALESCE.
+  printf "INSERT OR REPLACE INTO state_alias VALUES('%s','%s');\n" "$_st" "$_st"
+done
+for _pair in $(kit_state_legacy); do
+  printf "INSERT OR REPLACE INTO state_alias VALUES('%s','%s');\n" "${_pair%%:*}" "${_pair##*:}"
 done
 
 # ---- 4. derive current state; text sources always win over stale columns -----
@@ -1238,11 +1245,22 @@ UPDATE task SET tier = COALESCE((
    ORDER BY e.seq DESC LIMIT 1), tier);
 
 
+-- NORMALISE THE AUTHORED VALUE FIRST. A task file may carry a legacy spelling forever -- 115 of
+-- 130 say `open` today -- so the written value is resolved through state_alias before anything
+-- reads it. A value in NO alias row is left exactly as written rather than guessed at: an
+-- unrecognised state is a typo to report, and quietly rewriting it to something plausible is how
+-- a typo becomes permanent.
+UPDATE task SET state = (SELECT a.canonical FROM state_alias a WHERE a.written = task.state)
+  WHERE EXISTS (SELECT 1 FROM state_alias a WHERE a.written = task.state);
+
+-- Then the last transition wins, resolved through the same table. The join to state_alias is
+-- what restricts this to state events -- `finding`, `spend` and the rest are not alias rows --
+-- and it is also what keeps the 127 commits already carrying `started`/`progress`/`done`
+-- readable, which is why they never had to be rewritten.
 UPDATE task SET state = COALESCE((
-  SELECT e.kind FROM event e
+  SELECT a.canonical FROM event e JOIN state_alias a ON a.written = e.kind
    WHERE e.task_id = task.id
-     AND e.kind IN (SELECT state FROM state_class)
-   ORDER BY e.seq DESC LIMIT 1), state, 'open');
+   ORDER BY e.seq DESC LIMIT 1), state, 'created');
 
 -- A finding harvested from a reviewer carries no task: the hook that harvests it fires when
 -- the reviewer stops, and nothing in this kit tracks a current task. Bound the same way spend
@@ -1253,11 +1271,17 @@ UPDATE task SET state = COALESCE((
 -- not stop the search, it skips to the next REAL transition however unrelated, and files the
 -- finding against a task that had nothing to do with it. Measured on spend, fixed there, and
 -- the identical shape would be identically wrong here.
+-- state_alias, NOT state_class, and the difference is a regression this already caused.
+-- state_class holds the CANONICAL seven; state_alias holds every spelling that has ever been
+-- written, legacy included. Attribution binds a finding to the next task-status transition, and
+-- those transitions are real events carrying whatever word was current when they were recorded --
+-- 87 of them say `progress`. Matching against state_class silently attributed nothing, and two
+-- conformance steps went red. Anything that reads an EVENT KIND must join state_alias.
 UPDATE finding SET task_id = (
   SELECT CASE WHEN EXISTS (SELECT 1 FROM task t WHERE t.id = e.task_id) THEN e.task_id END
     FROM event e
    WHERE e.task_id IS NOT NULL AND e.task_id <> ''
-     AND e.kind IN (SELECT state FROM state_class)
+     AND e.kind IN (SELECT written FROM state_alias)
      AND e.at >= finding.at
    ORDER BY e.at, e.seq LIMIT 1)
  WHERE task_id IS NULL OR task_id = '';
@@ -1270,13 +1294,13 @@ UPDATE finding SET tier = (SELECT t.tier FROM task t WHERE t.id = finding.task_i
 UPDATE task SET owner = (
   SELECT e.actor FROM event e
    WHERE e.task_id = task.id AND e.actor IS NOT NULL AND e.actor <> ''
-     AND e.kind IN (SELECT state FROM state_class WHERE is_activity = 1)
+     AND e.kind IN (SELECT a.written FROM state_alias a JOIN state_class c ON c.state=a.canonical WHERE c.is_activity = 1)
    ORDER BY e.seq DESC LIMIT 1)
   WHERE state NOT IN (SELECT state FROM state_class WHERE is_closed = 1);
 
 UPDATE task SET closed_at = (
   SELECT MAX(e.at) FROM event e WHERE e.task_id = task.id
-                                  AND e.kind IN (SELECT state FROM state_class WHERE is_closed = 1))
+                                  AND e.kind IN (SELECT a.written FROM state_alias a JOIN state_class c ON c.state=a.canonical WHERE c.is_closed = 1))
   WHERE state IN (SELECT state FROM state_class WHERE is_closed = 1);
 
 -- Attribute spend to a task. The hook that fires when an agent finishes does not know which
@@ -1306,7 +1330,7 @@ UPDATE spend SET task_id = (
   SELECT CASE WHEN EXISTS (SELECT 1 FROM task t WHERE t.id = e.task_id) THEN e.task_id END
     FROM event e
    WHERE e.task_id IS NOT NULL AND e.task_id <> ''
-     AND e.kind IN (SELECT state FROM state_class)
+     AND e.kind IN (SELECT written FROM state_alias)
      AND e.at >= spend.at
    ORDER BY e.at, e.seq LIMIT 1)
  WHERE task_id IS NULL OR task_id = '';
