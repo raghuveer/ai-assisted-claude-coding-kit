@@ -4,7 +4,7 @@ title: A repeatable trial protocol for running the kit on an unfamiliar project
 epic: validation
 tier: T2
 paths: docs/TRIAL-PROTOCOL.md, docs/MEASUREMENTS.md
-state: open
+state: completed
 ---
 
 ## Intent
