@@ -45,6 +45,11 @@ mkdir -p "$ROOT/$TASKS_DIR"
   [ -n "$tier" ]    && printf 'tier: %s\n' "$tier"
   [ -n "$lang" ]    && printf 'lang: %s\n' "$lang"
   [ -n "$blocked" ] && printf 'blocked_by: %s\n' "$blocked"
-  printf 'state: open\n---\n\n## Intent\n\n\n## Acceptance criteria\n\n- [ ] \n- [ ] \n\n## Notes\n\n'
+  # `created`, the canonical value. This emitted `open` -- a legacy alias -- which the indexer
+  # resolves, so nothing was broken; but every new task then ADDED to the legacy-spelling count
+  # kit-status.sh reports, so the drain tracked by
+  # T-20260822-legacy-state-spellings-in-task-files-sho could never reach zero. A backlog that
+  # refills itself is not a backlog. See docs/adr/0008.
+  printf 'state: created\n---\n\n## Intent\n\n\n## Acceptance criteria\n\n- [ ] \n- [ ] \n\n## Notes\n\n'
 } > "$f"
 printf '%s\n' "${f#$ROOT/}"
