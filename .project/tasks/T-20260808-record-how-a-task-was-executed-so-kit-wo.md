@@ -5,7 +5,7 @@ epic: measurement
 tier: T3
 lang: bash
 paths: tooling/schema.sql, tooling/kit-index.sh, tooling/kit-status.sh, tooling/kit-task.sh
-state: open
+state: completed
 ---
 
 ## Intent
