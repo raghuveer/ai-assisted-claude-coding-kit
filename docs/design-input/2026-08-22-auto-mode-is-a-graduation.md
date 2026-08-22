@@ -13,6 +13,10 @@ of which had no home before.
 Marked as before: unmarked statements are the operator's stated goals or facts about the kit;
 `[judgement]` marks an opinion a future session may overturn.
 
+**§3.1 was added later in the same session**, after the operator corrected §3's assumption that the
+definitions are fixed before a run. It is marked as a correction in place rather than folded into
+§3, so that the assumption and its refutation are both visible.
+
 **Nothing here is filed as a defect and nothing is marked done.** Where the reasoning implies work,
 it is named as an open question with what would settle it.
 
@@ -125,6 +129,57 @@ architecture spine — and it applies here for a different and sharper reason th
 
 ---
 
+### 3.1 Definitions accrete, and a deviation is an event with a disposition
+
+§3 above treats the definitions as a set fixed before the run, with divergence measured against
+it. **That is wrong about how inputs arrive**, and the operator corrected it in the same session.
+
+- The **solution overlay is one input channel** from the architect and/or the lead developer. It is
+  not the definition set.
+- **`project-profile.md` carries an introduction and further inputs.**
+- **At any point while the activity progresses, a developer may input something about a
+  deviation** — and it is adjudicated: **planned, rejected, accepted as proposed, or accepted with
+  changes**. Execution then continues under whatever that adjudication left standing, through the
+  kit on whichever coding agent is in use.
+
+So the governing state at any moment is an **accumulation with provenance**, not a document. Three
+consequences, and the first is the useful one.
+
+**A deviation has the same shape as a finding, so it should reuse the same machinery.** The kit
+already has a disposition vocabulary where each value is a distinct claim rather than a synonym,
+and where one of them is refused unless the tree carries corroborating evidence. A deviation needs
+exactly that treatment one layer up — `planned | rejected | accepted | accepted-with-changes`,
+each recorded with **who decided, against which definition, and on what date**. `[judgement]`
+Building a second, parallel mechanism for this would be the mistake; the finding-disposition design
+already solved the hard part, which is making a mark that clears a gate say why.
+
+**"Planned" is an entry into the backlog — and that gap is already recorded elsewhere.** Turning an
+accepted deviation into task rows is the same missing mechanism as brownfield entry, where
+`ENTRY-PROPOSAL.md` can express exactly one disposition — a new task — and nothing turns a roadmap
+into rows. **One mechanism, two callers.** That is worth knowing before either is built
+separately.
+
+**Acceptance mutates a definition, so authority is per layer.** The overlay is co-authored by the
+solution architect with the lead developer and is explicitly not the coding agent's to re-open. A
+developer's in-flight input therefore cannot silently amend it. **Which disposition a person may
+apply depends on which layer the deviation touches** — a task's acceptance criteria, a
+project-scoped floor, or the overlay itself. This is undecided, and the goal chain puts it on the
+critical path: without it, an accepted deviation is indistinguishable from drift the next time
+anyone reads the record.
+
+**What this changes about §3.** An escalation is not only "name the definition breached". It is
+**name the definition, propose a disposition, then either apply a pre-authorised one or queue it**.
+In auto-mode nobody is sitting there to adjudicate, so the pre-authorisation rules are the whole
+difference between a run that halts at the first deviation and one that finishes. That is the
+addressee question from §2 arriving from the other side, and it is the same question.
+
+**What it does not change: the invariant layer.** A deviation may amend approach, plan or
+acceptance criteria. It may **not** amend what counts as a finding, a tier, or an escape — because
+the accumulated record has to stay comparable across time and across projects, and graduation is
+built entirely on that comparison (§4).
+
+---
+
 ## 4. Personalisation and determinism are both required, so they must live in different layers
 
 The operator's third point: each architect or developer using the kit works in their own style,
@@ -202,7 +257,9 @@ Since maturity is plural, this is a checklist a project passes, not a milestone 
 4. **A budget cap binds**, because unattended plus unbounded is the one failure that cannot be
    noticed late.
 5. **Disposition delegation is decided** — which marks the machine may set, on what evidence, and
-   which remain the human's permanently.
+   which remain the human's permanently. This covers **both** kinds of mark: findings, and the
+   deviation dispositions of §3.1. For deviations it also has to answer *which layer* a given
+   person may accept against, since accepting one mutates a definition.
 6. **The goal is expressed as a goal**: a named set of tasks with acceptance criteria, not a
    backlog to be interpreted.
 7. **A stop condition and a resume path exist**, so that halting is a defined outcome rather than
@@ -240,6 +297,13 @@ differently and some change priority sharply:
 - Where the practitioner layer's boundary sits, beyond the testable rule proposed in §4.
 - What evidence justifies moving a control's addressee from human to machine, control by control.
 - Whether divergence detection is one mechanism across all definition classes or one per class.
+- Which authority may accept a deviation against which layer (§3.1), and whether that is expressed
+  as a role, a person, or a rule in the profile.
+- Whether the deviation vocabulary is literally the finding-disposition mechanism reused, or a
+  sibling sharing its guard design — and what the corroborating marker is for
+  `accepted-with-changes`, which is the value that most easily launders a silent amendment.
+- Whether "planned" and brownfield entry can share one roadmap-to-task-rows mechanism, given both
+  need it and neither exists.
 - What a stop condition looks like that is not simply "an error occurred".
 - Whether goals-as-delegation-unit needs anything beyond the `goal` rows that already exist.
 - How a team — as opposed to a solo practitioner — shares an overlay while personalising style,
