@@ -178,7 +178,7 @@ if [ -n "$UNRES" ]; then
                AND n.id IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM task t WHERE t.id=n.id)
                AND EXISTS (SELECT 1 FROM event e
-                            WHERE e.task_id=n.id AND e.kind IN (SELECT state FROM state_class WHERE is_closed = 1));")
+                            WHERE e.task_id=n.id AND e.kind IN (SELECT a.written FROM state_alias a JOIN state_class c ON c.state=a.canonical WHERE c.is_closed = 1));")
   if [ "${GONE:-0}" -gt 0 ]; then
     printf '\n> **%s id(s) carry a recorded `done` or `abandoned`.** Whatever those closed is\n' "$GONE"
     printf '> not in the counts above — not in the done total, not in the escape-rate denominator\n'

@@ -2247,7 +2247,11 @@ rs="$WORK.resolve"; rm -rf "$rs"; mkdir -p "$rs"
   want "a whole-second mark starts its second" "$t2keep" "$SHA_TID"
   want "a malformed --at is refused"           "$atbad" 2
   want "  ...and a legal one is not"           "$atgood" 0
-  want "the closing task is really closed"     "$r3state" "done"
+  # `completed`, not `done`. The fixture still WRITES `Task-Status: done` -- legacy spellings stay
+  # valid input forever -- and the indexer resolves it through state_alias, so what is STORED is
+  # the canonical value. Asserting the written word here would have passed whether or not the
+  # alias table did anything, which is the point of checking the stored one. See docs/adr/0008.
+  want "the closing task is really closed"     "$r3state" "completed"
   want "  ...its critical still counts"        "$gateclosed" 1
   want "  ...and status names it"              "$s_closed" 1
   want "an ambiguous refutation does NOT retire" "$ambigref" 1
@@ -2862,6 +2866,22 @@ check $? "both vocabularies validate, and a value in neither is still refused"
     done
   done )
 check $? "the reader-facing tables list the same states the code defines"
+
+# AN EVENT KIND IS NOT A TASK STATE, and confusing them is a defect this change made FIVE times.
+# `state_class` holds the canonical seven; an event carries whatever word was current when it was
+# recorded, and 87 events in this repository say `progress`. So `e.kind IN (SELECT state FROM
+# state_class ...)` matches nothing written before the rename, and the failure is SILENT -- the
+# join simply returns no rows, so attribution, ownership, closed_at and the deleted-task notice
+# all quietly did nothing. Two instances were found by conformance, then two more, then a fifth.
+#
+# docs/LESSONS.md section 4: "Filing a defect class is not the same as sweeping for it, and the
+# sweep is the cheap half." This IS the sweep, kept. Anything reading an event kind resolves it
+# through state_alias first; state_class is for classifying a task's current state.
+( n=$(grep -rn "kind IN (SELECT state FROM state_class" "$KIT/tooling" 2>/dev/null | wc -l | tr -d ' ')
+  [ "$n" = 0 ] || { echo "  $n site(s) compare an event kind to state_class; use state_alias:"
+                    grep -rn "kind IN (SELECT state FROM state_class" "$KIT/tooling" | sed 's/^/    /'; }
+  [ "$n" = 0 ] )
+check $? "no query compares an event kind against the canonical-only state table"
 rm -rf "$sv"
 fi
 

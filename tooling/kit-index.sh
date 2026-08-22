@@ -1294,13 +1294,13 @@ UPDATE finding SET tier = (SELECT t.tier FROM task t WHERE t.id = finding.task_i
 UPDATE task SET owner = (
   SELECT e.actor FROM event e
    WHERE e.task_id = task.id AND e.actor IS NOT NULL AND e.actor <> ''
-     AND e.kind IN (SELECT state FROM state_class WHERE is_activity = 1)
+     AND e.kind IN (SELECT a.written FROM state_alias a JOIN state_class c ON c.state=a.canonical WHERE c.is_activity = 1)
    ORDER BY e.seq DESC LIMIT 1)
   WHERE state NOT IN (SELECT state FROM state_class WHERE is_closed = 1);
 
 UPDATE task SET closed_at = (
   SELECT MAX(e.at) FROM event e WHERE e.task_id = task.id
-                                  AND e.kind IN (SELECT state FROM state_class WHERE is_closed = 1))
+                                  AND e.kind IN (SELECT a.written FROM state_alias a JOIN state_class c ON c.state=a.canonical WHERE c.is_closed = 1))
   WHERE state IN (SELECT state FROM state_class WHERE is_closed = 1);
 
 -- Attribute spend to a task. The hook that fires when an agent finishes does not know which
