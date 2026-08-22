@@ -242,10 +242,12 @@ KITVIA=kit
 # inventory items of which 120 are cancelled turns 5 escapes over 80 real tasks -- 6.25% -- into
 # 5 over 200 -- 2.5%. The pipeline looks 2.5x better for having filed work that was never work.
 #
-# `all` IS PRINTED ONLY WHEN IT DIFFERS, which is only when something is cancelled. Two
-# permanently-equal columns train a reader to skip both, and the property worth keeping is not
-# "always show three numbers" -- it is that nothing vanishes SILENTLY. Where they are equal, one
-# number hides nothing; where they differ, the difference is named in the row.
+# `all` IS ALWAYS PRINTED; `measured` APPEARS ONLY WHEN IT DIFFERS. The first draft had this the
+# other way round and four conformance steps went red -- correctly. `all` is the anchor the report
+# guarantees: the step named "nothing stored is missing from the report" pins its exact shape, and
+# a rate that can drop the un-filtered denominator is one an escape can hide behind. `measured`
+# says something new only when work has been excluded, which is only when something is cancelled;
+# a permanently-equal second column trains a reader to skip both.
 #
 # NO `--` COMMENTS INSIDE THE QUERY STRING. `q()` passes this to sqlite3 as one argument, and a
 # `--` comment swallowed the rest of the statement: the whole section rendered as "_no task
@@ -254,14 +256,16 @@ KITVIA=kit
 ESC=$(q "SELECT printf('%-11s', COALESCE(NULLIF(t.tier,''),'untiered'))||
                 printf('%-18s', SUM(CASE WHEN e.kind='escaped' AND t.via='$KITVIA' THEN 1 ELSE 0 END)||
                                 ' / '||COUNT(DISTINCT CASE WHEN t.via='$KITVIA' THEN t.id END)||' via:$KITVIA')||
-                printf('%-20s', SUM(CASE WHEN e.kind='escaped' AND m.is_measured=1 THEN 1 ELSE 0 END)||
-                                ' / '||COUNT(DISTINCT CASE WHEN m.is_measured=1 THEN t.id END)||' measured')||
                 CASE WHEN COUNT(DISTINCT CASE WHEN m.is_measured=1 THEN t.id END) = COUNT(DISTINCT t.id)
                      THEN ''
-                     ELSE SUM(CASE WHEN e.kind='escaped' THEN 1 ELSE 0 END)||' / '||
-                          COUNT(DISTINCT t.id)||' all  ('||
-                          (COUNT(DISTINCT t.id) - COUNT(DISTINCT CASE WHEN m.is_measured=1 THEN t.id END))||
-                          ' not measured)'
+                     ELSE printf('%-20s', SUM(CASE WHEN e.kind='escaped' AND m.is_measured=1 THEN 1 ELSE 0 END)||
+                                          ' / '||COUNT(DISTINCT CASE WHEN m.is_measured=1 THEN t.id END)||' measured')
+                END||
+                SUM(CASE WHEN e.kind='escaped' THEN 1 ELSE 0 END)||' / '||COUNT(DISTINCT t.id)||' all'||
+                CASE WHEN COUNT(DISTINCT CASE WHEN m.is_measured=1 THEN t.id END) = COUNT(DISTINCT t.id)
+                     THEN ''
+                     ELSE '  ('||(COUNT(DISTINCT t.id) -
+                                  COUNT(DISTINCT CASE WHEN m.is_measured=1 THEN t.id END))||' not measured)'
                 END
          FROM task t LEFT JOIN event e ON e.task_id=t.id
                      LEFT JOIN state_class m ON m.state = t.state
