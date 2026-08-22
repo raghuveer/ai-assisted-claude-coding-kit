@@ -3280,6 +3280,13 @@ dp="$WORK.disp"; rm -rf "$dp"; mkdir -p "$dp"
   # Legacy spellings stay valid input everywhere, including here: a census reading a repository
   # that predates ADR 0008 quotes what it finds rather than translating it.
   ok "kit-task.sh --title 'Legacy' --state done"
+  # ORDER MUST NOT MATTER. The first version of this grammar was a fixed sequence of optional
+  # groups, so flags had to appear in the order the pattern listed them -- and the refusal said
+  # "not safe to paste", which is not what was wrong with the line. CI caught it on a case this
+  # suite had written in the obvious order rather than the pattern's order.
+  ok "kit-task.sh --title 'Reordered' --state completed --tier T1"
+  ok "kit-task.sh --title 'Reordered' --epic core --lang go"
+  ok "kit-task.sh --title 'Bare'"
 
   no "kit-task.sh --title 'Bad state' --state nonsense"
   no "kit-task.sh --title 'Bad via' --via nobody"
@@ -3289,7 +3296,12 @@ dp="$WORK.disp"; rm -rf "$dp"; mkdir -p "$dp"
   no "kit-task.sh --title 'Subst' --paths 'src/\$(whoami)'"
   no "kit-task.sh --title 'Tick' --paths 'src/\`id\`'"
   no "kit-task.sh --title 'Pipe' --paths 'src/a|b'"
-  no "kit-task.sh --title 'Redir' --paths 'src/a>b'" )
+  no "kit-task.sh --title 'Redir' --paths 'src/a>b'"
+  # An unknown flag, and a valid line with a shell command appended. Order-independence is a
+  # REPEATED alternation, so the risk it introduces is that anything could repeat -- these pin
+  # that only the named flags may, and that the line still has to end where it says it does.
+  no "kit-task.sh --title 'Unknown flag' --frobnicate x"
+  no "kit-task.sh --title 'Trailing' --tier T1 ; rm -rf /" )
 check $? "candidate dispositions are accepted, and a value outside either vocabulary is not"
 
 # AND THE GATE READS THE VOCABULARY RATHER THAN RESTATING IT. A literal list in kit-entry.sh

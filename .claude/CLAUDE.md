@@ -12,6 +12,34 @@
   `.project/index.db` are derived — never edit them, and never treat them as input
   that outranks the text they came from.
 - Never write outside the project root.
+
+- **Verify on the fast platform first. Work on a branch, push, and read CI before starting the
+  local suite.** Not a reordering of "verify then publish" — CI *is* the fast verifier here:
+
+      ubuntu-latest   ~45s     full suite
+      macos-latest    ~1m50s   full suite
+      Windows, local  ~1 hour  full suite, and the only Windows signal there is
+
+  Both matter and neither substitutes for the other — Windows is in no CI matrix, and CI covers
+  two platforms this machine cannot. So run them **in parallel**: commit, push, and start the
+  local run in the same breath. Committing does not modify the working tree, so there is never a
+  reason to serialise them.
+
+  **If CI goes red, stop the local run rather than letting it finish.** Fixing means editing the
+  files it is reading, which invalidates it anyway; a run whose tree changed under it measured a
+  state that never existed. Iterate against CI until green, then let Windows confirm.
+
+  **A branch push alone triggers nothing** — the workflow fires on `pull_request` and on pushes
+  to `main`. Open the PR, or CI never starts. PRs are also what keep `main` green: only verified
+  work merges.
+
+  This is written down because knowing it was not enough. The order was inverted twice in one
+  session after the lesson had already been recorded, and both times the correction came from the
+  operator asking rather than from the note. Treat it as a precondition on the ACT of running the
+  suite locally — *is this pushed?* — not as a strategy to remember.
+
+  **Temporary.** It is shaped by the Windows suite costing an hour against CI's 45 seconds. When
+  that gap closes, this belongs in history rather than in the working agreement.
 - Commits carrying real change carry `Task-Id:` and `Tier:` trailers.
 - `Via:` records HOW the work was done — `kit`, `agent`, `manual`. Optional; absent
   means `unknown`, which is reported as unknown. Escape rate is reported over the
