@@ -3238,6 +3238,61 @@ pr="$WORK.prop"; rm -rf "$pr"; mkdir -p "$pr"
   bash "$KIT/tooling/kit-entry.sh" --check /nonexistent >/dev/null 2>&1; [ "$?" = 2 ] || rc=1
   exit $rc )
 check $? "a conforming proposal passes, thirteen malformed ones are refused, and --check files nothing"
+
+# THE CANDIDATE GRAMMAR CARRIES DISPOSITIONS NOW, and widening a whitelist is the fail-open
+# direction by construction: every flag added is a shape that used to be refused. The comment on
+# that regex records two earlier attempts that both failed open, one of them green on ubuntu and
+# red on macos, so this is checked on both rather than reasoned about.
+#
+# THE FIRST ASSERTION IS THE REGRESSION ONE. A widened pattern that stopped accepting the
+# original four-flag line would break every proposal ever written, and would do it while all the
+# new cases passed.
+dp="$WORK.disp"; rm -rf "$dp"; mkdir -p "$dp"
+( cd "$dp" || exit 1
+  # A GIT REPOSITORY, because kit-entry.sh calls kit_root at line 33 -- BEFORE the --check branch
+  # -- and exits 2 outside one. A bare mkdir made every case fail with "not a git repository",
+  # which matches neither `conforms` nor `not safe to paste`, so the accept cases AND the refuse
+  # cases both failed and the step said nothing about the grammar it exists to test.
+  git init -q -b main 2>/dev/null
+  prop() { { printf '## Open questions\n\n1. Why?\n   evidence: a.go:1\n   answer:\n\n'
+             printf '## Candidate tasks\n\n- [ ] C\n      evidence: a.go:1\n      %s\n\n' "$1"
+             printf '## Could not determine\n\n- nothing\n'; } > p.md
+           bash "$KIT/tooling/kit-entry.sh" --check p.md 2>&1; }
+  ok()  { printf '%s' "$(prop "$1")" | grep -q 'conforms' ||
+            { echo "  REFUSED but should pass: $1"; exit 1; }; }
+  no()  { printf '%s' "$(prop "$1")" | grep -q 'not safe to paste' ||
+            { echo "  ACCEPTED but should refuse: $1"; exit 1; }; }
+
+  ok "kit-task.sh --title 'Plain' --tier T1 --lang go --epic core"
+  ok "kit-task.sh --title 'Already there' --state completed --via manual --paths 'docs/a.md'"
+  ok "kit-task.sh --title 'Moot' --state cancelled"
+  ok "kit-task.sh --title 'Glob' --paths 'src/adapters/**'"
+  ok "kit-task.sh --title 'Blocked' --blocked-by T-x,T-y"
+  # Legacy spellings stay valid input everywhere, including here: a census reading a repository
+  # that predates ADR 0008 quotes what it finds rather than translating it.
+  ok "kit-task.sh --title 'Legacy' --state done"
+
+  no "kit-task.sh --title 'Bad state' --state nonsense"
+  no "kit-task.sh --title 'Bad via' --via nobody"
+  # --paths reaches a frontmatter key and the line is PASTED into a shell, so every metacharacter
+  # that could make it more than a path is refused. One case per class, not one case in general.
+  no "kit-task.sh --title 'Semi' --paths 'src/a; rm -rf /'"
+  no "kit-task.sh --title 'Subst' --paths 'src/\$(whoami)'"
+  no "kit-task.sh --title 'Tick' --paths 'src/\`id\`'"
+  no "kit-task.sh --title 'Pipe' --paths 'src/a|b'"
+  no "kit-task.sh --title 'Redir' --paths 'src/a>b'" )
+check $? "candidate dispositions are accepted, and a value outside either vocabulary is not"
+
+# AND THE GATE READS THE VOCABULARY RATHER THAN RESTATING IT. A literal list in kit-entry.sh
+# would be the twenty-sixth copy of the rule docs/adr/0008 gave one home, in the file whose job
+# is refusing unsafe input -- where going stale fails CLOSED and looks like a malformed proposal.
+( grep -qE 'kit_state_vocab|kit_state_legacy' "$KIT/tooling/kit-entry.sh" ||
+    { echo "  kit-entry.sh does not read the state vocabulary from its definition"; exit 1; }
+  grep -qE "state \((created|completed|cancelled)\|" "$KIT/tooling/kit-entry.sh" &&
+    { echo "  kit-entry.sh spells the state vocabulary out in its pattern"; exit 1; }
+  exit 0 )
+check $? "the candidate grammar derives its vocabularies instead of copying them"
+rm -rf "$dp"
 rm -rf "$pr"
 fi
 

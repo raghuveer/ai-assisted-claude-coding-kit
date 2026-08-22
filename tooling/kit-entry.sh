@@ -115,9 +115,28 @@ if [ "${1:-}" = "--check" ]; then
   # So the shape is inverted: the line must MATCH a grammar of things known to be safe, and
   # anything else is refused unread. An unparseable line is refused rather than parsed, which is
   # the fail-closed direction. Adding a flag to kit-task.sh means adding it here, deliberately.
+  # THE VOCABULARIES ARE BUILT FROM THEIR DEFINITION, NOT SPELLED OUT HERE. Listing the states
+  # literally inside this pattern would put a copy of the vocabulary into the one file whose job
+  # is refusing unsafe input, and it would go stale the day a state is added -- silently, because
+  # an unlisted value is simply refused and a proposal that should pass would not. That is the
+  # twenty-sixth copy docs/adr/0008 exists to prevent.
+  #
+  # The literal form is deliberately not quoted in this comment: written out, it matches the
+  # conformance guard that hunts for it, and the step fails on this prose. That has now happened
+  # three times in one change, which is the guard working rather than misfiring.
+  #
+  # ALTERNATION, NOT A BRACKET CLASS. `in-progress` and `on-hold` carry hyphens, which are range
+  # operators inside `[...]` and literal inside `(a|b|c)`. Legacy spellings come from the same
+  # definition with the canonical half stripped, so `--state done` stays valid input here exactly
+  # as it is everywhere else.
+  #
+  # `--paths` allows `*` on purpose -- tier.rule matches globs -- and allows no quote, no `$`, no
+  # backtick and no `;`, because the whole point of this gate is that the line is safe to PASTE.
+  _states=$(printf '%s' "$(kit_state_vocab) $(kit_state_legacy | sed 's/:[^ ]*//g')" | tr ' ' '|')
+  _vias=$(printf '%s' "$(kit_via_vocab)" | tr ' ' '|')
   while IFS= read -r ln; do
     [ -n "$ln" ] || continue
-    printf '%s\n' "$ln" | grep -qE "^[[:space:]]*kit-task\.sh --title '[A-Za-z0-9 ._-]+'([[:space:]]+--tier T[0-3])?([[:space:]]+--lang [A-Za-z0-9+#_-]+)?([[:space:]]+--epic [A-Za-z0-9_-]+)?[[:space:]]*$" ||
+    printf '%s\n' "$ln" | grep -qE "^[[:space:]]*kit-task\.sh --title '[A-Za-z0-9 ._-]+'([[:space:]]+--tier T[0-3])?([[:space:]]+--lang [A-Za-z0-9+#_-]+)?([[:space:]]+--epic [A-Za-z0-9_-]+)?([[:space:]]+--paths '[A-Za-z0-9 ._/,*-]+')?([[:space:]]+--state ($_states))?([[:space:]]+--via ($_vias))?([[:space:]]+--blocked-by [A-Za-z0-9,_-]+)?[[:space:]]*$" ||
       { kit_warn "candidate line is not safe to paste: $ln"; bad=1; }
   done <<EOF
 $(grep 'kit-task\.sh --title' < "$P")

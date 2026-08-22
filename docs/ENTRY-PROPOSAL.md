@@ -63,6 +63,54 @@ no evidence is an opinion, and the point of the census is that opinions are sepa
 path from this file to a task file: the operator copies the line, or does not. That is the whole of
 the structural prevention and it is exactly as strong as that sentence.
 
+## Dispositions — a candidate is not always new work
+
+On a brownfield census most of what is found **already exists**, and some of it **should not be
+done at all**. A format that can only propose new work forces both into the one shape it has, and
+the inventory that results is wrong in a way nobody can see.
+
+**The disposition IS the task state.** There is no second vocabulary — `docs/adr/0008` defines one,
+and inventing another set of words meaning the same things is the drift that ADR removed from
+twenty-five places.
+
+| what the census found | how the candidate says it |
+|---|---|
+| work that should be done | *(nothing — a task is `created` by default)* |
+| it already exists and is finished | `--state completed --via <how>` |
+| it exists but should not be done at all | `--state cancelled` |
+
+```markdown
+## Candidate tasks
+
+- [ ] Document the retry budget
+      evidence: src/retry.go:3
+      kit-task.sh --title 'Document the retry budget' --tier T1
+
+- [ ] The retry budget is already documented, in a file the census found
+      evidence: docs/retry.md:1
+      kit-task.sh --title 'Retry budget is documented' --state completed --via manual --paths 'docs/retry.md'
+
+- [ ] The legacy poller is dead code behind a flag that is never set
+      evidence: src/poll.go:12, config/flags.yml:8
+      kit-task.sh --title 'Legacy poller is unreachable' --state cancelled
+```
+
+**A `completed` candidate is proposing an inventory record, not work.** That is the point: it is
+how the backlog comes to describe what exists rather than only what is missing, which is what
+`docs/design-input/2026-08-16-artifact-model-and-distribution.md` §1.2 means by a per-component
+disposition.
+
+**`--via` is a PROPOSAL, always.** `.claude/CLAUDE.md` is explicit that a model may propose how
+work was done and a human confirms it. That holds here for the same structural reason everything
+else does — the operator runs the line, or does not. Nothing in this file writes anything.
+
+**`--paths` populates the declared-paths tier floor**, which was previously unpopulatable because
+`kit-task.sh` had no way to set it. Globs are allowed, because `tier.rule` matches globs.
+
+Legacy state spellings — `open`, `done`, `progress` — remain valid input and resolve to canonical
+values when the index is built, so a census reading a repository that predates ADR 0008 can quote
+what it finds.
+
 ## What `--check` does and does not enforce
 
 It enforces: questions section present and before candidates; no checkbox on a question; every
@@ -72,6 +120,14 @@ and **every candidate line is safe to paste**.
 That last one is a **whitelist, not a blacklist**: the whole line must match
 
     kit-task.sh --title '<A-Za-z0-9 space . _ ->' [--tier T0-3] [--lang ...] [--epic ...]
+                [--paths '<A-Za-z0-9 space . _ / , * ->'] [--state <a task state>]
+                [--via <a provenance>] [--blocked-by <ids>]
+
+**`--state` and `--via` accept exactly what their vocabularies define, and the grammar is BUILT
+from those definitions rather than written out here or in `kit-entry.sh`.** A copy in the gate
+would go stale the day a state is added — silently, and in the fail-open direction, because an
+unlisted value is simply refused and a proposal that should pass would not. Legacy state
+spellings are included the same way, from the same definition.
 
 and anything else is refused unread. Two earlier attempts inspected an *extracted* title against a
 list of forbidden characters, and both failed open — one because a BSD sed class silently matched
