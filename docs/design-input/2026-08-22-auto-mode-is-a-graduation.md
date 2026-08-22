@@ -462,6 +462,45 @@ accelerator entry.** That is how an accelerator earns content from use rather th
 authorship, which is the ladder that already exists. It also means the absent-limit check gets
 better precisely by being run on projects, which is the right incentive.
 
+### 8.8 A result is evidence when it carries its input; deployment stays outside
+
+Two operator answers that resolve §8.7's open questions, and the first is lighter and better than
+what was proposed.
+
+**Evidence is the input and the outcome together.**
+
+> While quoting a number is easy, I always tend to provide input and outcome result accordingly.
+
+The proposal in §8.7 was that a result should name its producer and point at a surviving artifact.
+That is heavier than necessary and aims at the wrong property. **A number alone is an assertion
+because nothing says what it measured** — a latency figure without the load profile cannot be
+compared to a limit, re-run, or contradicted. With the input beside it, it can be all three, and a
+tester who ran a script can supply it without a harness.
+
+`[judgement]` This also **subsumes the environment question**: where a result was produced is part
+of the input that produced it, so it needs no separate representation. And it is the same rule this
+project already applies elsewhere in a different costume — a mark that clears a gate must say why;
+a count must say what it counted; **a result must say what it measured.**
+
+**Deployment is not an event the kit should carry.**
+
+> CI is being triggered, right. Similarly deployment on local system after changes and testing on
+> local servers on laptop, or remotely. How explicitly it comes into the coding kit, I say not too
+> much — that activity happens through Claude Code, and it may be something else in future, and it
+> can be different for someone else. It all depends on how much the developer trusts coding agents
+> and entrusts responsibility accordingly while they take care of the rest.
+
+So: **no deployment event class.** An outcome measured against a deployed thing is a result like
+any other, and §8.8's first half already carries where it ran.
+
+**And this generalises graduation in a way §2 did not `[judgement]`.** Trust is **per activity and
+per agent**, not a global setting. A developer entrusts deployment to the coding agent to whatever
+degree they have decided, independently of whether they have graduated the kit on task execution,
+and two developers will draw that line differently. The design consequence is concrete: **the
+kit's checks must never assume who or what performed an activity.** They consume the outcome
+whoever produced it — an agent, a person, or CI — which is the same shape as reporting escape rate
+over every population rather than only over `via:kit`.
+
 ---
 
 ## 9. Open questions this document does not answer
@@ -477,10 +516,12 @@ better precisely by being run on projects, which is the right incentive.
 - Which non-functional dimensions get a mechanism first (§8.4).
 - ~~Whether an absent-limit check can run before an accelerator exists to say what should be
   present~~ — **closed by §8.7**: they may land together.
-- What shape a result from outside the kit arrives in (§8.7) — a trailer, an ingest adapter, or a
-  file a tester writes — and what the minimum is that still makes it evidence rather than a claim.
-- Whether a deployment is an event the record should carry at all, given the kit does not own the
-  pipeline, or whether only its *outcomes* are in scope.
+- ~~What minimum makes an outside result evidence rather than a claim~~ — **closed by §8.8**: the
+  input that produced it, travelling with the outcome.
+- ~~Whether a deployment is an event the record should carry~~ — **closed by §8.8**: no. Only
+  outcomes, and their environment rides in the input.
+- What *carries* an input-and-outcome pair in practice — a trailer, an ingest adapter, or a file a
+  tester writes — which is now a shape question rather than a sufficiency one.
 - Whether divergence detection is one mechanism across all definition classes or one per class.
 - Which authority may accept a deviation against which layer (§3.1), and whether that is expressed
   as a role, a person, or a rule in the profile.
