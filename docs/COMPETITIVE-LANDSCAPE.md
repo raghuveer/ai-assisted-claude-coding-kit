@@ -1,5 +1,13 @@
 # Competitive landscape — external, cited
 
+> **PARTLY SUPERSEDED ON §3, 2026-08-22.** This memo asked to be re-verified before acting on it
+> (§0), and that was done: see `design-input/2026-08-22-competitive-comparison-and-roadmap-input.md`
+> §2. §1 and §3's first half were re-confirmed against Beads at source. **§3's headline claim —
+> that no surveyed system combines risk-tiered review with token economics — is now wrong**:
+> Superpowers designed that intersection in the open in June 2026. §1, §2, §4 and §5 stand. This
+> banner is here rather than in an edit below because a dated memo rewritten to look
+> always-correct is the failure ADRs 0005 and 0006 were kept unedited to avoid.
+
 > **Status: observed, not assumed.** Every factual claim below was verified by a
 > multi-source research pass (25 claims, 3-0/2-1 adversarial votes, 0 refuted) on
 > 2026-08-08. Facts carry a source; the two *judgements* this memo makes — where the kit's
