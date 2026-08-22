@@ -1271,11 +1271,17 @@ UPDATE task SET state = COALESCE((
 -- not stop the search, it skips to the next REAL transition however unrelated, and files the
 -- finding against a task that had nothing to do with it. Measured on spend, fixed there, and
 -- the identical shape would be identically wrong here.
+-- state_alias, NOT state_class, and the difference is a regression this already caused.
+-- state_class holds the CANONICAL seven; state_alias holds every spelling that has ever been
+-- written, legacy included. Attribution binds a finding to the next task-status transition, and
+-- those transitions are real events carrying whatever word was current when they were recorded --
+-- 87 of them say `progress`. Matching against state_class silently attributed nothing, and two
+-- conformance steps went red. Anything that reads an EVENT KIND must join state_alias.
 UPDATE finding SET task_id = (
   SELECT CASE WHEN EXISTS (SELECT 1 FROM task t WHERE t.id = e.task_id) THEN e.task_id END
     FROM event e
    WHERE e.task_id IS NOT NULL AND e.task_id <> ''
-     AND e.kind IN (SELECT state FROM state_class)
+     AND e.kind IN (SELECT written FROM state_alias)
      AND e.at >= finding.at
    ORDER BY e.at, e.seq LIMIT 1)
  WHERE task_id IS NULL OR task_id = '';
@@ -1324,7 +1330,7 @@ UPDATE spend SET task_id = (
   SELECT CASE WHEN EXISTS (SELECT 1 FROM task t WHERE t.id = e.task_id) THEN e.task_id END
     FROM event e
    WHERE e.task_id IS NOT NULL AND e.task_id <> ''
-     AND e.kind IN (SELECT state FROM state_class)
+     AND e.kind IN (SELECT written FROM state_alias)
      AND e.at >= spend.at
    ORDER BY e.at, e.seq LIMIT 1)
  WHERE task_id IS NULL OR task_id = '';

@@ -168,14 +168,20 @@ kit_state_closed()   { printf 'completed cancelled abandoned'; }
 # has picked up yet has no owner to infer. Maps forward from the old `started progress blocked`.
 kit_state_activity() { printf 'in-progress on-hold'; }
 
-# IN THE ESCAPE-RATE DENOMINATOR -- the populations that judge the pipeline. CLOSED AND MEASURED
-# ARE DIFFERENT SETS, and `cancelled` is the reason this partition exists at all: work that was
-# never work must not count toward what the pipeline did or failed to do. `abandoned` IS measured,
-# because it was real work this pipeline touched and hiding it would flatter the record.
+# IN THE ESCAPE-RATE DENOMINATOR -- the tasks that count toward judging the pipeline.
 #
-# One boolean cannot carry this. A binary open/closed forces `cancelled` into the denominator and
-# reproduces the exact distortion the change was made to remove.
-kit_state_measured() { printf 'completed abandoned'; }
+# EVERY STATE EXCEPT `cancelled`, and the exception is the whole reason this partition exists:
+# work that was never work must not count toward what the pipeline did or failed to do. A census
+# that files 200 inventory items of which 120 are cancelled turns 5 escapes over 80 real tasks --
+# 6.25% -- into 5 over 200 -- 2.5%, and the pipeline looks better for having filed nothing.
+#
+# `abandoned` IS measured: it was real work this pipeline touched, and hiding it would flatter the
+# record in the other direction. Open states are measured too -- work in flight is still work, and
+# this is deliberately NOT `kit_state_closed` inverted.
+#
+# ORTHOGONAL TO is_closed, which is why one boolean cannot carry it: `cancelled` is closed and
+# unmeasured, `abandoned` is closed and measured, `in-progress` is open and measured.
+kit_state_measured() { printf 'created planned in-progress on-hold completed abandoned'; }
 
 # LEGACY SPELLINGS ARE ACCEPTED FOREVER, as `written:canonical` pairs. Nothing is rewritten: 127
 # commits already carry `Task-Status: started|progress|done` and are immutable, and 130 task files
