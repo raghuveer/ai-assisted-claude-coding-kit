@@ -5,7 +5,7 @@ epic: feedback-loop
 tier: T3
 lang: bash
 paths: tooling/kit-resolve.sh, tooling/kit-status.sh, tooling/kit-preflight.sh, tooling/kit-index.sh, tooling/kit-event.sh, tooling/kit_findings.py, tooling/schema.sql, tests/conformance.sh, docs/TRIAL-PROTOCOL.md, .claude/CLAUDE.md
-state: open
+state: completed
 ---
 
 > **Retiered T2 → T3 on 2026-08-21, by the project's own floor rule rather than by judgement.**
