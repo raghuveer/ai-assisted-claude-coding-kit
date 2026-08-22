@@ -8,14 +8,27 @@ state: open
 ---
 
 > **Fifth blocker added 2026-08-21, and it is mechanical rather than argued.** §0's criticals
-> gate stands at **4**, and all four review
-> `docs/design-input/2026-08-15-entry-mechanism.md` — design 1, which design 2 rejected outright.
-> **No existing verb can clear them.** `--fixed` is false because nothing was fixed;
-> `kit-resolve.sh:186` *refuses* `--unassessable` for any finding carrying a summary and all four
-> carry one; `kit-vindicate.sh --false` keys on `(task, class)` and would refute unrelated
-> findings on the same task, besides being the wrong claim — they were real, and being real is
-> why the design died. So the gate cannot reach zero until
-> `T-20260819-a-finding-whose-subject-no-longer-exists` lands.
+> gate must read **zero** before this trial can honestly start. **The number is deliberately not
+> written here — run it:**
+>
+>     bash tooling/kit-preflight.sh --criticals
+>
+> **The figure was hard-coded three times and was wrong all three.** It said `4` when this note
+> was filed, was `13` when a review measured it hours later, and `5` the next time anyone looked.
+> A note carrying a live count goes stale between the session that writes it and the session that
+> reads it, and it was re-filed as a finding each time. The command is the single home for the
+> answer, exactly as §0 says: *run it, do not judge it.*
+>
+> **The original form of this blocker is discharged.** It said the four criticals then outstanding
+> all reviewed `docs/design-input/2026-08-15-entry-mechanism.md` — design 1, which design 2
+> rejected outright — and that **no existing verb could clear them**: `--fixed` was false because
+> nothing was fixed, `--unassessable` is refused for any finding carrying a summary, and
+> `kit-vindicate.sh --false` keys on `(task, class)` and would have refuted unrelated findings,
+> besides being the wrong claim — they were real, and being real is why the design died.
+>
+> That gap is closed. `T-20260819-a-finding-whose-subject-no-longer-exists` built `--superseded`,
+> and those four left the gate under it. **It stays in `blocked_by` until it is closed**, which is
+> an operator decision and not this note's to make.
 >
 > This edge existed in prose for two days before anything recorded it, which is the same failure
 > the fourth blocker's note describes. A dependency nothing can read is not a dependency.

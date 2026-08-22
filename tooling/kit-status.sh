@@ -49,7 +49,7 @@ printf '# Status\n\n'
 printf '## Open\n\n'
 OPEN=$(q "SELECT t.id||'  '||COALESCE(NULLIF(n.title,''),t.id)||'  ['||COALESCE(NULLIF(t.tier,''),'untiered')||']'||CASE WHEN t.blocked_by<>'' THEN '  blocked-by '||t.blocked_by ELSE '' END||CASE WHEN COALESCE(t.owner,'')<>'' THEN '  @'||t.owner ELSE '' END
           FROM task t JOIN node n ON n.id=t.id
-          WHERE t.state NOT IN ('done','abandoned') ORDER BY t.state, t.id;")
+          WHERE t.state NOT IN (SELECT state FROM state_class WHERE is_closed = 1) ORDER BY t.state, t.id;")
 [ -n "$OPEN" ] && printf '%s\n' "$OPEN" | sed 's/^/- /' || printf '_none_\n'
 
 printf '\n## Closed\n\n'
@@ -158,7 +158,7 @@ if [ -n "$UNRES" ]; then
                AND n.id IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM task t WHERE t.id=n.id)
                AND EXISTS (SELECT 1 FROM event e
-                            WHERE e.task_id=n.id AND e.kind IN ('done','abandoned'));")
+                            WHERE e.task_id=n.id AND e.kind IN (SELECT state FROM state_class WHERE is_closed = 1));")
   if [ "${GONE:-0}" -gt 0 ]; then
     printf '\n> **%s id(s) carry a recorded `done` or `abandoned`.** Whatever those closed is\n' "$GONE"
     printf '> not in the counts above — not in the done total, not in the escape-rate denominator\n'
@@ -379,7 +379,7 @@ if [ "${SPENT:-0}" -gt 0 ]; then
               GROUP BY t.tier)
            SELECT COALESCE(NULLIF(t.tier,''),'untiered')||'  '||COUNT(*)||' open x '||
                   COALESCE((SELECT (per/100000)||'k' FROM rate WHERE rate.tier=t.tier),'no rate yet')
-             FROM task t WHERE t.state NOT IN ('done','abandoned')
+             FROM task t WHERE t.state NOT IN (SELECT state FROM state_class WHERE is_closed = 1)
             GROUP BY COALESCE(NULLIF(t.tier,''),'untiered') ORDER BY 1;")
   if [ -n "$EST" ]; then
     printf '\n**Open backlog at this project'"'"'s measured rate**\n\n'
@@ -553,7 +553,7 @@ CRITDONE=$(q "SELECT COUNT(*) FROM finding f JOIN task t ON t.id=f.task_id
                WHERE f.severity='critical' AND f.fixed_at IS NULL
                  AND f.unassessable_at IS NULL
                  AND f.superseded_at IS NULL
-                 AND NOT (COALESCE(f.vindicated,1) = 0 AND $UNAMBIG) AND t.state IN ('done','abandoned');")
+                 AND NOT (COALESCE(f.vindicated,1) = 0 AND $UNAMBIG) AND t.state IN (SELECT state FROM state_class WHERE is_closed = 1);")
 CRITALL=$(q "SELECT COUNT(*) FROM finding WHERE severity='critical';")
 printf '\n## Outstanding criticals\n\n'
 if [ "$OCRC" != 0 ]; then
@@ -698,7 +698,7 @@ BELOW=$(q "SELECT t.id||'  recorded '||COALESCE(NULLIF(t.tier,''),'(none)')||', 
              FROM task t
             WHERE t.tier_floor IS NOT NULL
               AND (t.tier IS NULL OR t.tier='' OR t.tier < t.tier_floor)
-              AND t.state NOT IN ('done','abandoned')
+              AND t.state NOT IN (SELECT state FROM state_class WHERE is_closed = 1)
             ORDER BY t.tier_floor DESC, t.id;")
 if [ -n "$BELOW" ]; then
   printf '\n## Below their tier floor\n\n'
@@ -708,8 +708,8 @@ fi
 
 # Silence on an unjudgeable task is how under-tiering stays invisible, so say how much of the
 # backlog the check could not speak for rather than letting it read as a clean bill.
-NOBASIS=$(q "SELECT COUNT(*) FROM task WHERE tier_floor IS NULL AND state NOT IN ('done','abandoned');")
-OPENN=$(q "SELECT COUNT(*) FROM task WHERE state NOT IN ('done','abandoned');")
+NOBASIS=$(q "SELECT COUNT(*) FROM task WHERE tier_floor IS NULL AND state NOT IN (SELECT state FROM state_class WHERE is_closed = 1);")
+OPENN=$(q "SELECT COUNT(*) FROM task WHERE state NOT IN (SELECT state FROM state_class WHERE is_closed = 1);")
 if [ "${NOBASIS:-0}" -gt 0 ]; then
   printf '\n> **Tier floors unverified for %s of %s open task(s).** No declared `paths:` and no\n' "$NOBASIS" "$OPENN"
   printf '> files touched yet, so no floor could be computed — not that none applies.\n'

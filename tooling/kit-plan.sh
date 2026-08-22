@@ -155,18 +155,18 @@ sqlite3 -separator $'\t' "$DB" "
               WHERE e2.rel='touches' AND e2.dst IN (
                 SELECT e3.dst FROM edge e3 WHERE e3.src=t.id AND e3.rel='touches'))),
          COALESCE(t.epic,'')
-    FROM task t WHERE t.state NOT IN ('done','abandoned') ORDER BY t.id;
+    FROM task t WHERE t.state NOT IN (SELECT state FROM state_class WHERE is_closed = 1) ORDER BY t.id;
   SELECT 'E', e.src, e.dst FROM edge e
    WHERE e.rel='depends_on'
-     AND e.src IN (SELECT id FROM task WHERE state NOT IN ('done','abandoned'))
-     AND e.dst IN (SELECT id FROM task WHERE state NOT IN ('done','abandoned'));
+     AND e.src IN (SELECT id FROM task WHERE state NOT IN (SELECT state FROM state_class WHERE is_closed = 1))
+     AND e.dst IN (SELECT id FROM task WHERE state NOT IN (SELECT state FROM state_class WHERE is_closed = 1));
   -- A blocker that is DONE stops blocking, and the query above drops that edge on purpose.
   -- A blocker with no task row at all is a different thing entirely and must not leave by the
   -- same door: it is not satisfied, it is unknown. Emitted separately so the planner can
   -- withhold the dependent instead of scheduling it as though nothing were in its way.
   SELECT 'U', e.src, e.dst FROM edge e
    WHERE e.rel='depends_on'
-     AND e.src IN (SELECT id FROM task WHERE state NOT IN ('done','abandoned'))
+     AND e.src IN (SELECT id FROM task WHERE state NOT IN (SELECT state FROM state_class WHERE is_closed = 1))
      AND NOT EXISTS (SELECT 1 FROM task t WHERE t.id = e.dst);
   -- Semantic adjacency: two open tasks that touch a file in common are about the same
   -- part of the codebase, whether or not anyone declared a dependency. Hub files are
@@ -184,7 +184,7 @@ sqlite3 -separator $'\t' "$DB" "
   --
   -- Neither is sufficient alone (docs-only 67%, min_shared-only 58%, both 34%), which is why
   -- both are here rather than the cheaper one.
-  WITH open AS (SELECT id FROM task WHERE state NOT IN ('done','abandoned')),
+  WITH open AS (SELECT id FROM task WHERE state NOT IN (SELECT state FROM state_class WHERE is_closed = 1)),
        tf   AS (SELECT e.src AS t, e.dst AS f FROM edge e JOIN open o ON o.id = e.src
                  WHERE e.rel='touches'),
        leaf AS (SELECT f FROM tf GROUP BY f

@@ -112,9 +112,12 @@ check_msg() {
 
   v=$(tv Task-Status)
   if [ -n "$v" ]; then
-    case "$v" in started|progress|blocked|unblocked|done|abandoned) ;;
-      *) printf '  invalid  Task-Status: %s\n' "$v" ;;
-    esac
+    # Read from kit_state_vocab, not spelled out here. This case statement WAS the single home
+    # for the vocabulary while the partitions of it lived in nineteen other places; now the
+    # vocabulary has one home too and this is a consumer like any other. See docs/adr/0008.
+    _ok=0
+    for _w in $(kit_state_vocab); do [ "$v" = "$_w" ] && _ok=1; done
+    [ "$_ok" = 1 ] || printf '  invalid  Task-Status: %s\n' "$v"
   fi
 
   # How the work was done. Optional -- absence means unknown, which is a real reported value

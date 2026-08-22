@@ -16,9 +16,16 @@ orchestrator writes files. Nothing files work.
    `Write`**; do not grant it one. Ask it for the format below rather than its usual design-input
    template, which is a different artefact with a different shape and a ~2000-word cap.
 3. **The orchestrator** writes two files, because it is the actor that holds `Write`:
-   - `<paths.state>/entry-candidates.md` — disposable, gitignored, overwritten by the next run.
+   - `<paths.state>/entry-candidates.md` — **committed**, and overwritten by the next run.
+     This said *"disposable, gitignored"* and was wrong on both halves. It is not derived:
+     `kit-entry.sh` writes the census TSVs and the report, **not this file** — the model does,
+     which is why a re-run cannot reproduce the same judgement the way it reproduces a count.
+     Ignoring it cost a real conclusion: a brownfield readiness review reported that the
+     inventory half *"does not exist in any form"* while a complete proposal sat on disk,
+     unreadable at HEAD.
    - `<paths.design_input>/YYYY-MM-DD-entry-questions.md` — **committed**. Questions are a durable
-     record of what was asked; candidates are disposable once confirmed. Two lifetimes, two files.
+     record of what was asked. Both are now durable; what still differs is their lifetime —
+     questions accumulate, candidates are superseded wholesale by the next run.
 4. **`kit-entry.sh --check <file>`** — validates the shape and refuses a candidate line that is
    unsafe to paste. Run it on what the model returned, before a human reads it.
 5. **The operator** answers the questions, then runs the `kit-task.sh` lines they accept.

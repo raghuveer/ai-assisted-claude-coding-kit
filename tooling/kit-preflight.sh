@@ -160,6 +160,25 @@ case "${1:-}" in
     kit_active "$ROOT" || { kit_warn "the kit is not adopted here"; exit 2; }
     STATE_DIR=$(kit_cfg "$(kit_profile "$ROOT")" paths.state ".project")
     DB="$ROOT/$STATE_DIR/index.db"
+    # REFRESH BEFORE QUERYING. This opened the database and queried it, and `index.db` is
+    # gitignored -- so the gate's answer was a function of WHEN SOMEONE LAST RAN THE INDEXER,
+    # not of the repository. `kit-status.sh` rebuilds only when the file is absent, so a stale
+    # index produced a confident number from an unknown point in history. `--spend` already
+    # rebuilds first and says why; the same reasoning was never carried one box up.
+    #
+    # `--if-stale` rather than an unconditional rebuild, because a full build costs ~39s here
+    # and this runs at every pre-flight. That is only safe now: until the staleness check
+    # compared resolved commits it answered FRESH across a commit, so `--if-stale` here would
+    # have inherited exactly the defect this is closing. The two changes are one fix.
+    #
+    # A build that FAILS refuses rather than falling through to the old file. Reporting a
+    # number silently is the one option the acceptance criteria reject, and a gate that
+    # answers from a database it could not refresh is that option wearing a rebuild.
+    bash "$(dirname "$0")/kit-index.sh" --if-stale >/dev/null 2>&1 || {
+      kit_warn "the index could not be refreshed, so the criticals gate cannot be trusted"
+      kit_warn "  run kit-index.sh and read its error; this refuses rather than reporting a"
+      kit_warn "  count derived from an unknown point in history."
+      exit 2; }
     [ -f "$DB" ] || { kit_warn "no index at ${DB#$ROOT/}; run kit-index.sh"; exit 2; }
     # ONE HOME FOR THIS PREDICATE. It used to be inlined in docs/TRIAL-PROTOCOL.md §0 and again
     # in kit-status.sh, which is two copies of a rule that has already been wrong twice -- once

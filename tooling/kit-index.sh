@@ -172,13 +172,33 @@ if [ "${1:-}" = "--if-stale" ] && [ -f "$DB" ] && [ ! -e "$FAILED_MARK" ]; then
   # edit. Guarded on existence: `find` over a missing path is an error on every platform, and
   # this list is evaluated on a repository that may never have planned anything.
   [ -d "$ROOT/$STATE_DIR/plans" ] && WATCH="$WATCH $ROOT/$STATE_DIR/plans"
-  if [ "$SRC_COMMITS" = git ]; then
-    HEADF=$(cd "$ROOT" && git rev-parse --git-path HEAD 2>/dev/null)
-    case "$HEADF" in /*|?:*) ;; *) HEADF="$ROOT/$HEADF" ;; esac
-    WATCH="$WATCH $HEADF"
-  fi
   # shellcheck disable=SC2086
   [ -n "$(find $WATCH -newer "$DB" 2>/dev/null | head -1)" ] && STALE=1
+  # GIT IS COMPARED BY RESOLVED COMMIT, NOT BY THE MTIME OF ANY FILE.
+  #
+  # This watched `.git/HEAD`, which on a branch holds the text `ref: refs/heads/main` and is
+  # NOT REWRITTEN BY A COMMIT -- the commit moves `refs/heads/<branch>`. Measured on this
+  # repository: `.git/HEAD` was seventeen minutes older than the tip it pointed at, so
+  # `--if-stale` reported FRESH with history moved past the last build, and every git-derived
+  # input -- `touches`, and through it `tier_floor`, blast radius and co-change -- was
+  # invisible to the check. It failed in the direction that fails open.
+  #
+  # Watching `refs/heads/<branch>` instead fixes the demonstration and keeps the class: that
+  # file is absent on a DETACHED HEAD, wrong mid-REBASE, shared or absent in a WORKTREE where
+  # `.git` may itself be a file, and after `git gc` the ref lives in `packed-refs` with no
+  # file to stat at all. Every file-based proxy has one of those holes.
+  #
+  # The resolved SHA is what the derivation actually depends on, and `rev-parse` answers
+  # correctly in all four states. One spawn, against a value recorded in `meta` by the last
+  # build -- the same shape the ingest adapters already use for their fingerprints below.
+  if [ "$STALE" = 0 ] && [ "$SRC_COMMITS" = git ]; then
+    _head=$(cd "$ROOT" && git rev-parse HEAD 2>/dev/null || printf 'none')
+    _was=$(sqlite3 "$DB" "SELECT value FROM meta WHERE key='head_commit';" 2>/dev/null | tr -d '\r')
+    # An index built before this key existed carries no row. That is UNKNOWN, not equal: fall
+    # stale once so the value gets recorded, rather than trusting a build whose commit nobody
+    # wrote down. Reading a missing row as a match is how this defect stayed invisible.
+    [ -n "$_was" ] && [ "$_head" = "$_was" ] || STALE=1
+  fi
   if [ "$STALE" = 0 ]; then
     for _s in "$SRC_TASKS" "$SRC_EVENTS"; do
       adapter_path "$_s" >/dev/null || continue
@@ -1000,6 +1020,20 @@ for _spec in "$SRC_TASKS" "$SRC_EVENTS"; do
   [ -n "$_fp" ] && printf "INSERT OR REPLACE INTO meta VALUES('fingerprint:%s','%s');\n" \
     "$(printf '%s' "$_spec" | sed "s/'/''/g")" "$(printf '%s' "$_fp" | sed "s/'/''/g")"
 done
+
+# THE COMMIT THIS BUILD SAW. Read back by `--if-stale`, which compares resolved SHAs rather
+# than the mtime of any file -- the block up there records why every file-based proxy
+# (`.git/HEAD`, `refs/heads/<branch>`, `packed-refs`) has a hole. Written here, in the same
+# stream and for the same reason as the adapter fingerprints above: it states what this index
+# was derived FROM, so the next run can tell whether that has moved.
+#
+# `none` is recorded for a repository with no commits yet, so the comparison has a value to be
+# equal to. Recording nothing would leave the key absent, which `--if-stale` treats as unknown
+# and therefore stale -- correct once, but it would rebuild on every run forever.
+if [ "$SRC_COMMITS" = git ]; then
+  printf "INSERT OR REPLACE INTO meta VALUES('head_commit','%s');\n" \
+    "$(cd "$ROOT" && git rev-parse HEAD 2>/dev/null || printf 'none')"
+fi
 for _spec in $(kit_cfg_all "$PROFILE" ingest.extra); do
   [ -n "$_spec" ] || continue
   run_adapter "$_spec" emit || { ADAPTER_FAILED=1; break; }
@@ -1143,6 +1177,17 @@ if [ "$PLAN_REFUSED_N" -gt 0 ]; then
   printf "INSERT OR REPLACE INTO meta VALUES('plan_refused_text','%s');\n" "$PLAN_REFUSED_T"
 fi
 
+# ---- 3d. project the state vocabulary into SQL ------------------------------
+# Emitted HERE, in the shell-expanded part of the block, because everything from `cat <<'DERIVE'`
+# down is a QUOTED heredoc where `$(...)` is literal text. The derivation below joins this table
+# instead of repeating `'done','abandoned'`, which it did six times in this file alone.
+# kit-lib.sh owns the values; this is their projection. See docs/adr/0008.
+for _st in $(kit_state_vocab); do
+  _cl=0; for _c in $(kit_state_closed);   do [ "$_st" = "$_c" ] && _cl=1; done
+  _ac=0; for _a in $(kit_state_activity); do [ "$_st" = "$_a" ] && _ac=1; done
+  printf "INSERT OR REPLACE INTO state_class VALUES('%s',%d,%d);\n" "$_st" "$_cl" "$_ac"
+done
+
 # ---- 4. derive current state; text sources always win over stale columns -----
 cat <<'DERIVE'
 -- A `Task-Id` in a trailer is a REFERENCE, not a task, and the difference is a file. Inventing
@@ -1196,7 +1241,7 @@ UPDATE task SET tier = COALESCE((
 UPDATE task SET state = COALESCE((
   SELECT e.kind FROM event e
    WHERE e.task_id = task.id
-     AND e.kind IN ('started','progress','blocked','unblocked','done','abandoned')
+     AND e.kind IN (SELECT state FROM state_class)
    ORDER BY e.seq DESC LIMIT 1), state, 'open');
 
 -- A finding harvested from a reviewer carries no task: the hook that harvests it fires when
@@ -1212,7 +1257,7 @@ UPDATE finding SET task_id = (
   SELECT CASE WHEN EXISTS (SELECT 1 FROM task t WHERE t.id = e.task_id) THEN e.task_id END
     FROM event e
    WHERE e.task_id IS NOT NULL AND e.task_id <> ''
-     AND e.kind IN ('started','progress','blocked','unblocked','done','abandoned')
+     AND e.kind IN (SELECT state FROM state_class)
      AND e.at >= finding.at
    ORDER BY e.at, e.seq LIMIT 1)
  WHERE task_id IS NULL OR task_id = '';
@@ -1225,13 +1270,14 @@ UPDATE finding SET tier = (SELECT t.tier FROM task t WHERE t.id = finding.task_i
 UPDATE task SET owner = (
   SELECT e.actor FROM event e
    WHERE e.task_id = task.id AND e.actor IS NOT NULL AND e.actor <> ''
-     AND e.kind IN ('started','progress','blocked')
+     AND e.kind IN (SELECT state FROM state_class WHERE is_activity = 1)
    ORDER BY e.seq DESC LIMIT 1)
-  WHERE state NOT IN ('done','abandoned');
+  WHERE state NOT IN (SELECT state FROM state_class WHERE is_closed = 1);
 
 UPDATE task SET closed_at = (
-  SELECT MAX(e.at) FROM event e WHERE e.task_id = task.id AND e.kind IN ('done','abandoned'))
-  WHERE state IN ('done','abandoned');
+  SELECT MAX(e.at) FROM event e WHERE e.task_id = task.id
+                                  AND e.kind IN (SELECT state FROM state_class WHERE is_closed = 1))
+  WHERE state IN (SELECT state FROM state_class WHERE is_closed = 1);
 
 -- Attribute spend to a task. The hook that fires when an agent finishes does not know which
 -- task it was serving, so the link is inferred: the next task-status transition at or after
@@ -1260,7 +1306,7 @@ UPDATE spend SET task_id = (
   SELECT CASE WHEN EXISTS (SELECT 1 FROM task t WHERE t.id = e.task_id) THEN e.task_id END
     FROM event e
    WHERE e.task_id IS NOT NULL AND e.task_id <> ''
-     AND e.kind IN ('started','progress','blocked','unblocked','done','abandoned')
+     AND e.kind IN (SELECT state FROM state_class)
      AND e.at >= spend.at
    ORDER BY e.at, e.seq LIMIT 1)
  WHERE task_id IS NULL OR task_id = '';
@@ -1351,6 +1397,17 @@ sqlite3 "$NEW" < "$(dirname "$0")/schema.sql" ||
 sqlite3 "$NEW" < "$SQL" ||
   { kit_warn "index build failed; ${DB#$ROOT/} was left unchanged and is now stale."
     kit_warn "Nothing was half-written — fix the cause above and rerun."; build_failed; }
+# AN EMPTY state_class FAILS OPEN AND SILENTLY. Every partition is a join against this table, so
+# with no rows `state NOT IN (SELECT ... WHERE is_closed=1)` matches everything: the whole backlog
+# reads as open, closed_at is never set, and the numbers look plausible. That is the shape this
+# repository keeps paying for -- a control whose failure produces a confident wrong answer rather
+# than an error -- so it is checked rather than assumed. See docs/adr/0008.
+_sc=$(sqlite3 "$NEW" "SELECT COUNT(*) FROM state_class;" 2>/dev/null | tr -d '\r')
+if [ "${_sc:-0}" -lt 1 ]; then
+  kit_warn "state_class is empty, so every state would classify as open; refusing this build"
+  kit_warn "  it is projected from kit_state_vocab in kit-lib.sh — check that it is readable."
+  build_failed
+fi
 rm -f "$FAILED_MARK"
 mv -f "$NEW" "$DB" ||
   { kit_warn "could not replace ${DB#$ROOT/}; it was left unchanged."; build_failed; }

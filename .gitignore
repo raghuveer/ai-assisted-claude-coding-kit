@@ -4,13 +4,24 @@
 STATUS.generated.md
 .project/packs/
 
-# kit-entry.sh output. All four are derived from the tree and the history: delete them, run
+# kit-entry.sh output. These THREE are derived from the tree and the history: delete them, run
 # again, lose nothing. Committing them would put a machine-local snapshot of somebody's working
 # copy into every clone, and it would go stale against the tree with nothing detecting it.
 .project/entry-facts.tsv
 .project/entry-comment-runs.tsv
 .project/entry-report.md
-.project/entry-candidates.md
+
+# `.project/entry-candidates.md` IS TRACKED, and used to be listed above as a fourth derived
+# file. It is not derived. `kit-entry.sh` does not write it -- grep the script -- the model does,
+# following docs/ENTRY-PROPOSAL.md, so a re-run cannot reproduce the same judgement the way it
+# reproduces a census. It carries open questions, candidate tasks and the evidence for each: a
+# PROPOSAL a human reviews, which is the same standing as a task file.
+#
+# Measured cost of the old classification: a brownfield readiness review concluded "the inventory
+# half does not exist in any form" while a complete 89-line proposal sat on disk, because the
+# reviewers read HEAD and the file was invisible there. For a trial it is worse than a wrong
+# conclusion -- the candidate list IS the deliverable, and an untracked deliverable cannot be
+# reported, compared across runs, or handed to the subject's owner.
 
 # Python bytecode. kit_findings.py is imported by tests and by hand; the cache it leaves
 # is a build artefact, and one swept in by `git add -A` turned three CI jobs red because the

@@ -276,7 +276,17 @@ them, which made three of five undetectable in practice.
 | **Registering a finding contaminates every later blind run.** | `sqlite3 … "SELECT COUNT(*) FROM finding WHERE at < '<worktree commit date>'"` — the worktree must predate every row you are hiding. |
 | **Reindexing before committing** showed `T2 0/8` and nearly produced a report that the escape mechanism was broken. | Run `git status --short` before `kit-index.sh`; a non-empty tree means the index you are about to read is early. |
 | **A permission denial inside a subagent degrades into a partial read.** | Check the tool log for denials. An agent that discloses one is salvageable; assume an undisclosed denial happened if its tool count is far below its peers on the same task. |
-| **A reviewer that returns nothing may not have reviewed nothing.** An empty `{"findings":[]}` records as `reason=empty` — *"looked and found nothing"*. | `sqlite3 … "SELECT reason, COUNT(*) FROM … kind='finding-gap' GROUP BY 1"`. Any `rejected` row is a review whose findings were lost. Confirm the reviewer received a prompt before believing any zero. |
+| **A reviewer that returns nothing may not have reviewed nothing.** An empty `{"findings":[]}` records as `reason=empty` — *"looked and found nothing"*. | `sqlite3 .project/index.db "SELECT json_extract(payload,'$.reason') AS reason, COUNT(*) FROM event WHERE kind='finding-gap' GROUP BY 1"`. Any `rejected` row is a review whose findings were lost. Confirm the reviewer received a prompt before believing any zero. |
+
+**The last detection was itself undetectable, and that is a fourth instance of this section's
+own failure.** It read `SELECT reason, COUNT(*) FROM … kind='finding-gap'`, with a literal
+ellipsis where the table and `WHERE` belong — the row above it elides only the database path, so
+the shape read as complete. Nobody could run it. Completing it the obvious way then fails:
+`reason` is **not a column**, it lives inside `payload`, and `FROM event` returns
+`Parse error: no such column: reason`. So the one check that catches a **lost review** has never
+been runnable, in a section whose whole premise is that a condition without a detection is not a
+control. Corrected above and verified against this repository: it returns `empty|2` here — two
+gaps, both `empty`, **no `rejected` rows**, so no review has in fact been lost to date.
 
 **A VOID trial is still recorded** — as `docs/TRIALS/<date>-<subject>-VOID.md`, naming the
 condition hit and what had been established before it. Discarding it silently is the same

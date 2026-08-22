@@ -102,7 +102,7 @@ kit_warn() { printf 'kit: %s\n' "$*" >&2; }
 # does — so two uncomputable digests compared equal and cleared the staleness warning.
 kit_plan_digest() {
   _kpd=$(sqlite3 "$1" "SELECT id||'|'||COALESCE(tier,'')||'|'||COALESCE(epic,'')||'|'||COALESCE(blocked_by,'')
-                         FROM task WHERE state NOT IN ('done','abandoned') ORDER BY id;") || return 1
+                         FROM task WHERE state NOT IN ($(kit_state_sql "$(kit_state_closed)")) ORDER BY id;") || return 1
   printf '%s\n' "$_kpd" | tr -d '\r' | cksum | awk '{print $1 "-" $2}'
 }
 
@@ -124,3 +124,33 @@ kit_plan_digest() {
 # self-reported `kit` from the agent that did the work is the one value nobody should take on
 # trust, which is why nothing in the kit ever writes this for you.
 kit_via_vocab() { printf 'kit agent manual unknown'; }
+
+# ---- TASK STATE: one home for the vocabulary and for every partition of it ----------------
+#
+# Same rule as kit_via_vocab above and for the same reason, measured rather than argued. On
+# 2026-08-22 the question "is this task closed?" was answered by the literal `'done','abandoned'`
+# in NINETEEN places across four files, while "is this a legal state?" was answered once. A rule
+# with nineteen copies is a rule that will disagree with itself; the finding vocabulary already
+# did exactly that across four locations here. See docs/adr/0008.
+#
+#   grep -rc "'done','abandoned'" tooling/     # 19, in kit-status(7) kit-index(6) kit-plan(5) kit-lib(1)
+#
+# SQL CONSUMERS DO NOT READ THESE FUNCTIONS DIRECTLY. kit-index.sh derives a `state_class` table
+# from them and the queries join against it, because the derivation SQL lives in a QUOTED heredoc
+# (`cat <<'DERIVE'`) where no shell expansion happens. Text is truth, the table is derived and
+# disposable -- the same split this repository applies to task files and index.db.
+kit_state_vocab()    { printf 'started progress blocked unblocked done abandoned'; }
+
+# Closed = the work is not coming back, whether it finished or was dropped. Read by kit-plan.sh
+# for what may be ordered, by kit-status.sh for what counts as open, and by kit_plan_digest below.
+kit_state_closed()   { printf 'done abandoned'; }
+
+# The states whose actor is the task's OWNER. Deliberately not "vocab minus closed": `unblocked`
+# is excluded because unblocking someone else's task does not make it yours. This was a fourth
+# literal list, three values wide, sitting beside the other two and matching neither.
+kit_state_activity() { printf 'started progress blocked'; }
+
+# `a b c` -> `'a','b','c'` for interpolation into SQL built in shell. The values are this file's
+# own literals, never caller input, so quoting is about correctness of the emitted SQL and not
+# about injection.
+kit_state_sql() { printf "%s" "$(for _s in $1; do printf "'%s'," "$_s"; done | sed "s/,\$//")"; }

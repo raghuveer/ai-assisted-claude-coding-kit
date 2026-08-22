@@ -1,6 +1,26 @@
 
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
 
+-- DERIVED FROM kit-lib.sh, never authored here. `kit_state_vocab` and its partitions are the
+-- text that is true; this table is the disposable projection SQL can join against -- the same
+-- split this repository applies to task files and to this whole database.
+--
+-- It exists because the derivation SQL in kit-index.sh lives in a QUOTED heredoc
+-- (`cat <<'DERIVE'`), where no shell expansion happens, so a shell list cannot be interpolated
+-- into it. Before this, "is the task closed?" was the literal `'done','abandoned'` written out
+-- nineteen times across four files. See docs/adr/0008.
+--
+-- Populated by kit-index.sh before the derivation runs. A query that joins this table and finds
+-- it empty would silently classify everything as open, so kit-index.sh refuses to build if the
+-- insert produced no rows.
+CREATE TABLE state_class (
+  state       TEXT PRIMARY KEY,
+  is_closed   INTEGER NOT NULL,     -- the work is not coming back: finished, or dropped
+  is_activity INTEGER NOT NULL      -- this state's actor is the task's owner. NOT "not closed":
+                                    -- `unblocked` is excluded because unblocking someone else's
+                                    -- task does not make it yours
+);
+
 CREATE TABLE node (
   id    TEXT PRIMARY KEY,
   type  TEXT NOT NULL,              -- task | module | file | adr | test | finding | incident

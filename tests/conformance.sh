@@ -1175,6 +1175,66 @@ check $? "apostrophe refused before the SQL, failed build preserves the index an
 rm -rf "$ax"
 fi
 
+if step "a commit touching nothing watched still makes the index stale"; then
+# THE DEFECT THIS BINDS. `--if-stale` decided freshness partly on the mtime of `.git/HEAD`,
+# which on a branch holds the text `ref: refs/heads/main` and is NOT rewritten by a commit --
+# the commit moves `refs/heads/<branch>`. Measured on this repository before the fix:
+# `.git/HEAD` was seventeen minutes older than the tip it pointed at, so `--if-stale` reported
+# FRESH with history moved past the last build. Every git-derived input -- `touches`, and
+# through it `tier_floor`, blast radius and co-change -- was invisible to the check, and
+# `skills/task-context` step 1 is exactly this command.
+#
+# THE COMMIT MUST TOUCH NOTHING IN THE WATCH LIST, which is the whole design of this fixture.
+# A test that also edited a task file, the profile or events.ndjson would see the mtime path
+# fire, PASS ON THE BROKEN VERSION, and prove nothing. `src/a.go` is in none of them.
+#
+# It asserts on DERIVED DATA rather than on the database's mtime: a `touches` edge that only
+# exists if the commit was actually read. An mtime assertion would pass on a rebuild that
+# ingested nothing.
+hs="$WORK.hstale"; rm -rf "$hs"; mkdir -p "$hs/.claude" "$hs/.project/tasks" "$hs/src"
+( cd "$hs" || exit 1
+  git init -q -b main 2>/dev/null
+  git config user.email fixture@x; git config user.name fixture
+  { echo "---"; echo "paths.tasks:  .project/tasks"; echo "paths.state:  .project"
+    echo "paths.status: STATUS.generated.md"; echo "tier.default: T1"; echo "---"; } \
+    > .claude/project-profile.md
+  { echo "---"; echo "id: T-1"; echo "title: t"; echo "tier: T1"; echo "state: open"; echo "---"; } \
+    > .project/tasks/T-1.md
+  echo seed > src/seed.txt
+  git add -A >/dev/null 2>&1
+  git commit -qm "seed" >/dev/null 2>&1 || exit 1
+
+  # Build once, with the index newer than every source. This is the state a session starts in.
+  bash "$KIT/tooling/kit-index.sh" >/dev/null 2>&1 || exit 1
+  [ "$(sqlite3 .project/index.db \
+      "SELECT COUNT(*) FROM edge WHERE src='T-1' AND dst='f:src/a.go' AND rel='touches';" \
+      | tr -d '\015')" = 0 ] || exit 1
+
+  # A commit that touches ONLY an unwatched path. No task file, no profile, no event log.
+  echo x > src/a.go
+  git add src/a.go >/dev/null 2>&1
+  git commit -q -F - >/dev/null 2>&1 <<'MSG' || exit 1
+add a.go
+
+Task-Id: T-1
+Tier: T1
+MSG
+
+  # On the broken version this prints the path and exits 0 without ingesting anything.
+  bash "$KIT/tooling/kit-index.sh" --if-stale >/dev/null 2>&1 || exit 1
+  [ "$(sqlite3 .project/index.db \
+      "SELECT COUNT(*) FROM edge WHERE src='T-1' AND dst='f:src/a.go' AND rel='touches';" \
+      | tr -d '\015')" = 1 ] || exit 1
+
+  # And it settles: a second run with nothing moved must NOT rebuild, or `--if-stale` has been
+  # turned into an unconditional rebuild and the ~39s it exists to avoid is spent every session.
+  _before=$(sqlite3 .project/index.db "SELECT value FROM meta WHERE key='head_commit';" | tr -d '\015')
+  [ "$_before" = "$(git rev-parse HEAD)" ] || exit 1
+  bash "$KIT/tooling/kit-index.sh" --if-stale >/dev/null 2>&1 || exit 1 )
+check $? "a commit outside the watch list is seen, and an unchanged HEAD is not rebuilt"
+rm -rf "$hs"
+fi
+
 if step "the two floor sources agree on a non-ASCII path, and ? is refused"; then
 # A tier floor is derived twice and the two derivations must agree. `globre` turns the glob
 # into an awk regex for the DECLARED-paths source; the same glob goes to SQLite GLOB for the
