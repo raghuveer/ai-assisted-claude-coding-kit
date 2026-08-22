@@ -5,7 +5,7 @@ epic: measurement
 tier: T2
 lang: sql
 paths: .project/events.ndjson, tooling/kit-resolve.sh, tooling/kit-status.sh
-state: open
+state: completed
 ---
 
 ## Intent
