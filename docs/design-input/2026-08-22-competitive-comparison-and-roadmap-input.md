@@ -9,6 +9,14 @@ carry the file they came from. The two kinds of claim are marked: unmarked state
 out of a repository today, and `[judgement]` marks an opinion a future session is free to
 overturn.
 
+> **FRAMING CORRECTED THE SAME DAY.** `2026-08-22-auto-mode-is-a-graduation.md` supersedes this
+> document's **§3.1** and re-cuts its **§6**. Two errors: LangGraph was given as an *example use
+> case* and is promoted here to a design pillar, which over-reads one example into a category; and
+> the roadmap in §6 is organised by competitive gap, when the organising axis is the operator's
+> terminal goal — multiple open-source projects developed in auto-mode. **§1, §2, §4, §5 and §7
+> stand**: the measurements are unaffected by why they were taken. Corrected by banner rather than
+> rewrite, for the reason §7 of that document gives.
+
 **This does not replace `docs/COMPETITIVE-LANDSCAPE.md` (2026-08-08).** That memo asked to be
 re-verified before acting on it, because its subject moves fast. §2 below does that. Read it
 first; most of it still stands.
@@ -101,6 +109,14 @@ is not held:
    LangChain, LangGraph, or anything else.
 
 ### 3.1 Point 7 and point 8 are two different agnosticisms, and conflating them is a live risk
+
+> **SUPERSEDED — see `2026-08-22-auto-mode-is-a-graduation.md` §1.1.** LangGraph was an example use
+> case, not a scope. The section below builds a design pillar on it and that is an over-read; the
+> surviving residue is one finding class (an acceptance criterion that is a distribution rather
+> than a boolean), to be handled when non-functional finding classes are defined. Point 7's real
+> justification is also narrower and stronger than given here: an add-on that requires a host
+> organisation to adopt its runtime is not an add-on. Left in place unedited, because a design
+> input rewritten to look always-correct is the failure being avoided.
 
 They read as one sentence and are not. Point 7 is about **what the kit is**: it does not own a
 model gateway or an agent runtime. Point 8 is about **what the kit's users build**: agent
@@ -315,6 +331,13 @@ economics too.
 ---
 
 ## 6. Roadmap candidates
+
+> **RE-CUT — see `2026-08-22-auto-mode-is-a-graduation.md` §7.** The ordering below is by
+> competitive gap. The organising axis is the terminal goal instead, which raises the readings work
+> and the budget cap, makes model-capability structural, adds four items absent here entirely
+> (divergence detection, disposition delegation, the practitioner layer, goal-as-delegation-unit),
+> and lowers host portability to the deliberate later phase it always was. The individual items
+> below remain accurate about *what* each is; that document is authoritative on *when* and *why*.
 
 Each names what it is for and what would falsify it. **None of these is a decision**; they are
 input to the operator's sequencing, and every one of them is downstream of the brownfield trial
